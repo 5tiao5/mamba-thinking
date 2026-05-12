@@ -1,0 +1,69 @@
+# Local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+build/
+dist/
+site/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# IDE / editor
+.vscode/
+.idea/
+*.suo
+*.user
+*.userossc
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Frontend dependencies and build output
+ui/node_modules/
+ui/dist/
+ui/*.tsbuildinfo
+ui/vite.config.js
+ui/vite.config.d.ts
+
+# Runtime outputs
+outputs/
+outputs_*/
+product_agent_outputs_smoke/
+
+# Local databases / caches
+*.db
+*.sqlite
+*.sqlite3
+*.cache
