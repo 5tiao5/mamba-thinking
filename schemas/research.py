@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class CreateResearchTaskRequest(BaseModel):
     conversation_id: str
     topic: str
-    mode: str = Field(default="default", description="default / fast / balanced 等")
+    mode: str = Field(default="default", description="任务运行模式：default / fast / balanced")
     use_shared_knowledge: bool = Field(default=False)
     enabled_tools: List[str] = Field(default_factory=list)
 

@@ -7,6 +7,7 @@ from product_agent.app_container import AppContainer
 from product_agent.schemas import (
     ContinueConversationRequest,
     CreateConversationRequest,
+    CreateMessageRequest,
     CreateResearchTaskRequest,
     UpdateToolRequest,
 )
@@ -14,102 +15,92 @@ from product_agent.schemas import (
 from .handlers import ProductApiHandlers
 
 
-container = AppContainer()
-handlers = ProductApiHandlers(
-    conversation_service=container.conversation_service,
-    research_service=container.research_service,
-    workspace_service=container.workspace_service,
-    tool_service=container.tool_service,
-    skill_service=container.skill_service,
-)
+def create_app(container: AppContainer | None = None) -> FastAPI:
+    """
+    创建 FastAPI 应用实例。
 
-app = FastAPI(
-    title="Product Agent API",
-    version="0.1.0",
-    description="迭代三科研调研助手后端骨架。当前重点是冻结接口契约与模块边界。",
-)
+    说明：
+    - 避免在模块导入时把依赖装配彻底固化死
+    - 方便后续测试注入、不同环境切换和应用生命周期管理
+    """
+    active_container = container or AppContainer()
+    handlers = ProductApiHandlers(
+        conversation_service=active_container.conversation_service,
+        message_service=active_container.message_service,
+        research_service=active_container.research_service,
+        workspace_service=active_container.workspace_service,
+        tool_service=active_container.tool_service,
+        skill_service=active_container.skill_service,
+    )
 
-# 开发期默认启动方式:
-# uvicorn product_agent.api.fastapi_app:app --reload
-#
-# 默认访问地址:
-# - API: http://127.0.0.1:8000
-# - Docs: http://127.0.0.1:8000/docs
-# - ReDoc: http://127.0.0.1:8000/redoc
+    app = FastAPI(
+        title="Product Agent API",
+        version="0.1.0",
+        description="迭代三科研调研助手后端骨架，当前重点是冻结接口契约与模块边界。",
+    )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
+    @app.get("/health")
+    def healthcheck() -> dict[str, str]:
+        return {"status": "ok"}
 
-@app.get("/health")
-def healthcheck() -> dict[str, str]:
-    """健康检查接口。"""
+    @app.post("/conversations")
+    def create_conversation(request: CreateConversationRequest):
+        return handlers.create_conversation(request).model_dump()
 
-    return {"status": "ok"}
+    @app.get("/conversations/{conversation_id}/messages")
+    def list_messages(conversation_id: str = Path(..., description="会话 ID")):
+        return handlers.list_messages(conversation_id).model_dump()
 
+    @app.post("/conversations/{conversation_id}/messages")
+    def create_message(
+        request: CreateMessageRequest,
+        conversation_id: str = Path(..., description="会话 ID"),
+    ):
+        return handlers.create_message(conversation_id, request).model_dump()
 
-@app.post("/conversations")
-def create_conversation(request: CreateConversationRequest):
-    """创建一个新的研究会话。"""
+    @app.post("/conversations/continue")
+    def continue_conversation(request: ContinueConversationRequest):
+        return handlers.continue_conversation(request).model_dump()
 
-    return handlers.create_conversation(request).model_dump()
+    @app.post("/research/tasks")
+    def create_research_task(request: CreateResearchTaskRequest):
+        return handlers.create_research_task(request).model_dump()
 
+    @app.post("/research/tasks/{task_id}/run")
+    def run_research_task(task_id: str = Path(..., description="研究任务 ID")):
+        return handlers.run_research_task(task_id).model_dump()
 
-@app.post("/conversations/continue")
-def continue_conversation(request: ContinueConversationRequest):
-    """在已有会话基础上继续追问。"""
+    @app.get("/research/tasks/{task_id}/workspace")
+    def get_workspace(task_id: str = Path(..., description="研究任务 ID")):
+        return handlers.get_workspace(task_id).model_dump()
 
-    return handlers.continue_conversation(request).model_dump()
+    @app.get("/tools")
+    def list_tools():
+        return handlers.list_tools().model_dump()
 
+    @app.patch("/tools/{tool_id}")
+    def update_tool(
+        request: UpdateToolRequest,
+        tool_id: str = Path(..., description="工具 ID"),
+    ):
+        return handlers.update_tool(tool_id, request).model_dump()
 
-@app.post("/research/tasks")
-def create_research_task(request: CreateResearchTaskRequest):
-    """创建一条研究任务记录。"""
+    @app.get("/skills")
+    def list_skills():
+        return handlers.list_skills().model_dump()
 
-    return handlers.create_research_task(request).model_dump()
-
-
-@app.post("/research/tasks/{task_id}/run")
-def run_research_task(task_id: str = Path(..., description="研究任务 ID")):
-    """运行已创建的研究任务。"""
-
-    return handlers.run_research_task(task_id).model_dump()
-
-
-@app.get("/research/tasks/{task_id}/workspace")
-def get_workspace(task_id: str = Path(..., description="研究任务 ID")):
-    """获取任务工作台快照。"""
-
-    return handlers.get_workspace(task_id).model_dump()
-
-
-@app.get("/tools")
-def list_tools():
-    """列出所有已注册工具。"""
-
-    return handlers.list_tools().model_dump()
-
-
-@app.patch("/tools/{tool_id}")
-def update_tool(
-    request: UpdateToolRequest,
-    tool_id: str = Path(..., description="工具 ID"),
-):
-    """更新指定工具的开关与配置。"""
-
-    return handlers.update_tool(tool_id, request).model_dump()
+    return app
 
 
-@app.get("/skills")
-def list_skills():
-    """列出所有已注册 skill。"""
-
-    return handlers.list_skills().model_dump()
+app = create_app()

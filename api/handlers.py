@@ -4,10 +4,14 @@ from dataclasses import asdict
 
 from product_agent.schemas import (
     ContinueConversationRequest,
+    ContinueConversationResponse,
     CreateConversationRequest,
+    CreateMessageRequest,
     CreateResearchTaskRequest,
+    FollowUpTaskPreview,
     UpdateToolRequest,
 )
+from product_agent.services import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
 
 from .response import fail, ok
 
@@ -16,46 +20,32 @@ class ProductApiHandlers:
     """
     不绑定具体 Web 框架的 API handler 集合。
 
-    TODO(iter3-api-integration):
-    1. 未来可由 FastAPI / Flask / Django 等框架路由直接调用这些方法
-    2. 这里先冻结输入输出契约，避免前后端字段随意漂移
-    3. 当前 handler 不应承担复杂业务逻辑，复杂逻辑一律下沉到 service 层
-
-    合同约束:
-    - handler 只负责接收输入、调用 service、返回统一响应
-    - handler 不直接访问数据库
+    合同约束：
+    - handler 只负责接收输入、调 service、返回统一响应
+    - handler 不直接访问 repository
     - handler 不直接调用外部工具
-    - 所有输出必须包装为 ApiResponse
+    - 所有输出统一包装成 ApiResponse
     """
 
-    def __init__(self, *, conversation_service, research_service, workspace_service, tool_service, skill_service):
+    def __init__(
+        self,
+        *,
+        conversation_service,
+        message_service,
+        research_service,
+        workspace_service,
+        tool_service,
+        skill_service,
+    ):
         self.conversation_service = conversation_service
+        self.message_service = message_service
         self.research_service = research_service
         self.workspace_service = workspace_service
         self.tool_service = tool_service
         self.skill_service = skill_service
 
     def create_conversation(self, request: CreateConversationRequest):
-        """
-        创建新会话。
-
-        调用链:
-        - FastAPI route -> ProductApiHandlers.create_conversation -> ConversationService.create_conversation
-
-        输入:
-        - request.topic: 主题
-        - request.title: 可选标题
-
-        输出:
-        - ApiResponse[data]:
-          - conversation_id: str
-          - topic: str
-          - title: str
-
-        错误约定:
-        - 当前版本默认不抛业务错误
-        - 后续如果 topic 非法，应返回 `conversation_invalid_topic`
-        """
+        """创建新会话。"""
         conversation = self.conversation_service.create_conversation(topic=request.topic, title=request.title)
         return ok(
             {
@@ -65,72 +55,99 @@ class ProductApiHandlers:
             }
         )
 
+    def list_messages(self, conversation_id: str):
+        """列出某个会话的消息。"""
+        messages = self.message_service.list_messages(conversation_id)
+        if messages is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+        return ok(
+            {
+                "conversation_id": conversation_id,
+                "items": [self._message_payload(item) for item in messages],
+            }
+        )
+
+    def create_message(self, conversation_id: str, request: CreateMessageRequest):
+        """在指定会话中创建一条消息。"""
+        message = self.message_service.create_message(
+            conversation_id=conversation_id,
+            role=request.role,
+            content=request.content,
+            metadata=request.metadata,
+        )
+        if message is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+        return ok(self._message_payload(message))
+
     def continue_conversation(self, request: ContinueConversationRequest):
         """
         在已有会话上继续追问。
 
-        当前版本:
-        - 只冻结接口契约
-        - 不真正驱动新任务
-
-        后续实现思路:
-        - 根据 conversation_id 读取历史消息
-        - 调用 ConversationService 生成 context summary
-        - 把 content + context summary 交给 ResearchService
-        - 若需要，自动创建 follow-up task
-
-        输出:
-        - conversation_id: str
-        - next_focus: str
-        - message: str
-
-        错误约定:
-        - 会话不存在 -> `conversation_not_found`
-
-        组员实现提示:
-        - 后续这里应该成为“多轮对话主入口”
-        - 不建议直接在这里写上下文摘要逻辑，应下沉到 ConversationService 或专门的 ContextService
+        当前版本已经会：
+        - 写入用户消息
+        - 读取最近上下文预览
+        - 可选创建一条 follow-up 研究任务记录
         """
         conversation = self.conversation_service.get_conversation(request.conversation_id)
         if conversation is None:
             return fail("conversation_not_found", "Conversation does not exist.")
-        return ok(
-            {
-                "conversation_id": conversation.conversation_id,
-                "next_focus": request.focus or "follow_up",
-                "message": request.content,
-            }
+
+        message = self.message_service.create_message(
+            conversation_id=request.conversation_id,
+            role="user",
+            content=request.content,
+            metadata={"focus": request.focus or ""},
         )
+        if message is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+
+        recent_context = self.message_service.get_recent_context(request.conversation_id, limit=4) or []
+        context_preview = [f"{item.role}: {item.content[:80]}" for item in recent_context]
+
+        follow_up_task = None
+        if request.create_follow_up_task:
+            try:
+                task = self.research_service.create_follow_up_task(
+                    conversation_id=conversation.conversation_id,
+                    base_topic=conversation.topic,
+                    latest_message_content=request.content,
+                    focus=request.focus,
+                    mode=request.mode,
+                    trigger_message_id=message.message_id,
+                )
+            except InvalidTaskModeError as error:
+                return fail("task_invalid_mode", str(error))
+
+            follow_up_task = FollowUpTaskPreview(
+                task_id=task.task_id,
+                topic=task.topic,
+                status=task.status,
+                trigger_message_id=task.trigger_message_id,
+            )
+
+        response = ContinueConversationResponse(
+            conversation_id=conversation.conversation_id,
+            next_focus=request.focus or "follow_up",
+            message=request.content,
+            message_id=message.message_id,
+            context_preview=context_preview,
+            follow_up_task=follow_up_task,
+        )
+        return ok(response.model_dump())
 
     def create_research_task(self, request: CreateResearchTaskRequest):
-        """
-        创建研究任务，但不立即运行。
+        """创建研究任务，但不立即运行。"""
+        try:
+            task = self.research_service.create_task(
+                conversation_id=request.conversation_id,
+                topic=request.topic,
+                mode=request.mode,
+            )
+        except ConversationNotFoundError:
+            return fail("conversation_not_found", "Conversation does not exist.")
+        except InvalidTaskModeError as error:
+            return fail("task_invalid_mode", str(error))
 
-        输入:
-        - conversation_id: str
-        - topic: str
-        - mode: str
-        - use_shared_knowledge: bool
-        - enabled_tools: list[str]
-
-        输出:
-        - task_id: str
-        - conversation_id: str
-        - status: str
-
-        错误约定:
-        - conversation 不存在 -> `conversation_not_found`
-        - mode 非法 -> `task_invalid_mode`
-
-        组员实现提示:
-        - 后续应校验 conversation_id 是否存在
-        - 后续应把 enabled_tools / use_shared_knowledge 真正写入任务配置
-        """
-        task = self.research_service.create_task(
-            conversation_id=request.conversation_id,
-            topic=request.topic,
-            mode=request.mode,
-        )
         return ok(
             {
                 "task_id": task.task_id,
@@ -140,29 +157,17 @@ class ProductApiHandlers:
         )
 
     def run_research_task(self, task_id: str):
-        """
-        运行已创建的研究任务。
-
-        输入:
-        - task_id: str
-
-        输出:
-        - task_id: str
-        - topic: str
-        - alignment_score: float
-        - trace_keys: list[str]
-
-        错误约定:
-        - task 不存在 -> `task_not_found`
-
-        组员实现提示:
-        - 后续需要支持异步运行 / 后台任务
-        - 后续返回值可以加 `workspace_ready: bool`
-        """
-        task = self.research_service.task_repository.get(task_id)
-        if task is None:
+        """运行已创建的研究任务。"""
+        try:
+            task = self.research_service.get_task(task_id)
+        except TaskNotFoundError:
             return fail("task_not_found", "Research task does not exist.")
-        workspace = self.research_service.run_task(task)
+
+        try:
+            workspace = self.research_service.run_task(task)
+        except Exception as error:
+            return fail("task_run_failed", str(error))
+
         return ok(
             {
                 "task_id": workspace.task_id,
@@ -173,65 +178,19 @@ class ProductApiHandlers:
         )
 
     def get_workspace(self, task_id: str):
-        """
-        获取某次任务的工作台快照。
-
-        输出:
-        - task_id
-        - topic
-        - summary
-        - taxonomy
-        - graph_edges
-        - alignment_score
-
-        错误约定:
-        - workspace 不存在 -> `workspace_not_found`
-
-        组员实现提示:
-        - 后续前端主要依赖这个接口渲染工作台
-        - 返回结构要尽量稳定，不要直接暴露旧版 Agent 内部 state
-        """
-        workspace = self.workspace_service.get_workspace(task_id)
-        if workspace is None:
+        """获取某次任务的工作台快照。"""
+        snapshot = self.workspace_service.get_workspace_snapshot(task_id)
+        if snapshot is None:
             return fail("workspace_not_found", "Workspace does not exist.")
-        return ok(
-            {
-                "task_id": workspace.task_id,
-                "topic": workspace.topic,
-                "summary": workspace.summary,
-                "taxonomy": workspace.taxonomy,
-                "graph_edges": workspace.graph_edges,
-                "alignment_score": workspace.alignment_score,
-            }
-        )
+        return ok(snapshot.model_dump())
 
     def list_tools(self):
-        """
-        列出当前已注册工具及其开关状态。
-
-        组员实现提示:
-        - 前端设置页优先对接这个接口
-        - 返回结构要保持平铺和可读，避免嵌套过深
-        """
+        """列出当前已注册工具及其开关状态。"""
         tools = self.tool_service.list_tools()
         return ok([asdict(tool) for tool in tools])
 
     def update_tool(self, tool_id: str, request: UpdateToolRequest):
-        """
-        更新某个工具的启用状态与配置。
-
-        输入:
-        - tool_id: str
-        - request.enabled: bool
-        - request.config: dict
-
-        错误约定:
-        - tool 不存在 -> `tool_not_found`
-
-        组员实现提示:
-        - 当前只更新 registry 内存状态
-        - 后续需要接持久化
-        """
+        """更新某个工具的启用状态与配置。"""
         descriptor = self.tool_service.update_tool_enabled(tool_id, request.enabled)
         if descriptor is None:
             return fail("tool_not_found", "Tool does not exist.")
@@ -239,12 +198,17 @@ class ProductApiHandlers:
         return ok(asdict(descriptor))
 
     def list_skills(self):
-        """
-        列出当前已注册 skill。
-
-        组员实现提示:
-        - 前端可先把它作为只读页面
-        - 后续再支持启用/禁用和动态加载
-        """
+        """列出当前已注册 skill。"""
         skills = self.skill_service.list_skills()
         return ok([asdict(skill) for skill in skills])
+
+    @staticmethod
+    def _message_payload(message) -> dict:
+        return {
+            "message_id": message.message_id,
+            "conversation_id": message.conversation_id,
+            "role": message.role,
+            "content": message.content,
+            "metadata": message.metadata,
+            "created_at": message.created_at.isoformat(),
+        }

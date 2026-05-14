@@ -1,5 +1,7 @@
 import type {
+  ContinueConversationPayload,
   ConversationResponsePayload,
+  MessageItem,
   SkillItem,
   ToolItem,
   WorkspaceSnapshot,
@@ -30,8 +32,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  continueConversation: (payload: { conversation_id: string; content: string; focus?: string }) =>
-    request("/conversations/continue", {
+  listMessages: (conversationId: string) =>
+    request<{ success: boolean; data: { conversation_id: string; items: MessageItem[] } }>(
+      `/conversations/${conversationId}/messages`
+    ),
+  createMessage: (conversationId: string, payload: { role?: string; content: string; metadata?: Record<string, unknown> }) =>
+    request<{ success: boolean; data: MessageItem }>(`/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  continueConversation: (payload: {
+    conversation_id: string;
+    content: string;
+    focus?: string;
+    create_follow_up_task?: boolean;
+    mode?: string;
+  }) =>
+    request<{ success: boolean; data: ContinueConversationPayload }>("/conversations/continue", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

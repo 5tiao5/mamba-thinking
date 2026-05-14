@@ -4,6 +4,31 @@ export type ConversationResponsePayload = {
   title: string;
 };
 
+export type MessageItem = {
+  message_id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type FollowUpTaskItem = {
+  task_id: string;
+  topic: string;
+  status: string;
+  trigger_message_id?: string | null;
+};
+
+export type ContinueConversationPayload = {
+  conversation_id: string;
+  next_focus: string;
+  message: string;
+  message_id?: string | null;
+  context_preview: string[];
+  follow_up_task?: FollowUpTaskItem | null;
+};
+
 export type WorkspacePaper = {
   paper_id: string;
   title: string;

@@ -2,24 +2,30 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from product_agent.domain import Conversation, KnowledgeDocument, ResearchTask, ResearchWorkspace
+from product_agent.domain import (
+    Conversation,
+    KnowledgeDocument,
+    MessageRecord,
+    ResearchTask,
+    ResearchWorkspace,
+)
 
 
 class ConversationRepository(Protocol):
-    """会话仓储接口。后续可分别实现 InMemory / SQLite / PostgreSQL 版本。"""
+    """会话存储接口。后续可分别实现 InMemory / SQLite / PostgreSQL 版本。"""
 
     def create(self, conversation: Conversation) -> Conversation:
         """
         写入新会话并返回持久化结果。
 
         合同:
-        - 必须返回已成功持久化的 Conversation
-        - 若写入失败，应抛出实现层异常，而不是返回 None
+        - 必须返回已成功持久化的 `Conversation`
+        - 若写入失败，应抛出实现层异常，而不是返回 `None`
         """
         ...
 
     def get(self, conversation_id: str) -> Conversation | None:
-        """按 ID 读取会话；不存在时返回 None。"""
+        """按 ID 读取会话；不存在时返回 `None`。"""
         ...
 
     def update(self, conversation: Conversation) -> Conversation:
@@ -27,8 +33,20 @@ class ConversationRepository(Protocol):
         ...
 
 
+class MessageRepository(Protocol):
+    """消息存储接口。"""
+
+    def create(self, message: MessageRecord) -> MessageRecord:
+        """写入一条消息并返回持久化结果。"""
+        ...
+
+    def list_by_conversation(self, conversation_id: str) -> list[MessageRecord]:
+        """按会话列出消息，默认按创建时间升序返回。"""
+        ...
+
+
 class ResearchTaskRepository(Protocol):
-    """研究任务仓储接口。"""
+    """研究任务存储接口。"""
 
     def create(self, task: ResearchTask) -> ResearchTask:
         """写入新任务并返回持久化结果。"""
@@ -44,7 +62,7 @@ class ResearchTaskRepository(Protocol):
 
 
 class WorkspaceRepository(Protocol):
-    """工作台结果仓储接口。"""
+    """工作台结果存储接口。"""
 
     def save(self, workspace: ResearchWorkspace) -> ResearchWorkspace:
         """保存一次任务的工作台快照。"""
@@ -56,7 +74,7 @@ class WorkspaceRepository(Protocol):
 
 
 class KnowledgeRepository(Protocol):
-    """知识沉淀仓储接口。"""
+    """知识沉淀存储接口。"""
 
     def save(self, document: KnowledgeDocument) -> KnowledgeDocument:
         """保存知识文档。"""
