@@ -83,3 +83,15 @@ class KnowledgeRepository(Protocol):
     def list_all(self) -> list[KnowledgeDocument]:
         """列出所有知识文档。"""
         ...
+
+    def get(self, document_id: str) -> KnowledgeDocument | None:
+        """按 ID 获取知识文档。"""
+        ...
+
+    def list_by_tags(self, tags: list[str], limit: int) -> list[KnowledgeDocument]:
+        """根据标签检索文档（至少包含其中一个 tag），按创建时间倒序返回最多 limit 条。"""
+        ...
+
+    def delete(self, document_id: str) -> bool:
+        """删除知识文档，返回是否成功删除。"""
+        ...

@@ -87,5 +87,25 @@ class InMemoryKnowledgeRepository:
         self._items[document.document_id] = stored
         return deepcopy(stored)
 
+    def get(self, document_id: str) -> KnowledgeDocument | None:
+        item = self._items.get(document_id)
+        return deepcopy(item) if item else None
+
     def list_all(self) -> list[KnowledgeDocument]:
         return [deepcopy(item) for item in self._items.values()]
+
+    def list_by_tags(self, tags: list[str], limit: int) -> list[KnowledgeDocument]:
+        matched = []
+        for doc in self._items.values():
+            # 检查文档的 tags 是否与查询 tags 有交集
+            if any(tag in doc.tags for tag in tags):
+                matched.append(doc)
+        # 按创建时间倒序排序（最近优先），创建时间存储在 metadata["created_at"] 中
+        matched.sort(key=lambda d: d.metadata.get("created_at", ""), reverse=True)
+        return [deepcopy(doc) for doc in matched[:limit]]
+
+    def delete(self, document_id: str) -> bool:
+        if document_id in self._items:
+            del self._items[document_id]
+            return True
+        return False
