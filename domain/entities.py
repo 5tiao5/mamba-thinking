@@ -72,6 +72,42 @@ class GapRecord:
 
 
 @dataclass(slots=True)
+class ResearchIdea:
+    """Agent 内部生成的结构化研究 idea 模型。"""
+
+    idea_id: str
+    title: str
+    motivation: str
+    approach: str
+    feasibility: str
+    contribution: str
+    related_papers: List[str] = field(default_factory=list)
+    derived_from_gaps: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+    tags: List[str] = field(default_factory=list)
+    raw_text: str = ""
+
+    @property
+    def id(self) -> str:
+        return self.idea_id
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.idea_id,
+            "title": self.title,
+            "motivation": self.motivation,
+            "approach": self.approach,
+            "feasibility": self.feasibility,
+            "contribution": self.contribution,
+            "related_papers": list(self.related_papers),
+            "derived_from_gaps": list(self.derived_from_gaps),
+            "confidence": float(self.confidence),
+            "tags": list(self.tags),
+            "raw_text": self.raw_text,
+        }
+
+
+@dataclass(slots=True)
 class ResearchIdeaRecord:
     """基于 gap 生成的一个研究建议。"""
 
@@ -82,6 +118,11 @@ class ResearchIdeaRecord:
     approach: str
     feasibility: str
     contribution: str
+    related_papers: List[str] = field(default_factory=list)
+    derived_from_gaps: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+    tags: List[str] = field(default_factory=list)
+    raw_text: str = ""
 
 
 @dataclass(slots=True)
@@ -98,6 +139,7 @@ class ResearchWorkspace:
     task_id: str
     topic: str
     summary: str = ""
+    summary_payload: Dict[str, Any] = field(default_factory=dict)
     papers: List[PaperRecord] = field(default_factory=list)
     taxonomy: Dict[str, Any] = field(default_factory=dict)
     graph_edges: List[Dict[str, Any]] = field(default_factory=list)
