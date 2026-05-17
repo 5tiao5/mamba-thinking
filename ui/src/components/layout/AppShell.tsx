@@ -11,15 +11,8 @@ const navItems = [
 
 export function AppShell({ children }: PropsWithChildren) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", minHeight: "100vh" }}>
-      <aside
-        style={{
-          padding: "28px 22px",
-          borderRight: "1px solid rgba(20, 33, 61, 0.08)",
-          background: "rgba(255,255,255,0.7)",
-          backdropFilter: "blur(16px)",
-        }}
-      >
+    <div className="app-shell">
+      <aside className="app-sidebar">
         <div style={{ marginBottom: 28 }}>
           <div className="badge">Iter 3 Product Agent</div>
           <h1 style={{ margin: "18px 0 8px", fontSize: "1.55rem" }}>科研调研工作台</h1>

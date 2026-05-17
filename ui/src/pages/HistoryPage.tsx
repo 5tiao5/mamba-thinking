@@ -8,7 +8,11 @@ export function HistoryPage() {
       </section>
 
       <section className="panel">
-        <div className="empty-state">TODO: 对接 conversation 列表接口；后续还要支持搜索和筛选。</div>
+        <h3 className="section-title">接口状态</h3>
+        <div className="empty-state">
+          当前后端文档明确尚未提供 `GET /conversations` 和 `GET /research/tasks`，因此本页暂不做假数据列表。
+          待后端补齐历史查询接口后，可在这里接入会话列表、最近任务和继续会话入口。
+        </div>
       </section>
     </div>
   );
