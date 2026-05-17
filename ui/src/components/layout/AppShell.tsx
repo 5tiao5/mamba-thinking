@@ -1,47 +1,103 @@
-import { NavLink } from "react-router-dom";
-import type { PropsWithChildren } from "react";
+import { NavLink, useLocation, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
+
+import { API_BASE_URL, api } from "../../lib/api";
+import { StatusPill } from "../ui/StatusPill";
 
 const navItems = [
-  { to: "/", label: "新建任务" },
-  { to: "/conversation", label: "对话区" },
-  { to: "/workspace", label: "研究工作台" },
-  { to: "/history", label: "历史会话" },
-  { to: "/settings", label: "工具与 Skill" },
+  { to: "/", label: "Launch", description: "新建研究" },
+  { to: "/conversation", label: "Conversation", description: "多轮追问" },
+  { to: "/workspace", label: "Workspace", description: "结果分析" },
+  { to: "/history", label: "History", description: "历史入口" },
+  { to: "/settings", label: "Settings", description: "工具配置" },
 ];
 
+const routeTitles: Record<string, string> = {
+  "/": "Research Launch",
+  "/conversation": "Conversation Workflow",
+  "/workspace": "Research Workspace",
+  "/history": "History",
+  "/settings": "Tools & Skills",
+};
+
 export function AppShell({ children }: PropsWithChildren) {
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking");
+  const contextId = searchParams.get("task_id") ?? searchParams.get("conversation_id") ?? "";
+  const activeTitle = routeTitles[location.pathname] ?? "Product Agent";
+  const contextLabel = searchParams.get("task_id") ? "task" : searchParams.get("conversation_id") ? "conversation" : "context";
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .health()
+      .then(() => {
+        if (!cancelled) setApiStatus("online");
+      })
+      .catch(() => {
+        if (!cancelled) setApiStatus("offline");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const statusTone = useMemo(() => {
+    if (apiStatus === "online") return "success";
+    if (apiStatus === "offline") return "danger";
+    return "neutral";
+  }, [apiStatus]);
+
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
-        <div style={{ marginBottom: 28 }}>
-          <div className="badge">Iter 3 Product Agent</div>
-          <h1 style={{ margin: "18px 0 8px", fontSize: "1.55rem" }}>科研调研工作台</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            面向 AI Agent / Code Agent 研究方向的多轮交互式产品骨架。
-          </p>
+        <div className="brand-block">
+          <div className="brand-mark">PA</div>
+          <div>
+            <h1>Product Agent</h1>
+            <p>科研调研工作台</p>
+          </div>
         </div>
 
-        <nav style={{ display: "grid", gap: 10 }}>
+        <nav className="side-nav">
           {navItems.map((item) => (
             <NavLink
+              className={({ isActive }) => (isActive ? "side-nav-link side-nav-active" : "side-nav-link")}
               key={item.to}
               to={item.to}
-              style={({ isActive }) => ({
-                padding: "14px 16px",
-                borderRadius: 16,
-                background: isActive ? "#e8f1fb" : "transparent",
-                color: isActive ? "#123a6d" : "#304b66",
-                fontWeight: 700,
-                border: isActive ? "1px solid rgba(18,58,109,0.08)" : "1px solid transparent",
-              })}
             >
-              {item.label}
+              <span>{item.label}</span>
+              <small>{item.description}</small>
             </NavLink>
           ))}
         </nav>
+
+        <div className="sidebar-footer">
+          <span>API</span>
+          <code>{API_BASE_URL.replace(/^https?:\/\//, "")}</code>
+        </div>
       </aside>
 
-      <main style={{ padding: 28 }}>{children}</main>
+      <div className="app-frame">
+        <header className="top-context-bar">
+          <div className="top-context-title">
+            <span>{activeTitle}</span>
+            {contextId ? (
+              <code>
+                {contextLabel}:{contextId}
+              </code>
+            ) : null}
+          </div>
+          <div className="top-context-meta">
+            <StatusPill tone={statusTone} compact>
+              API {apiStatus}
+            </StatusPill>
+            <span>{new Date().toLocaleDateString()}</span>
+          </div>
+        </header>
+        <main className="app-content">{children}</main>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 
+import { SectionHeader } from "../components/ui/SectionHeader";
+import { StatusPill } from "../components/ui/StatusPill";
+import { ToggleSwitch } from "../components/ui/ToggleSwitch";
 import { api, toErrorMessage } from "../lib/api";
 import type { SkillItem, ToolItem } from "../types/api";
 
@@ -46,71 +49,119 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="page">
-      <section className="hero-card" style={{ padding: 28 }}>
-        <div className="badge">设置页</div>
-        <h2 style={{ marginBottom: 10 }}>工具与 Skill 管理</h2>
-        <p className="muted">
-          展示后端已注册工具与 Skill，并支持工具启用/停用。
-        </p>
+    <div className="dense-layout">
+      <section className="surface content-pad">
+        <div className="item-heading">
+          <div>
+            <div className="section-eyebrow">Registry</div>
+            <strong>工具与 Skill 管理</strong>
+          </div>
+          <StatusPill tone={loading ? "neutral" : "success"}>{loading ? "loading" : "ready"}</StatusPill>
+        </div>
+        <div className="status-line" style={{ marginTop: 10 }}>
+          {status}
+        </div>
       </section>
 
-      <section className="panel">
-        <h3 className="section-title">加载状态</h3>
-        <div className="status-line">{status}</div>
-      </section>
-
-      <section className="grid-two">
-        <div className="panel">
-          <h3 className="section-title">已注册工具</h3>
-          {tools.length ? (
-            <ul className="list">
-              {tools.map((tool) => (
-                <li className="list-item" key={tool.tool_id}>
-                  <div className="item-heading">
-                    <strong>{tool.display_name}</strong>
-                    <span className="badge">{tool.enabled ? "已启用" : "已停用"}</span>
-                  </div>
-                  <div className="muted">{tool.description}</div>
-                  <code>{tool.tool_id}</code>
-                  <pre className="json-block compact">{JSON.stringify(tool.config, null, 2)}</pre>
-                  <button
-                    className={tool.enabled ? "secondary-button" : "primary-button"}
-                    onClick={() => toggleTool(tool)}
-                    disabled={updatingToolId === tool.tool_id}
-                    style={{ marginTop: 12 }}
-                  >
-                    {updatingToolId === tool.tool_id ? "更新中..." : tool.enabled ? "停用工具" : "启用工具"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-state">{loading ? "正在加载工具..." : "暂无工具数据，或后端服务不可用。"}</div>
-          )}
+      <section className="settings-grid">
+        <div className="pane">
+          <SectionHeader title="Tools" eyebrow={`${tools.length} registered`} />
+          <div className="data-table-wrap">
+            {tools.length ? (
+              <table className="data-table settings-tools-table">
+                <thead>
+                  <tr>
+                    <th>Tool</th>
+                    <th>Status</th>
+                    <th>Description</th>
+                    <th>Config</th>
+                    <th>Control</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tools.map((tool) => (
+                    <tr key={tool.tool_id}>
+                      <td>
+                        <div className="table-title">{tool.display_name}</div>
+                        <div className="table-subline">{tool.tool_id}</div>
+                      </td>
+                      <td>
+                        <StatusPill tone={tool.enabled ? "success" : "neutral"} compact>
+                          {tool.enabled ? "enabled" : "disabled"}
+                        </StatusPill>
+                      </td>
+                      <td>{tool.description}</td>
+                      <td>
+                        <div className="config-cell">{JSON.stringify(tool.config)}</div>
+                      </td>
+                      <td>
+                        <ToggleSwitch
+                          checked={tool.enabled}
+                          disabled={updatingToolId === tool.tool_id}
+                          label={updatingToolId === tool.tool_id ? "更新中" : "启用"}
+                          onChange={() => toggleTool(tool)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="content-pad">
+                <div className="empty-state">{loading ? "正在加载工具..." : "暂无工具数据，或后端服务不可用。"}</div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="panel">
-          <h3 className="section-title">已注册 Skill</h3>
-          {skills.length ? (
-            <ul className="list">
-              {skills.map((skill) => (
-                <li className="list-item" key={skill.skill_id}>
-                  <div className="item-heading">
-                    <strong>{skill.display_name}</strong>
-                    <span className="badge">{skill.enabled ? "已启用" : "未启用"}</span>
-                  </div>
-                  <div className="muted">{skill.description}</div>
-                  <code>{skill.skill_id}</code>
-                  <div className="muted" style={{ marginTop: 8 }}>
-                    依赖工具：{skill.required_tools.join(", ") || "无"}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-state">{loading ? "正在加载 Skill..." : "暂无 Skill 数据，或后端服务不可用。"}</div>
-          )}
+        <div className="pane">
+          <SectionHeader title="Skills" eyebrow={`${skills.length} registered`} />
+          <div className="data-table-wrap">
+            {skills.length ? (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Skill</th>
+                    <th>Status</th>
+                    <th>Required Tools</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {skills.map((skill) => (
+                    <tr key={skill.skill_id}>
+                      <td>
+                        <div className="table-title">{skill.display_name}</div>
+                        <div className="table-subline">{skill.skill_id}</div>
+                        <div className="fine-print">{skill.description}</div>
+                      </td>
+                      <td>
+                        <StatusPill tone={skill.enabled ? "success" : "neutral"} compact>
+                          {skill.enabled ? "enabled" : "disabled"}
+                        </StatusPill>
+                      </td>
+                      <td>
+                        {skill.required_tools.length ? (
+                          <div className="button-row">
+                            {skill.required_tools.map((toolId) => (
+                              <StatusPill key={toolId} tone="info" compact>
+                                {toolId}
+                              </StatusPill>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="muted">none</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="content-pad">
+                <div className="empty-state">{loading ? "正在加载 Skill..." : "暂无 Skill 数据，或后端服务不可用。"}</div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
     </div>

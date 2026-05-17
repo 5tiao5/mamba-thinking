@@ -1,8 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import { SectionHeader } from "../components/ui/SectionHeader";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
+import { StatusPill } from "../components/ui/StatusPill";
+import { ToggleSwitch } from "../components/ui/ToggleSwitch";
 import { api, toErrorMessage } from "../lib/api";
 import type { ContinueConversationPayload, MessageItem } from "../types/api";
+
+const modeOptions = [
+  { value: "default", label: "Default" },
+  { value: "fast", label: "Fast" },
+  { value: "balanced", label: "Balanced" },
+];
+
+function formatTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
+}
 
 export function ConversationPage() {
   const [searchParams] = useSearchParams();
@@ -26,6 +44,15 @@ export function ConversationPage() {
       void loadMessages(conversationIdFromQuery);
     }
   }, [conversationIdFromQuery]);
+
+  const messageStats = useMemo(() => {
+    const userMessages = messages.filter((message) => message.role === "user").length;
+    return {
+      total: messages.length,
+      user: userMessages,
+      assistant: messages.length - userMessages,
+    };
+  }, [messages]);
 
   async function loadMessages(targetId = conversationId) {
     const trimmedId = targetId.trim();
@@ -95,144 +122,165 @@ export function ConversationPage() {
   }
 
   return (
-    <div className="page">
-      <section className="hero-card" style={{ padding: 28 }}>
-        <div className="badge">多轮主链路</div>
-        <h2 style={{ marginBottom: 10 }}>多轮对话区</h2>
-        <p className="muted">
-          这里承接消息列表、继续追问、上下文预览和 follow-up task 触发逻辑。
-        </p>
-      </section>
-
-      <section className="panel">
-        <h3 className="section-title">当前会话</h3>
-        <div className="form-row">
-          <input
-            className="input"
-            value={conversationId}
-            onChange={(event) => setConversationId(event.target.value)}
-            placeholder="输入 conversation_id"
-            style={{ flex: "1 1 320px" }}
-          />
-          <button className="secondary-button" onClick={() => loadMessages()} disabled={loadingMessages}>
-            {loadingMessages ? "加载中..." : "加载消息"}
+    <div className="conversation-grid">
+      <aside className="pane">
+        <SectionHeader title="Session" eyebrow="Context" />
+        <div className="content-pad content-grid">
+          <label>
+            <span className="field-label">Conversation ID</span>
+            <input
+              className="input"
+              onChange={(event) => setConversationId(event.target.value)}
+              placeholder="输入 conversation_id"
+              value={conversationId}
+            />
+          </label>
+          <button className="secondary-button" disabled={loadingMessages} onClick={() => loadMessages()} type="button">
+            {loadingMessages ? "加载中" : "加载消息"}
           </button>
-        </div>
-        <div className="status-line">{status}</div>
-      </section>
-
-      <section className="grid-two">
-        <div className="panel">
-          <h3 className="section-title">消息区</h3>
-          {messages.length ? (
-            <div className="message-list">
-              {messages.map((message) => (
-                <article className={`message-bubble ${message.role === "user" ? "message-user" : ""}`} key={message.message_id}>
-                  <div className="message-meta">
-                    <strong>{message.role}</strong>
-                    <span>{new Date(message.created_at).toLocaleString()}</span>
-                  </div>
-                  <p>{message.content}</p>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state">当前没有可展示消息。发送追问后会出现在这里。</div>
-          )}
+          <div className="status-line">{status}</div>
         </div>
 
-        <div className="panel">
-          <h3 className="section-title">继续追问</h3>
-          <div className="form-stack">
-            <label>
-              <div className="field-label">追问内容</div>
-              <textarea
-                className="input textarea"
-                value={content}
-                onChange={(event) => setContent(event.target.value)}
-                placeholder="输入本轮追问"
-              />
-            </label>
-            <label>
-              <div className="field-label">聚焦方向</div>
-              <input
-                className="input"
-                value={focus}
-                onChange={(event) => setFocus(event.target.value)}
-                placeholder="例如 benchmark evaluation"
-              />
-            </label>
-            <div className="form-row">
-              <label style={{ flex: "1 1 160px" }}>
-                <div className="field-label">任务模式</div>
-                <select className="input" value={mode} onChange={(event) => setMode(event.target.value)}>
-                  <option value="default">default</option>
-                  <option value="fast">fast</option>
-                  <option value="balanced">balanced</option>
-                </select>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={createFollowUpTask}
-                  onChange={(event) => setCreateFollowUpTask(event.target.checked)}
-                />
-                创建 follow-up task
-              </label>
+        <SectionHeader title="Message Stats" eyebrow="Flow" />
+        <div className="metrics-strip" style={{ borderLeft: 0, borderRight: 0, borderRadius: 0 }}>
+          <div className="metric-cell">
+            <div className="metric-label">Total</div>
+            <div className="metric-value">{messageStats.total}</div>
+          </div>
+          <div className="metric-cell">
+            <div className="metric-label">User</div>
+            <div className="metric-value">{messageStats.user}</div>
+          </div>
+          <div className="metric-cell">
+            <div className="metric-label">Agent</div>
+            <div className="metric-value">{messageStats.assistant}</div>
+          </div>
+          <div className="metric-cell">
+            <div className="metric-label">Mode</div>
+            <div className="metric-value" style={{ fontSize: "0.8rem" }}>
+              {mode}
             </div>
-            <button className="primary-button" onClick={handleContinueConversation} disabled={sending}>
-              {sending ? "发送中..." : "发送追问"}
-            </button>
           </div>
         </div>
-      </section>
 
-      <section className="grid-two">
-        <div className="panel">
-          <h3 className="section-title">Context Preview</h3>
+        <SectionHeader title="Context Preview" eyebrow={`${latestContinue?.context_preview.length ?? 0} lines`} />
+        <div className="pane-scroll" style={{ maxHeight: 260 }}>
           {latestContinue?.context_preview.length ? (
-            <ul className="list">
+            <ul className="compact-list">
               {latestContinue.context_preview.map((item, index) => (
-                <li className="list-item" key={`${item}-${index}`}>
-                  {item}
+                <li className="compact-item" key={`${item}-${index}`}>
+                  <div className="fine-print">{item}</div>
                 </li>
               ))}
             </ul>
           ) : (
-            <div className="empty-state">发送追问后，这里会展示后端返回的最近上下文预览。</div>
+            <div className="content-pad">
+              <div className="empty-state">发送追问后展示最近上下文预览。</div>
+            </div>
           )}
         </div>
+      </aside>
 
-        <div className="panel">
-          <h3 className="section-title">Follow-up Task</h3>
-          {latestContinue?.follow_up_task ? (
-            <div className="list">
-              <div className="list-item">
-                <strong>{latestContinue.follow_up_task.topic}</strong>
-                <div className="muted">状态：{latestContinue.follow_up_task.status}</div>
-                <code>{latestContinue.follow_up_task.task_id}</code>
-                <div className="button-row" style={{ marginTop: 12 }}>
-                  <button
-                    className="primary-button"
-                    onClick={() => runFollowUpTask(latestContinue.follow_up_task!.task_id)}
-                    disabled={runningTaskId === latestContinue.follow_up_task.task_id}
-                  >
-                    {runningTaskId === latestContinue.follow_up_task.task_id ? "运行中..." : "运行并打开工作台"}
-                  </button>
-                  <Link
-                    className="secondary-button link-button"
-                    to={`/workspace?task_id=${encodeURIComponent(latestContinue.follow_up_task.task_id)}`}
-                  >
-                    只打开工作台
-                  </Link>
+      <main className="pane">
+        <SectionHeader
+          actions={
+            messages.length ? (
+              <StatusPill tone="info" compact>
+                {messages.length} messages
+              </StatusPill>
+            ) : null
+          }
+          title="Conversation Log"
+          eyebrow="Messages"
+        />
+        <div className="pane-scroll message-feed">
+          {messages.length ? (
+            messages.map((message) => (
+              <article
+                className={`message-row ${message.role === "user" ? "message-user" : "message-assistant"}`}
+                key={message.message_id}
+              >
+                <div className="message-meta">
+                  <strong>{message.role}</strong>
+                  <span>{formatTime(message.created_at)}</span>
+                  <code>{message.message_id}</code>
                 </div>
+                <div className="message-body">{message.content}</div>
+              </article>
+            ))
+          ) : (
+            <div className="content-pad">
+              <div className="empty-state">当前没有可展示消息。发送追问后会出现在这里。</div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      <aside className="pane">
+        <SectionHeader title="Continue" eyebrow="Follow-up" />
+        <div className="content-pad form-grid">
+          <label>
+            <span className="field-label">追问内容</span>
+            <textarea
+              className="input textarea"
+              onChange={(event) => setContent(event.target.value)}
+              placeholder="输入本轮追问"
+              value={content}
+            />
+          </label>
+          <label>
+            <span className="field-label">聚焦方向</span>
+            <input
+              className="input"
+              onChange={(event) => setFocus(event.target.value)}
+              placeholder="例如 benchmark evaluation"
+              value={focus}
+            />
+          </label>
+          <div>
+            <span className="field-label">任务模式</span>
+            <SegmentedControl label="任务模式" onChange={setMode} options={modeOptions} value={mode} />
+          </div>
+          <ToggleSwitch checked={createFollowUpTask} label="创建 follow-up task" onChange={setCreateFollowUpTask} />
+          <button className="primary-button" disabled={sending} onClick={handleContinueConversation} type="button">
+            {sending ? "发送中" : "发送追问"}
+          </button>
+        </div>
+
+        <SectionHeader title="Task Handoff" eyebrow="Run / Open" />
+        <div className="content-pad">
+          {latestContinue?.follow_up_task ? (
+            <div className="content-grid">
+              <div>
+                <div className="insight-title">{latestContinue.follow_up_task.topic}</div>
+                <div className="fine-print">trigger: {latestContinue.follow_up_task.trigger_message_id ?? "-"}</div>
+              </div>
+              <div className="button-row">
+                <StatusPill tone="warning">{latestContinue.follow_up_task.status}</StatusPill>
+                <code>{latestContinue.follow_up_task.task_id}</code>
+              </div>
+              <div className="button-row">
+                <button
+                  className="primary-button"
+                  disabled={runningTaskId === latestContinue.follow_up_task.task_id}
+                  onClick={() => runFollowUpTask(latestContinue.follow_up_task!.task_id)}
+                  type="button"
+                >
+                  {runningTaskId === latestContinue.follow_up_task.task_id ? "运行中" : "运行并打开"}
+                </button>
+                <Link
+                  className="secondary-button"
+                  to={`/workspace?task_id=${encodeURIComponent(latestContinue.follow_up_task.task_id)}`}
+                >
+                  打开 Workspace
+                </Link>
               </div>
             </div>
           ) : (
             <div className="empty-state">勾选创建 follow-up task 后，发送追问即可在这里看到任务入口。</div>
           )}
         </div>
-      </section>
+      </aside>
     </div>
   );
 }
