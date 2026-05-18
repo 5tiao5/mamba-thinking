@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from product_agent.research_agent.models import PaperNode
 from product_agent.schemas.audit import AuditGap, AuditReport, AuditResult
 
-from .auditor import TaxonomyBranch, _canonical, _contains_phrase, _paper_search_text
+from .audit_common import TaxonomyBranch, canonical, contains_phrase, paper_search_text
 
 
 class TaxonomyAuditService:
@@ -41,27 +41,27 @@ class TaxonomyAuditService:
         reports: List[AuditReport] = []
         gaps: List[AuditGap] = []
         scores: List[float] = []
-        paper_texts = {paper_id: _paper_search_text(paper) for paper_id, paper in papers.items()}
+        paper_texts = {paper_id: paper_search_text(paper) for paper_id, paper in papers.items()}
         category_index = defaultdict(list)
 
         for paper_id, paper in papers.items():
             if paper.taxonomy_category:
-                category_index[_canonical(paper.taxonomy_category)].append(paper_id)
+                category_index[canonical(paper.taxonomy_category)].append(paper_id)
 
         for branch in taxonomy:
-            category_key = _canonical(branch.name)
+            category_key = canonical(branch.name)
             direct_matches = category_index.get(category_key, [])
             semantic_matches = [
                 paper_id
                 for paper_id, text in paper_texts.items()
-                if _contains_phrase(text, branch.name) or _contains_phrase(text, branch.description)
+                if contains_phrase(text, branch.name) or contains_phrase(text, branch.description)
             ]
             matched_papers = sorted(set(direct_matches + semantic_matches))
 
             concept_hits = []
             missing_concepts = []
             for concept in branch.required_concepts:
-                if any(_contains_phrase(text, concept) for text in paper_texts.values()):
+                if any(contains_phrase(text, concept) for text in paper_texts.values()):
                     concept_hits.append(concept)
                 else:
                     missing_concepts.append(concept)

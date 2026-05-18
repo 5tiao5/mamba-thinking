@@ -16,6 +16,20 @@ class CreateConversationResponse(BaseModel):
     title: str
 
 
+class ConversationSummaryView(BaseModel):
+    conversation_id: str
+    topic: str
+    title: str
+    status: str
+    latest_task_id: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class ConversationDetailResponse(ConversationSummaryView):
+    message_count: int = 0
+
+
 class SendMessageRequest(BaseModel):
     role: str = Field(..., description="消息角色，通常为 user")
     content: str = Field(..., description="用户输入内容")
@@ -44,3 +58,7 @@ class ContinueConversationResponse(BaseModel):
     message_id: Optional[str] = None
     context_preview: list[str] = Field(default_factory=list)
     follow_up_task: Optional[FollowUpTaskPreview] = None
+
+
+class ListConversationsResponse(BaseModel):
+    items: list[ConversationSummaryView] = Field(default_factory=list)

@@ -19,6 +19,21 @@ class CreateResearchTaskResponse(BaseModel):
     status: str
 
 
+class ResearchTaskSummaryView(BaseModel):
+    task_id: str
+    conversation_id: str
+    topic: str
+    status: str
+    mode: str
+    trigger_message_id: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class ListResearchTasksResponse(BaseModel):
+    items: List[ResearchTaskSummaryView] = Field(default_factory=list)
+
+
 class WorkspacePaperView(BaseModel):
     paper_id: str
     title: str

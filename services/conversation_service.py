@@ -61,3 +61,15 @@ class ConversationService:
         - 后续的 `ContextService`
         """
         return self.repository.get(conversation_id)
+
+    def list_conversations(self, *, limit: int | None = None) -> list[Conversation]:
+        """
+        列出历史会话，默认按最近更新时间倒序返回。
+        调用者:
+        - `ProductApiHandlers.list_conversations`
+        - 后续 `HistoryService`
+        """
+        items = self.repository.list_all()
+        if limit is not None:
+            return items[:limit]
+        return items

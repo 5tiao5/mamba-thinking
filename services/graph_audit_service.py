@@ -5,14 +5,14 @@ from typing import Dict, List, Tuple
 from product_agent.research_agent.models import EvolutionEdge, PaperNode
 from product_agent.schemas.audit import AuditGap, AuditReport, AuditResult
 
-from .auditor import (
+from .audit_common import (
     EVALUATION_TERMS,
     IMPROVEMENT_TERMS,
     LOW_CONFIDENCE_THRESHOLD,
     OVERLAP_THRESHOLD,
-    _canonical,
-    _keyword_overlap,
-    _paper_search_text,
+    canonical,
+    keyword_overlap,
+    paper_search_text,
 )
 
 
@@ -79,8 +79,8 @@ class GraphAuditService:
                 )
                 continue
 
-            same_category = _canonical(source.taxonomy_category) == _canonical(target.taxonomy_category)
-            overlap = _keyword_overlap(source, target)
+            same_category = canonical(source.taxonomy_category) == canonical(target.taxonomy_category)
+            overlap = keyword_overlap(source, target)
             if not same_category and overlap < OVERLAP_THRESHOLD:
                 failed_checks += 1
                 reports.append(
@@ -107,7 +107,7 @@ class GraphAuditService:
             relationship = edge.relationship.lower().strip()
             if relationship in {"improves", "improve", "extends", "solves"}:
                 total_checks += 1
-                evidence_text = _paper_search_text(target)
+                evidence_text = paper_search_text(target)
                 has_claim = any(term in evidence_text for term in IMPROVEMENT_TERMS)
                 has_eval = any(term in evidence_text for term in EVALUATION_TERMS)
                 if not (has_claim and has_eval):

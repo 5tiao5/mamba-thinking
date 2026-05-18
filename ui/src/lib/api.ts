@@ -1,7 +1,10 @@
 import type {
   ContinueConversationPayload,
+  ConversationDetailItem,
   ConversationResponsePayload,
+  ConversationSummaryItem,
   MessageItem,
+  ResearchTaskSummaryItem,
   SkillItem,
   ToolItem,
   WorkspaceSnapshot,
@@ -67,6 +70,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  listConversations: (params?: { limit?: number }) => {
+    const query = params?.limit ? `?limit=${params.limit}` : "";
+    return request<{ success: boolean; data: { items: ConversationSummaryItem[] } }>(`/conversations${query}`);
+  },
+  getConversation: (conversationId: string) =>
+    request<{ success: boolean; data: ConversationDetailItem }>(`/conversations/${conversationId}`),
   listMessages: (conversationId: string) => {
     if (conversationId === DEMO_CONVERSATION_ID) {
       return Promise.resolve({
@@ -120,6 +129,19 @@ export const api = {
         body: JSON.stringify(payload),
       }
     ),
+  listTasks: (params?: { conversation_id?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.conversation_id) {
+      search.set("conversation_id", params.conversation_id);
+    }
+    if (params?.limit) {
+      search.set("limit", String(params.limit));
+    }
+    const query = search.toString();
+    return request<{ success: boolean; data: { items: ResearchTaskSummaryItem[] } }>(
+      `/research/tasks${query ? `?${query}` : ""}`
+    );
+  },
   runTask: (taskId: string) => {
     if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
       return Promise.resolve({

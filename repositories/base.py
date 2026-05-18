@@ -32,6 +32,10 @@ class ConversationRepository(Protocol):
         """更新会话状态并返回更新后的对象。"""
         ...
 
+    def list_all(self) -> list[Conversation]:
+        """列出所有会话，默认按最近更新时间倒序返回。"""
+        ...
+
 
 class MessageRepository(Protocol):
     """消息存储接口。"""
@@ -58,6 +62,10 @@ class ResearchTaskRepository(Protocol):
 
     def update(self, task: ResearchTask) -> ResearchTask:
         """更新任务状态。"""
+        ...
+
+    def list_all(self) -> list[ResearchTask]:
+        """列出所有研究任务，默认按最近更新时间倒序返回。"""
         ...
 
 

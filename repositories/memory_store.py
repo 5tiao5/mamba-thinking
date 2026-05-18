@@ -25,6 +25,10 @@ class InMemoryConversationRepository:
         self._items[conversation.conversation_id] = stored
         return deepcopy(stored)
 
+    def list_all(self) -> list[Conversation]:
+        items = sorted(self._items.values(), key=lambda item: item.updated_at, reverse=True)
+        return [deepcopy(item) for item in items]
+
 
 class InMemoryMessageRepository:
     """开发期消息链路的内存实现。"""
@@ -62,6 +66,10 @@ class InMemoryResearchTaskRepository:
         stored = deepcopy(task)
         self._items[task.task_id] = stored
         return deepcopy(stored)
+
+    def list_all(self) -> list[ResearchTask]:
+        items = sorted(self._items.values(), key=lambda item: item.updated_at, reverse=True)
+        return [deepcopy(item) for item in items]
 
 
 class InMemoryWorkspaceRepository:

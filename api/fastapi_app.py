@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Path
+from fastapi import FastAPI, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from product_agent.app_container import AppContainer
@@ -58,6 +58,14 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     def create_conversation(request: CreateConversationRequest):
         return handlers.create_conversation(request).model_dump()
 
+    @app.get("/conversations")
+    def list_conversations(limit: int | None = Query(default=None, ge=1, le=100, description="最多返回多少条会话")):
+        return handlers.list_conversations(limit=limit).model_dump()
+
+    @app.get("/conversations/{conversation_id}")
+    def get_conversation(conversation_id: str = Path(..., description="会话 ID")):
+        return handlers.get_conversation(conversation_id).model_dump()
+
     @app.get("/conversations/{conversation_id}/messages")
     def list_messages(conversation_id: str = Path(..., description="会话 ID")):
         return handlers.list_messages(conversation_id).model_dump()
@@ -76,6 +84,13 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.post("/research/tasks")
     def create_research_task(request: CreateResearchTaskRequest):
         return handlers.create_research_task(request).model_dump()
+
+    @app.get("/research/tasks")
+    def list_research_tasks(
+        conversation_id: str | None = Query(default=None, description="按会话 ID 过滤任务"),
+        limit: int | None = Query(default=None, ge=1, le=100, description="最多返回多少条任务"),
+    ):
+        return handlers.list_research_tasks(conversation_id=conversation_id, limit=limit).model_dump()
 
     @app.post("/research/tasks/{task_id}/run")
     def run_research_task(task_id: str = Path(..., description="研究任务 ID")):

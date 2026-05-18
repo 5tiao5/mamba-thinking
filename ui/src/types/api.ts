@@ -4,6 +4,20 @@ export type ConversationResponsePayload = {
   title: string;
 };
 
+export type ConversationSummaryItem = {
+  conversation_id: string;
+  topic: string;
+  title: string;
+  status: string;
+  latest_task_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationDetailItem = ConversationSummaryItem & {
+  message_count: number;
+};
+
 export type MessageItem = {
   message_id: string;
   conversation_id: string;
@@ -18,6 +32,17 @@ export type FollowUpTaskItem = {
   topic: string;
   status: string;
   trigger_message_id?: string | null;
+};
+
+export type ResearchTaskSummaryItem = {
+  task_id: string;
+  conversation_id: string;
+  topic: string;
+  status: string;
+  mode: string;
+  trigger_message_id?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ContinueConversationPayload = {
