@@ -6,8 +6,26 @@ import type {
   ToolItem,
   WorkspaceSnapshot,
 } from "../types/api";
+import {
+  DEMO_CONVERSATION_ID,
+  DEMO_FOLLOW_UP_TASK_ID,
+  DEMO_WORKSPACE_TASK_ID,
+  demoContinueResponse,
+  demoMessages,
+  demoSkills,
+  demoTools,
+  demoWorkspace,
+} from "./demoData";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+type ApiFailurePayload = {
+  success: false;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -22,7 +40,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`HTTP ${response.status}`);
   }
 
-  return response.json() as Promise<T>;
+  const payload = (await response.json()) as T | ApiFailurePayload;
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "success" in payload &&
+    payload.success === false
+  ) {
+    throw new Error(payload.error?.message ?? payload.error?.code ?? "Request failed");
+  }
+
+  return payload as T;
+}
+
+export function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 export const api = {
@@ -32,10 +67,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  listMessages: (conversationId: string) =>
-    request<{ success: boolean; data: { conversation_id: string; items: MessageItem[] } }>(
+  listMessages: (conversationId: string) => {
+    if (conversationId === DEMO_CONVERSATION_ID) {
+      return Promise.resolve({
+        success: true,
+        data: { conversation_id: conversationId, items: demoMessages },
+      });
+    }
+    return request<{ success: boolean; data: { conversation_id: string; items: MessageItem[] } }>(
       `/conversations/${conversationId}/messages`
-    ),
+    );
+  },
   createMessage: (conversationId: string, payload: { role?: string; content: string; metadata?: Record<string, unknown> }) =>
     request<{ success: boolean; data: MessageItem }>(`/conversations/${conversationId}/messages`, {
       method: "POST",
@@ -47,11 +89,23 @@ export const api = {
     focus?: string;
     create_follow_up_task?: boolean;
     mode?: string;
-  }) =>
-    request<{ success: boolean; data: ContinueConversationPayload }>("/conversations/continue", {
+  }) => {
+    if (payload.conversation_id === DEMO_CONVERSATION_ID) {
+      return Promise.resolve({
+        success: true,
+        data: {
+          ...demoContinueResponse,
+          message: payload.content,
+          next_focus: payload.focus || demoContinueResponse.next_focus,
+          follow_up_task: payload.create_follow_up_task === false ? null : demoContinueResponse.follow_up_task,
+        },
+      });
+    }
+    return request<{ success: boolean; data: ContinueConversationPayload }>("/conversations/continue", {
       method: "POST",
       body: JSON.stringify(payload),
-    }),
+    });
+  },
   createTask: (payload: {
     conversation_id: string;
     topic: string;
@@ -66,15 +120,58 @@ export const api = {
         body: JSON.stringify(payload),
       }
     ),
-  runTask: (taskId: string) =>
-    request<{ success: boolean; data: { task_id: string; topic: string; alignment_score: number } }>(
+  runTask: (taskId: string) => {
+    if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
+      return Promise.resolve({
+        success: true,
+        data: {
+          task_id: taskId,
+          topic: demoWorkspace.topic,
+          alignment_score: demoWorkspace.alignment_score,
+        },
+      });
+    }
+    return request<{ success: boolean; data: { task_id: string; topic: string; alignment_score: number } }>(
       `/research/tasks/${taskId}/run`,
       {
         method: "POST",
       }
-    ),
-  getWorkspace: (taskId: string) =>
-    request<{ success: boolean; data: WorkspaceSnapshot }>(`/research/tasks/${taskId}/workspace`),
-  listTools: () => request<{ success: boolean; data: ToolItem[] }>("/tools"),
-  listSkills: () => request<{ success: boolean; data: SkillItem[] }>("/skills"),
+    );
+  },
+  getWorkspace: (taskId: string) => {
+    if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
+      return Promise.resolve({
+        success: true,
+        data: { ...demoWorkspace, task_id: taskId },
+      });
+    }
+    return request<{ success: boolean; data: WorkspaceSnapshot }>(`/research/tasks/${taskId}/workspace`);
+  },
+  listTools: async () => {
+    try {
+      return await request<{ success: boolean; data: ToolItem[] }>("/tools");
+    } catch {
+      return { success: true, data: demoTools };
+    }
+  },
+  updateTool: (toolId: string, payload: { enabled: boolean; config: Record<string, unknown> }) => {
+    const demoTool = demoTools.find((tool) => tool.tool_id === toolId);
+    if (demoTool) {
+      return Promise.resolve({
+        success: true,
+        data: { ...demoTool, enabled: payload.enabled, config: payload.config },
+      });
+    }
+    return request<{ success: boolean; data: ToolItem }>(`/tools/${toolId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+  listSkills: async () => {
+    try {
+      return await request<{ success: boolean; data: SkillItem[] }>("/skills");
+    } catch {
+      return { success: true, data: demoSkills };
+    }
+  },
 };
