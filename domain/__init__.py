@@ -4,6 +4,7 @@ from .entities import (
     KnowledgeDocument,
     MessageRecord,
     PaperRecord,
+    ResearchIdea,
     ResearchIdeaRecord,
     ResearchTask,
     ResearchWorkspace,
