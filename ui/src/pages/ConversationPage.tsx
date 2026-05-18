@@ -9,10 +9,28 @@ import { api, toErrorMessage } from "../lib/api";
 import type { ContinueConversationPayload, MessageItem } from "../types/api";
 
 const modeOptions = [
-  { value: "default", label: "Default" },
-  { value: "fast", label: "Fast" },
-  { value: "balanced", label: "Balanced" },
+  { value: "default", label: "标准" },
+  { value: "fast", label: "快速" },
+  { value: "balanced", label: "均衡" },
 ];
+
+const modeLabelMap: Record<string, string> = {
+  default: "标准",
+  fast: "快速",
+  balanced: "均衡",
+};
+
+const roleLabelMap: Record<MessageItem["role"], string> = {
+  user: "用户",
+  assistant: "助手",
+};
+
+const taskStatusLabelMap: Record<string, string> = {
+  pending: "待运行",
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+};
 
 function formatTime(value: string) {
   const date = new Date(value);
@@ -28,12 +46,12 @@ export function ConversationPage() {
   const conversationIdFromQuery = searchParams.get("conversation_id") ?? "";
   const [conversationId, setConversationId] = useState(conversationIdFromQuery);
   const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [content, setContent] = useState("Only focus on benchmark and evaluation papers");
-  const [focus, setFocus] = useState("benchmark evaluation");
+  const [content, setContent] = useState("只关注近两年的 benchmark 与 evaluation papers");
+  const [focus, setFocus] = useState("评测指标与成本控制");
   const [mode, setMode] = useState("balanced");
   const [createFollowUpTask, setCreateFollowUpTask] = useState(true);
   const [latestContinue, setLatestContinue] = useState<ContinueConversationPayload | null>(null);
-  const [status, setStatus] = useState("输入 conversation_id 后加载消息，或从首页创建会话后进入本页。");
+  const [status, setStatus] = useState("从首页进入会话后会自动加载消息，也可以使用演示入口查看流程。");
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [runningTaskId, setRunningTaskId] = useState("");
@@ -57,7 +75,7 @@ export function ConversationPage() {
   async function loadMessages(targetId = conversationId) {
     const trimmedId = targetId.trim();
     if (!trimmedId) {
-      setStatus("请先输入 conversation_id。");
+      setStatus("请先从首页创建或选择一个会话。");
       return;
     }
 
@@ -79,7 +97,7 @@ export function ConversationPage() {
     const trimmedId = conversationId.trim();
     const trimmedContent = content.trim();
     if (!trimmedId) {
-      setStatus("请先输入 conversation_id。");
+      setStatus("请先从首页创建或选择一个会话。");
       return;
     }
     if (!trimmedContent) {
@@ -99,7 +117,7 @@ export function ConversationPage() {
       });
       setLatestContinue(response.data);
       setContent("");
-      setStatus(response.data.follow_up_task ? "追问已发送，并已创建 follow-up task。" : "追问已发送。");
+      setStatus(response.data.follow_up_task ? "追问已发送，并已生成后续研究任务。" : "追问已发送。");
       await loadMessages(trimmedId);
     } catch (error) {
       setStatus(`发送失败：${toErrorMessage(error)}`);
@@ -110,7 +128,7 @@ export function ConversationPage() {
 
   async function runFollowUpTask(taskId: string) {
     setRunningTaskId(taskId);
-    setStatus("正在运行 follow-up task，完成后将打开工作台...");
+    setStatus("正在运行后续研究任务，完成后将打开工作台...");
     try {
       await api.runTask(taskId);
       navigate(`/workspace?task_id=${encodeURIComponent(taskId)}`);
@@ -124,14 +142,14 @@ export function ConversationPage() {
   return (
     <div className="conversation-grid">
       <aside className="pane">
-        <SectionHeader title="Session" eyebrow="Context" />
+        <SectionHeader title="当前会话" eyebrow="研究上下文" />
         <div className="content-pad content-grid">
           <label>
-            <span className="field-label">Conversation ID</span>
+            <span className="field-label">当前会话</span>
             <input
               className="input"
               onChange={(event) => setConversationId(event.target.value)}
-              placeholder="输入 conversation_id"
+              placeholder="从首页进入后自动填充"
               value={conversationId}
             />
           </label>
@@ -141,29 +159,29 @@ export function ConversationPage() {
           <div className="status-line">{status}</div>
         </div>
 
-        <SectionHeader title="Message Stats" eyebrow="Flow" />
+        <SectionHeader title="对话统计" eyebrow="消息概览" />
         <div className="metrics-strip" style={{ borderLeft: 0, borderRight: 0, borderRadius: 0 }}>
           <div className="metric-cell">
-            <div className="metric-label">Total</div>
+            <div className="metric-label">全部</div>
             <div className="metric-value">{messageStats.total}</div>
           </div>
           <div className="metric-cell">
-            <div className="metric-label">User</div>
+            <div className="metric-label">用户</div>
             <div className="metric-value">{messageStats.user}</div>
           </div>
           <div className="metric-cell">
-            <div className="metric-label">Agent</div>
+            <div className="metric-label">助手</div>
             <div className="metric-value">{messageStats.assistant}</div>
           </div>
           <div className="metric-cell">
-            <div className="metric-label">Mode</div>
+            <div className="metric-label">模式</div>
             <div className="metric-value" style={{ fontSize: "0.8rem" }}>
-              {mode}
+              {modeLabelMap[mode] ?? mode}
             </div>
           </div>
         </div>
 
-        <SectionHeader title="Context Preview" eyebrow={`${latestContinue?.context_preview.length ?? 0} lines`} />
+        <SectionHeader title="上下文预览" eyebrow={`${latestContinue?.context_preview.length ?? 0} 条`} />
         <div className="pane-scroll" style={{ maxHeight: 260 }}>
           {latestContinue?.context_preview.length ? (
             <ul className="compact-list">
@@ -186,12 +204,12 @@ export function ConversationPage() {
           actions={
             messages.length ? (
               <StatusPill tone="info" compact>
-                {messages.length} messages
+                {messages.length} 条消息
               </StatusPill>
             ) : null
           }
-          title="Conversation Log"
-          eyebrow="Messages"
+          title="对话记录"
+          eyebrow="消息"
         />
         <div className="pane-scroll message-feed">
           {messages.length ? (
@@ -201,9 +219,8 @@ export function ConversationPage() {
                 key={message.message_id}
               >
                 <div className="message-meta">
-                  <strong>{message.role}</strong>
+                  <strong>{roleLabelMap[message.role] ?? message.role}</strong>
                   <span>{formatTime(message.created_at)}</span>
-                  <code>{message.message_id}</code>
                 </div>
                 <div className="message-body">{message.content}</div>
               </article>
@@ -217,7 +234,7 @@ export function ConversationPage() {
       </main>
 
       <aside className="pane">
-        <SectionHeader title="Continue" eyebrow="Follow-up" />
+        <SectionHeader title="继续追问" eyebrow="生成后续任务" />
         <div className="content-pad form-grid">
           <label>
             <span className="field-label">追问内容</span>
@@ -233,7 +250,7 @@ export function ConversationPage() {
             <input
               className="input"
               onChange={(event) => setFocus(event.target.value)}
-              placeholder="例如 benchmark evaluation"
+              placeholder="例如：评测指标、成本控制"
               value={focus}
             />
           </label>
@@ -241,23 +258,24 @@ export function ConversationPage() {
             <span className="field-label">任务模式</span>
             <SegmentedControl label="任务模式" onChange={setMode} options={modeOptions} value={mode} />
           </div>
-          <ToggleSwitch checked={createFollowUpTask} label="创建 follow-up task" onChange={setCreateFollowUpTask} />
+          <ToggleSwitch checked={createFollowUpTask} label="生成后续研究任务" onChange={setCreateFollowUpTask} />
           <button className="primary-button" disabled={sending} onClick={handleContinueConversation} type="button">
             {sending ? "发送中" : "发送追问"}
           </button>
         </div>
 
-        <SectionHeader title="Task Handoff" eyebrow="Run / Open" />
+        <SectionHeader title="后续研究" eyebrow="任务入口" />
         <div className="content-pad">
           {latestContinue?.follow_up_task ? (
             <div className="content-grid">
               <div>
                 <div className="insight-title">{latestContinue.follow_up_task.topic}</div>
-                <div className="fine-print">trigger: {latestContinue.follow_up_task.trigger_message_id ?? "-"}</div>
+                <div className="fine-print">由本轮追问触发，已准备进入工作台分析。</div>
               </div>
               <div className="button-row">
-                <StatusPill tone="warning">{latestContinue.follow_up_task.status}</StatusPill>
-                <code>{latestContinue.follow_up_task.task_id}</code>
+                <StatusPill tone="warning">
+                  {taskStatusLabelMap[latestContinue.follow_up_task.status] ?? latestContinue.follow_up_task.status}
+                </StatusPill>
               </div>
               <div className="button-row">
                 <button
@@ -272,12 +290,12 @@ export function ConversationPage() {
                   className="secondary-button"
                   to={`/workspace?task_id=${encodeURIComponent(latestContinue.follow_up_task.task_id)}`}
                 >
-                  打开 Workspace
+                  打开工作台
                 </Link>
               </div>
             </div>
           ) : (
-            <div className="empty-state">勾选创建 follow-up task 后，发送追问即可在这里看到任务入口。</div>
+            <div className="empty-state">勾选生成后续研究任务后，发送追问即可在这里看到任务入口。</div>
           )}
         </div>
       </aside>

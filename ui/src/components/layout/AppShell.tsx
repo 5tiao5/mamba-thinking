@@ -1,32 +1,31 @@
 import { NavLink, useLocation, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
 
-import { API_BASE_URL, api } from "../../lib/api";
+import { api } from "../../lib/api";
 import { StatusPill } from "../ui/StatusPill";
 
 const navItems = [
-  { to: "/", label: "Launch", description: "新建研究" },
-  { to: "/conversation", label: "Conversation", description: "多轮追问" },
-  { to: "/workspace", label: "Workspace", description: "结果分析" },
-  { to: "/history", label: "History", description: "历史入口" },
-  { to: "/settings", label: "Settings", description: "工具配置" },
+  { to: "/", label: "新建研究", description: "创建主题" },
+  { to: "/conversation", label: "多轮追问", description: "收窄问题" },
+  { to: "/workspace", label: "研究工作台", description: "结果分析" },
+  { to: "/history", label: "历史记录", description: "回看研究" },
+  { to: "/settings", label: "工具设置", description: "能力配置" },
 ];
 
 const routeTitles: Record<string, string> = {
-  "/": "Research Launch",
-  "/conversation": "Conversation Workflow",
-  "/workspace": "Research Workspace",
-  "/history": "History",
-  "/settings": "Tools & Skills",
+  "/": "新建研究",
+  "/conversation": "多轮追问",
+  "/workspace": "研究工作台",
+  "/history": "历史记录",
+  "/settings": "工具与能力",
 };
 
 export function AppShell({ children }: PropsWithChildren) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking");
-  const contextId = searchParams.get("task_id") ?? searchParams.get("conversation_id") ?? "";
-  const activeTitle = routeTitles[location.pathname] ?? "Product Agent";
-  const contextLabel = searchParams.get("task_id") ? "task" : searchParams.get("conversation_id") ? "conversation" : "context";
+  const activeTitle = routeTitles[location.pathname] ?? "科研调研工作台";
+  const hasActiveContext = Boolean(searchParams.get("task_id") ?? searchParams.get("conversation_id"));
 
   useEffect(() => {
     let cancelled = false;
@@ -74,8 +73,8 @@ export function AppShell({ children }: PropsWithChildren) {
         </nav>
 
         <div className="sidebar-footer">
-          <span>API</span>
-          <code>{API_BASE_URL.replace(/^https?:\/\//, "")}</code>
+          <span>主链路</span>
+          <strong>会话 / 任务 / 工作台</strong>
         </div>
       </aside>
 
@@ -83,15 +82,11 @@ export function AppShell({ children }: PropsWithChildren) {
         <header className="top-context-bar">
           <div className="top-context-title">
             <span>{activeTitle}</span>
-            {contextId ? (
-              <code>
-                {contextLabel}:{contextId}
-              </code>
-            ) : null}
+            {hasActiveContext ? <small>当前研究上下文已载入</small> : null}
           </div>
           <div className="top-context-meta">
             <StatusPill tone={statusTone} compact>
-              API {apiStatus}
+              {apiStatus === "online" ? "服务可用" : apiStatus === "offline" ? "服务未连接" : "服务检查中"}
             </StatusPill>
             <span>{new Date().toLocaleDateString()}</span>
           </div>

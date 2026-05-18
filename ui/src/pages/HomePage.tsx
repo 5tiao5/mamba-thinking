@@ -9,33 +9,52 @@ import { api, toErrorMessage } from "../lib/api";
 import {
   DEMO_CONVERSATION_ID,
   DEMO_WORKSPACE_TASK_ID,
-  demoMessages,
-  demoSkills,
-  demoTools,
   demoWorkspace,
 } from "../lib/demoData";
 import type { ConversationResponsePayload } from "../types/api";
 
 const modeOptions = [
-  { value: "default", label: "Default" },
-  { value: "fast", label: "Fast" },
-  { value: "balanced", label: "Balanced" },
+  { value: "default", label: "标准" },
+  { value: "fast", label: "快速" },
+  { value: "balanced", label: "均衡" },
 ];
 
-const apiContracts = [
-  { method: "POST", path: "/conversations", surface: "Launch", status: "ready" },
-  { method: "GET", path: "/conversations/{id}/messages", surface: "Conversation", status: "ready" },
-  { method: "POST", path: "/conversations/continue", surface: "Conversation", status: "ready" },
-  { method: "POST", path: "/research/tasks", surface: "Launch", status: "ready" },
-  { method: "POST", path: "/research/tasks/{id}/run", surface: "Workspace", status: "ready" },
-  { method: "GET", path: "/research/tasks/{id}/workspace", surface: "Workspace", status: "ready" },
-  { method: "GET", path: "/tools", surface: "Settings", status: "ready" },
-  { method: "GET", path: "/conversations", surface: "History", status: "missing" },
+const researchPrompts = [
+  "聚焦近两年的 benchmark 与 evaluation papers，归纳仍未覆盖的评测维度。",
+  "比较 tool-use agent 和 code agent 在任务拆解、失败恢复、成本控制上的差异。",
+  "从现有论文中提炼 3 个可落地的新研究选题，并说明动机和可行性。",
+  "只保留高相关论文，按方法、场景、评价指标重新组织 taxonomy。",
+];
+
+const workspaceSections = [
+  { label: "论文线索", value: demoWorkspace.papers.length },
+  { label: "研究空白", value: demoWorkspace.gaps.length },
+  { label: "选题建议", value: demoWorkspace.ideas.length },
+  { label: "关系线索", value: demoWorkspace.graph_edges.length },
+];
+
+const outputPreviews = [
+  {
+    title: "论文线索",
+    description: "整理和筛选主题相关论文，保留来源、年份、引用数和研究分类，方便快速判断阅读优先级。",
+  },
+  {
+    title: "研究空白",
+    description: "从论文集合中提炼尚未被充分覆盖的问题，并给出支撑证据，帮助你定位可继续深入的方向。",
+  },
+  {
+    title: "选题建议",
+    description: "基于已有论文和研究空白生成候选选题，补充动机、方法思路、可行性和预期贡献。",
+  },
+  {
+    title: "研究过程",
+    description: "保留本次研究使用过的上下文、检索动作和分析路径，方便后续回看、复用和继续追问。",
+  },
 ];
 
 export function HomePage() {
   const navigate = useNavigate();
-  const [topic, setTopic] = useState("AI Agent Tool Use");
+  const [topic, setTopic] = useState("AI Agent 工具使用评测");
   const [title, setTitle] = useState("Agent 调研");
   const [mode, setMode] = useState("balanced");
   const [useSharedKnowledge, setUseSharedKnowledge] = useState(false);
@@ -60,7 +79,7 @@ export function HomePage() {
       });
       setConversation(response.data);
       setTaskId("");
-      setStatus(`已创建会话：${response.data.conversation_id}`);
+      setStatus("会话已创建，可以进入对话继续追问。");
     } catch (error) {
       setStatus(`创建失败：${toErrorMessage(error)}`);
     } finally {
@@ -85,7 +104,7 @@ export function HomePage() {
         enabled_tools: [],
       });
       setTaskId(response.data.task_id);
-      setStatus(`已创建任务：${response.data.task_id}`);
+      setStatus("研究任务已创建，可以打开工作台运行或查看结果。");
     } catch (error) {
       setStatus(`创建任务失败：${toErrorMessage(error)}`);
     } finally {
@@ -108,11 +127,11 @@ export function HomePage() {
           <SectionHeader
             actions={
               <StatusPill tone={conversation ? "success" : "neutral"}>
-                {conversation ? "Session ready" : "Draft"}
+                {conversation ? "已准备" : "草稿"}
               </StatusPill>
             }
-            title="Research Command"
-            eyebrow="Create"
+            title="新建研究"
+            eyebrow="新建研究"
           />
           <div className="content-pad launch-command">
             <label>
@@ -151,24 +170,24 @@ export function HomePage() {
         </div>
 
         <div className="pane">
-          <SectionHeader title="Workflow State" eyebrow="Main path" />
+          <SectionHeader title="当前研究" eyebrow="研究流程" />
           <div className="workflow-steps">
             <div className="workflow-step">
               <div className="step-index">1</div>
               <div>
                 <div className="item-heading">
-                  <strong>Conversation</strong>
+                  <strong>研究会话</strong>
                   <StatusPill tone={conversation ? "success" : "neutral"} compact>
-                    {conversation ? "created" : "pending"}
+                    {conversation ? "已创建" : "待开始"}
                   </StatusPill>
                 </div>
                 {conversation ? (
                   <>
                     <div className="fine-print">{conversation.title}</div>
-                    <code>{conversation.conversation_id}</code>
+                    <div className="fine-print">{conversation.topic}</div>
                   </>
                 ) : (
-                  <div className="fine-print">等待 `POST /conversations` 返回会话上下文。</div>
+                  <div className="fine-print">创建会话后，系统会保存本次研究上下文。</div>
                 )}
               </div>
             </div>
@@ -176,117 +195,97 @@ export function HomePage() {
               <div className="step-index">2</div>
               <div>
                 <div className="item-heading">
-                  <strong>Follow-up</strong>
+                  <strong>多轮追问</strong>
                   <StatusPill tone={conversation ? "info" : "neutral"} compact>
-                    conversation route
+                    {conversation ? "可继续" : "等待会话"}
                   </StatusPill>
                 </div>
-                <div className="fine-print">进入多轮对话后，通过 `POST /conversations/continue` 创建追问任务。</div>
+                <div className="fine-print">围绕当前主题继续收窄问题，生成更具体的研究任务。</div>
               </div>
             </div>
             <div className="workflow-step">
               <div className="step-index">3</div>
               <div>
                 <div className="item-heading">
-                  <strong>Research Task</strong>
+                  <strong>研究工作台</strong>
                   <StatusPill tone={taskId ? "success" : "neutral"} compact>
-                    {taskId ? "created" : "optional"}
+                    {taskId ? "可打开" : "等待任务"}
                   </StatusPill>
                 </div>
                 {taskId ? (
                   <>
-                    <code>{taskId}</code>
                     <div className="button-row" style={{ marginTop: 8 }}>
                       <Link className="secondary-button" to={`/workspace?task_id=${encodeURIComponent(taskId)}`}>
-                        打开 Workspace
+                        打开工作台
                       </Link>
                     </div>
                   </>
                 ) : (
-                  <div className="fine-print">可直接创建任务，也可以从追问生成 follow-up task。</div>
+                  <div className="fine-print">工作台会集中展示论文、分类、研究空白和选题建议。</div>
                 )}
               </div>
             </div>
           </div>
 
-          <SectionHeader title="Preview Shortcuts" eyebrow="Demo data" />
+          <SectionHeader title="快速预览" eyebrow="示例研究" />
           <div className="content-pad button-row">
             <Link className="primary-button" to={`/conversation?conversation_id=${encodeURIComponent(DEMO_CONVERSATION_ID)}`}>
-              演示对话
+              预览对话
             </Link>
             <Link className="secondary-button" to={`/workspace?task_id=${encodeURIComponent(DEMO_WORKSPACE_TASK_ID)}`}>
-              演示工作台
+              预览工作台
             </Link>
             <Link className="ghost-button" to="/settings">
-              工具与 Skill
+              工具配置
             </Link>
           </div>
         </div>
       </section>
 
       <section className="metrics-strip">
-        <div className="metric-cell">
-          <div className="metric-label">Ready APIs</div>
-          <div className="metric-value">{apiContracts.filter((item) => item.status === "ready").length}</div>
-        </div>
-        <div className="metric-cell">
-          <div className="metric-label">Demo Papers</div>
-          <div className="metric-value">{demoWorkspace.papers.length}</div>
-        </div>
-        <div className="metric-cell">
-          <div className="metric-label">Research Gaps</div>
-          <div className="metric-value">{demoWorkspace.gaps.length}</div>
-        </div>
-        <div className="metric-cell">
-          <div className="metric-label">Tools / Skills</div>
-          <div className="metric-value">
-            {demoTools.length}/{demoSkills.length}
+        {workspaceSections.map((item) => (
+          <div className="metric-cell" key={item.label}>
+            <div className="metric-label">{item.label}</div>
+            <div className="metric-value">{item.value}</div>
           </div>
-        </div>
+        ))}
       </section>
 
       <section className="launch-ops-grid">
         <div className="pane">
-          <SectionHeader title="API Contract Map" eyebrow="Frontend surfaces" />
-          <div className="data-table-wrap">
-            <table className="data-table launch-api-table">
-              <thead>
-                <tr>
-                  <th>Method</th>
-                  <th>Endpoint</th>
-                  <th>Surface</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiContracts.map((contract) => (
-                  <tr key={`${contract.method}-${contract.path}`}>
-                    <td>{contract.method}</td>
-                    <td>
-                      <code>{contract.path}</code>
-                    </td>
-                    <td>{contract.surface}</td>
-                    <td>
-                      <StatusPill tone={contract.status === "ready" ? "success" : "warning"} compact>
-                        {contract.status}
-                      </StatusPill>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <SectionHeader title="研究方向建议" eyebrow="可直接套用" />
+          <ul className="compact-list">
+            {researchPrompts.map((prompt, index) => (
+              <li className="compact-item prompt-item" key={prompt}>
+                <button
+                  className="ghost-button prompt-button"
+                  onClick={() => {
+                    setTopic("AI Agent 工具使用评测");
+                    setTitle(`Agent 调研方向 ${index + 1}`);
+                    setStatus("已填入一个推荐追问方向，可继续创建会话。");
+                  }}
+                  type="button"
+                >
+                  使用
+                </button>
+                <div>
+                  <div className="table-title">方向 {index + 1}</div>
+                  <div className="fine-print">{prompt}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
 
         <div className="pane">
-          <SectionHeader title="Demo Workspace Preview" eyebrow={demoWorkspace.topic} />
+          <SectionHeader title="工作台预览" eyebrow={demoWorkspace.topic} />
           <div className="data-table-wrap">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Paper</th>
-                  <th>Category</th>
-                  <th>Cites</th>
+                  <th>论文</th>
+                  <th>分类</th>
+                  <th>引用</th>
                 </tr>
               </thead>
               <tbody>
@@ -306,65 +305,18 @@ export function HomePage() {
         </div>
       </section>
 
-      <section className="launch-ops-grid launch-ops-grid-three">
-        <div className="pane">
-          <SectionHeader title="Conversation Seed" eyebrow={`${demoMessages.length} demo messages`} />
-          <ul className="compact-list">
-            {demoMessages.map((message) => (
-              <li className="compact-item" key={message.message_id}>
-                <div className="item-heading">
-                  <strong>{message.role}</strong>
-                  <code>{message.message_id}</code>
-                </div>
-                <div className="fine-print">{message.content}</div>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="pane">
-          <SectionHeader title="Research Gaps" eyebrow="Workspace signals" />
-          <ul className="compact-list">
-            {demoWorkspace.gaps.map((gap) => (
-              <li className="compact-item" key={gap.summary}>
-                <div className="item-heading">
-                  <strong>{gap.summary}</strong>
-                  <StatusPill tone={gap.severity === "high" ? "danger" : "warning"} compact>
-                    {gap.severity}
-                  </StatusPill>
-                </div>
-                <div className="fine-print">{gap.evidence.join(" / ")}</div>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="pane">
-          <SectionHeader title="Tooling Readiness" eyebrow="Registered demo stack" />
-          <ul className="compact-list">
-            {demoTools.map((tool) => (
-              <li className="compact-item" key={tool.tool_id}>
-                <div className="item-heading">
-                  <strong>{tool.display_name}</strong>
-                  <StatusPill tone={tool.enabled ? "success" : "neutral"} compact>
-                    {tool.enabled ? "enabled" : "disabled"}
-                  </StatusPill>
-                </div>
-                <div className="fine-print">{tool.description}</div>
-              </li>
-            ))}
-            {demoSkills.map((skill) => (
-              <li className="compact-item" key={skill.skill_id}>
-                <div className="item-heading">
-                  <strong>{skill.display_name}</strong>
-                  <StatusPill tone="info" compact>
-                    skill
-                  </StatusPill>
-                </div>
-                <div className="fine-print">依赖工具：{skill.required_tools.join(", ") || "无"}</div>
-              </li>
-            ))}
-          </ul>
+      <section className="pane">
+        <SectionHeader title="研究完成后你会得到什么" eyebrow="输出内容" />
+        <div className="output-preview-grid">
+          {outputPreviews.map((item, index) => (
+            <article className="output-preview-item" key={item.title}>
+              <div className="step-index">{index + 1}</div>
+              <div>
+                <h3>{item.title}</h3>
+                <p>{item.description}</p>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
     </div>

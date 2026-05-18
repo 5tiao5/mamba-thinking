@@ -9,7 +9,7 @@ import type { SkillItem, ToolItem } from "../types/api";
 export function SettingsPage() {
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
-  const [status, setStatus] = useState("正在加载工具和 Skill...");
+  const [status, setStatus] = useState("正在加载工具与能力...");
   const [loading, setLoading] = useState(true);
   const [updatingToolId, setUpdatingToolId] = useState("");
 
@@ -19,7 +19,7 @@ export function SettingsPage() {
       .then(([toolResponse, skillResponse]) => {
         setTools(toolResponse.data);
         setSkills(skillResponse.data);
-        setStatus("工具和 Skill 加载成功。");
+        setStatus("工具与能力加载成功。");
       })
       .catch((error) => {
         setTools([]);
@@ -48,15 +48,19 @@ export function SettingsPage() {
     }
   }
 
+  function getToolDisplayName(toolId: string) {
+    return tools.find((tool) => tool.tool_id === toolId)?.display_name ?? "关联工具";
+  }
+
   return (
     <div className="dense-layout">
       <section className="surface content-pad">
         <div className="item-heading">
           <div>
-            <div className="section-eyebrow">Registry</div>
-            <strong>工具与 Skill 管理</strong>
+            <div className="section-eyebrow">能力设置</div>
+            <strong>工具与能力管理</strong>
           </div>
-          <StatusPill tone={loading ? "neutral" : "success"}>{loading ? "loading" : "ready"}</StatusPill>
+          <StatusPill tone={loading ? "neutral" : "success"}>{loading ? "加载中" : "已同步"}</StatusPill>
         </div>
         <div className="status-line" style={{ marginTop: 10 }}>
           {status}
@@ -65,17 +69,16 @@ export function SettingsPage() {
 
       <section className="settings-grid">
         <div className="pane">
-          <SectionHeader title="Tools" eyebrow={`${tools.length} registered`} />
+          <SectionHeader title="工具" eyebrow={`${tools.length} 项工具`} />
           <div className="data-table-wrap">
             {tools.length ? (
               <table className="data-table settings-tools-table">
                 <thead>
                   <tr>
-                    <th>Tool</th>
-                    <th>Status</th>
-                    <th>Description</th>
-                    <th>Config</th>
-                    <th>Control</th>
+                    <th>名称</th>
+                    <th>状态</th>
+                    <th>说明</th>
+                    <th>控制</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -83,17 +86,13 @@ export function SettingsPage() {
                     <tr key={tool.tool_id}>
                       <td>
                         <div className="table-title">{tool.display_name}</div>
-                        <div className="table-subline">{tool.tool_id}</div>
                       </td>
                       <td>
                         <StatusPill tone={tool.enabled ? "success" : "neutral"} compact>
-                          {tool.enabled ? "enabled" : "disabled"}
+                          {tool.enabled ? "可用" : "关闭"}
                         </StatusPill>
                       </td>
                       <td>{tool.description}</td>
-                      <td>
-                        <div className="config-cell">{JSON.stringify(tool.config)}</div>
-                      </td>
                       <td>
                         <ToggleSwitch
                           checked={tool.enabled}
@@ -108,22 +107,22 @@ export function SettingsPage() {
               </table>
             ) : (
               <div className="content-pad">
-                <div className="empty-state">{loading ? "正在加载工具..." : "暂无工具数据，或后端服务不可用。"}</div>
+                <div className="empty-state">{loading ? "正在加载工具..." : "暂无可展示的工具。"}</div>
               </div>
             )}
           </div>
         </div>
 
         <div className="pane">
-          <SectionHeader title="Skills" eyebrow={`${skills.length} registered`} />
+          <SectionHeader title="能力" eyebrow={`${skills.length} 项能力`} />
           <div className="data-table-wrap">
             {skills.length ? (
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Skill</th>
-                    <th>Status</th>
-                    <th>Required Tools</th>
+                    <th>名称</th>
+                    <th>状态</th>
+                    <th>依赖工具</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -131,12 +130,11 @@ export function SettingsPage() {
                     <tr key={skill.skill_id}>
                       <td>
                         <div className="table-title">{skill.display_name}</div>
-                        <div className="table-subline">{skill.skill_id}</div>
                         <div className="fine-print">{skill.description}</div>
                       </td>
                       <td>
                         <StatusPill tone={skill.enabled ? "success" : "neutral"} compact>
-                          {skill.enabled ? "enabled" : "disabled"}
+                          {skill.enabled ? "可用" : "关闭"}
                         </StatusPill>
                       </td>
                       <td>
@@ -144,12 +142,12 @@ export function SettingsPage() {
                           <div className="button-row">
                             {skill.required_tools.map((toolId) => (
                               <StatusPill key={toolId} tone="info" compact>
-                                {toolId}
+                                {getToolDisplayName(toolId)}
                               </StatusPill>
                             ))}
                           </div>
                         ) : (
-                          <span className="muted">none</span>
+                          <span className="muted">无</span>
                         )}
                       </td>
                     </tr>
@@ -158,7 +156,7 @@ export function SettingsPage() {
               </table>
             ) : (
               <div className="content-pad">
-                <div className="empty-state">{loading ? "正在加载 Skill..." : "暂无 Skill 数据，或后端服务不可用。"}</div>
+                <div className="empty-state">{loading ? "正在加载能力..." : "暂无可展示的能力。"}</div>
               </div>
             )}
           </div>

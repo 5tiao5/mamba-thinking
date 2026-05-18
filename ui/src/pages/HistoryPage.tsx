@@ -1,45 +1,52 @@
+import { Link } from "react-router-dom";
+
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { StatusPill } from "../components/ui/StatusPill";
+
+const savedFilters = ["全部", "进行中", "已完成", "已收藏"];
 
 export function HistoryPage() {
   return (
     <div className="dense-layout">
+      <section className="surface content-pad history-toolbar">
+        <label>
+          <span className="field-label">搜索研究记录</span>
+          <input className="input" placeholder="按主题、论文、研究空白或选题关键词搜索" />
+        </label>
+        <div>
+          <span className="field-label">状态筛选</span>
+          <div className="button-row">
+            {savedFilters.map((filter) => (
+              <button className={filter === "全部" ? "primary-button" : "secondary-button"} key={filter} type="button">
+                {filter}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section className="pane">
         <SectionHeader
-          actions={<StatusPill tone="warning">backend pending</StatusPill>}
-          title="历史任务与会话列表"
-          eyebrow="History"
+          actions={<StatusPill tone="neutral">暂无记录</StatusPill>}
+          title="历史研究"
+          eyebrow="Saved work"
         />
         <div className="content-pad content-grid">
           <div className="empty-state">
-            当前后端文档明确尚未提供 `GET /conversations` 和 `GET /research/tasks`，因此本页暂不做假数据列表。
-            待后端补齐历史查询接口后，可在这里接入会话列表、最近任务和继续会话入口。
+            这里会集中保存你完成过的研究会话和工作台结果。完成一次研究后，可以从这里继续会话、回看论文线索，
+            或重新打开工作台继续整理研究空白和选题建议。
           </div>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Needed API</th>
-                <th>Purpose</th>
-                <th>Frontend Use</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <code>GET /conversations</code>
-                </td>
-                <td>查询会话历史</td>
-                <td>继续会话、查看最新任务</td>
-              </tr>
-              <tr>
-                <td>
-                  <code>GET /research/tasks</code>
-                </td>
-                <td>查询最近研究任务</td>
-                <td>打开 workspace、查看任务状态</td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="button-row">
+            <Link className="primary-button" to="/">
+              新建研究
+            </Link>
+            <Link className="secondary-button" to="/conversation">
+              继续对话
+            </Link>
+            <Link className="ghost-button" to="/workspace">
+              打开工作台
+            </Link>
+          </div>
         </div>
       </section>
     </div>

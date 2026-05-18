@@ -37,8 +37,12 @@ function severityTone(severity: string): "danger" | "warning" | "neutral" {
   return "neutral";
 }
 
-function compactJson(value: unknown) {
-  return JSON.stringify(value);
+function severityLabel(severity: string) {
+  const normalized = severity.toLowerCase();
+  if (normalized === "high") return "高优先级";
+  if (normalized === "medium") return "中优先级";
+  if (normalized === "low") return "低优先级";
+  return severity || "待判断";
 }
 
 function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
@@ -49,32 +53,32 @@ function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
   return (
     <div className="content-grid">
       <div>
-        <div className="section-eyebrow">Selected paper</div>
+        <div className="section-eyebrow">已选论文</div>
         <div className="insight-title">{paper.title}</div>
       </div>
       <div className="metrics-strip">
         <div className="metric-cell">
-          <div className="metric-label">Source</div>
+          <div className="metric-label">来源</div>
           <div className="metric-value" style={{ fontSize: "0.92rem" }}>
-            {paper.source || "unknown"}
+            {paper.source || "未知"}
           </div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">Year</div>
+          <div className="metric-label">年份</div>
           <div className="metric-value" style={{ fontSize: "0.92rem" }}>
             {paper.publish_date || "-"}
           </div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">Cites</div>
+          <div className="metric-label">引用</div>
           <div className="metric-value" style={{ fontSize: "0.92rem" }}>
             {paper.citation_count}
           </div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">ID</div>
+          <div className="metric-label">分类</div>
           <div className="metric-value" style={{ fontSize: "0.72rem" }}>
-            {paper.paper_id}
+            {paper.taxonomy_category || "未分类"}
           </div>
         </div>
       </div>
@@ -90,7 +94,7 @@ function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
 
 function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
   if (!gaps.length) {
-    return <div className="empty-state">暂无 research gaps。运行任务后会从 workspace 映射层读取。</div>;
+    return <div className="empty-state">暂无研究空白。运行分析后会在这里汇总可继续深入的问题。</div>;
   }
 
   return (
@@ -100,7 +104,7 @@ function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
           <div className="item-heading">
             <div className="insight-title">{gap.summary}</div>
             <StatusPill tone={severityTone(gap.severity)} compact>
-              {gap.severity}
+              {severityLabel(gap.severity)}
             </StatusPill>
           </div>
           {gap.evidence.length ? <div className="fine-print">{gap.evidence.join(" / ")}</div> : null}
@@ -112,7 +116,7 @@ function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
 
 function IdeaList({ ideas }: { ideas: WorkspaceIdea[] }) {
   if (!ideas.length) {
-    return <div className="empty-state">暂无 ideas。完成分析后这里会集中展示可继续推进的研究选题。</div>;
+    return <div className="empty-state">暂无选题建议。完成分析后这里会集中展示可继续推进的研究选题。</div>;
   }
 
   return (
@@ -140,7 +144,7 @@ export function WorkspacePage() {
   const taskIdFromQuery = searchParams.get("task_id") ?? "";
   const [taskId, setTaskId] = useState(taskIdFromQuery);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
-  const [status, setStatus] = useState("输入 task_id 后可以运行任务或读取 workspace。");
+  const [status, setStatus] = useState("从对话或首页进入任务后，可以运行分析或读取工作台。");
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -176,17 +180,17 @@ export function WorkspacePage() {
   async function handleLoadWorkspace(targetId = taskId) {
     const trimmedId = targetId.trim();
     if (!trimmedId) {
-      setStatus("请先输入 task_id。");
+      setStatus("请先从对话或首页选择一个研究任务。");
       return;
     }
     setLoading(true);
-    setStatus("正在读取 workspace...");
+    setStatus("正在读取工作台...");
     try {
       const response = await api.getWorkspace(trimmedId);
       setWorkspace(response.data);
       setSelectedCategory("all");
       setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
-      setStatus("Workspace 已加载。");
+      setStatus("工作台已加载。");
       setSearchParams({ task_id: trimmedId });
     } catch (error) {
       setWorkspace(null);
@@ -200,15 +204,15 @@ export function WorkspacePage() {
   async function handleRunTask() {
     const trimmedId = taskId.trim();
     if (!trimmedId) {
-      setStatus("请先输入 task_id。");
+      setStatus("请先从对话或首页选择一个研究任务。");
       return;
     }
 
     setRunning(true);
-    setStatus("任务运行中，Agent 分析可能需要一些时间...");
+    setStatus("任务运行中，分析可能需要一些时间...");
     try {
       await api.runTask(trimmedId);
-      setStatus("任务运行完成，正在读取 workspace...");
+      setStatus("任务运行完成，正在读取工作台...");
       await handleLoadWorkspace(trimmedId);
     } catch (error) {
       setStatus(`运行失败：${toErrorMessage(error)}`);
@@ -222,11 +226,11 @@ export function WorkspacePage() {
       <section className="surface content-pad">
         <div className="workspace-toolbar">
           <label>
-            <span className="field-label">Task ID</span>
+            <span className="field-label">任务引用</span>
             <input
               className="input"
               onChange={(event) => setTaskId(event.target.value)}
-              placeholder="输入 task_id"
+              placeholder="从对话或首页进入后自动填充"
               value={taskId}
             />
           </label>
@@ -235,7 +239,7 @@ export function WorkspacePage() {
               {running ? "运行中" : "运行任务"}
             </button>
             <button className="secondary-button" disabled={loading} onClick={() => handleLoadWorkspace()} type="button">
-              {loading ? "读取中" : "读取 Workspace"}
+              {loading ? "读取中" : "读取工作台"}
             </button>
           </div>
         </div>
@@ -246,35 +250,35 @@ export function WorkspacePage() {
 
       <section className="metrics-strip">
         <div className="metric-cell">
-          <div className="metric-label">Topic</div>
+          <div className="metric-label">研究主题</div>
           <div className="metric-value" style={{ fontSize: "0.96rem" }}>
-            {workspace?.topic ?? "No workspace loaded"}
+            {workspace?.topic ?? "未加载研究"}
           </div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">Papers</div>
+          <div className="metric-label">论文</div>
           <div className="metric-value">{workspace?.papers.length ?? 0}</div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">Graph Edges</div>
+          <div className="metric-label">关系线索</div>
           <div className="metric-value">{workspace?.graph_edges.length ?? 0}</div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">Alignment</div>
+          <div className="metric-label">匹配度</div>
           <div className="metric-value">{workspace?.alignment_score ?? 0}</div>
         </div>
       </section>
 
       {workspace?.summary ? (
         <section className="surface content-pad">
-          <div className="section-eyebrow">Summary</div>
+          <div className="section-eyebrow">研究摘要</div>
           <div style={{ whiteSpace: "pre-wrap" }}>{workspace.summary}</div>
         </section>
       ) : null}
 
       <section className="workspace-grid">
         <aside className="pane">
-          <SectionHeader title="Taxonomy" eyebrow="Filter" />
+          <SectionHeader title="主题分类" eyebrow="筛选" />
           <div className="pane-scroll">
             <ul className="taxonomy-tree">
               <li className="taxonomy-node">
@@ -283,8 +287,8 @@ export function WorkspacePage() {
                   onClick={() => setSelectedCategory("all")}
                   type="button"
                 >
-                  <span className="taxonomy-name">All papers</span>
-                  <span className="taxonomy-values">{workspace?.papers.length ?? 0} records</span>
+                  <span className="taxonomy-name">全部论文</span>
+                  <span className="taxonomy-values">{workspace?.papers.length ?? 0} 篇</span>
                 </button>
               </li>
               {taxonomyEntries.length ? (
@@ -297,14 +301,14 @@ export function WorkspacePage() {
                     >
                       <span className="taxonomy-name">{entry.name}</span>
                       <span className="taxonomy-values">
-                        {entry.values.length ? entry.values.join(" / ") : "No children"}
+                        {entry.values.length ? entry.values.join(" / ") : "暂无子项"}
                       </span>
                     </button>
                   </li>
                 ))
               ) : (
                 <li className="content-pad">
-                  <div className="empty-state">暂无 taxonomy 结构。</div>
+                  <div className="empty-state">暂无分类结构。</div>
                 </li>
               )}
             </ul>
@@ -320,20 +324,20 @@ export function WorkspacePage() {
                 </StatusPill>
               ) : null
             }
-            title="Papers"
-            eyebrow={`${filteredPapers.length} visible`}
+            title="论文线索"
+            eyebrow={`${filteredPapers.length} 篇可见`}
           />
           <div className="data-table-wrap pane-scroll">
             {filteredPapers.length ? (
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Title</th>
-                    <th>Source</th>
-                    <th>Year</th>
-                    <th>Category</th>
-                    <th>Cites</th>
-                    <th>Link</th>
+                    <th>论文</th>
+                    <th>来源</th>
+                    <th>年份</th>
+                    <th>分类</th>
+                    <th>引用</th>
+                    <th>外链</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -345,16 +349,15 @@ export function WorkspacePage() {
                     >
                       <td>
                         <div className="table-title">{paper.title}</div>
-                        <div className="table-subline">{paper.paper_id}</div>
                       </td>
-                      <td>{paper.source || "unknown"}</td>
+                      <td>{paper.source || "未知"}</td>
                       <td>{paper.publish_date || "-"}</td>
                       <td>{paper.taxonomy_category || "未分类"}</td>
                       <td>{paper.citation_count}</td>
                       <td>
                         {paper.url ? (
                           <a className="inline-link" href={paper.url} rel="noreferrer" target="_blank">
-                            Open
+                            打开
                           </a>
                         ) : (
                           <span className="muted">-</span>
@@ -366,22 +369,22 @@ export function WorkspacePage() {
               </table>
             ) : (
               <div className="content-pad">
-                <div className="empty-state">暂无论文数据。请先运行任务或检查 task_id。</div>
+                <div className="empty-state">暂无论文数据。请先运行任务或检查当前任务是否已有工作台结果。</div>
               </div>
             )}
           </div>
         </main>
 
         <aside className="pane">
-          <SectionHeader title="Inspector" eyebrow="Paper" />
+          <SectionHeader title="论文详情" eyebrow="当前选择" />
           <div className="content-pad">
             <PaperInspector paper={selectedPaper} />
           </div>
-          <SectionHeader title="Research Gaps" eyebrow={`${workspace?.gaps.length ?? 0} items`} />
+          <SectionHeader title="研究空白" eyebrow={`${workspace?.gaps.length ?? 0} 条`} />
           <div className="pane-scroll" style={{ maxHeight: 220 }}>
             <GapList gaps={workspace?.gaps ?? []} />
           </div>
-          <SectionHeader title="Ideas" eyebrow={`${workspace?.ideas.length ?? 0} items`} />
+          <SectionHeader title="选题建议" eyebrow={`${workspace?.ideas.length ?? 0} 条`} />
           <div className="pane-scroll" style={{ maxHeight: 260 }}>
             <IdeaList ideas={workspace?.ideas ?? []} />
           </div>
@@ -390,16 +393,16 @@ export function WorkspacePage() {
 
       <section className="settings-grid">
         <div className="pane">
-          <SectionHeader title="Graph Edges" eyebrow={`${workspace?.graph_edges.length ?? 0} relationships`} />
+          <SectionHeader title="关系线索" eyebrow={`${workspace?.graph_edges.length ?? 0} 条关系`} />
           <div className="data-table-wrap">
             {workspace?.graph_edges.length ? (
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Source</th>
-                    <th>Target</th>
-                    <th>Relationship</th>
-                    <th>Reasoning</th>
+                    <th>起点</th>
+                    <th>终点</th>
+                    <th>关系</th>
+                    <th>依据</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -415,35 +418,33 @@ export function WorkspacePage() {
               </table>
             ) : (
               <div className="content-pad">
-                <div className="empty-state">暂无 graph edges。</div>
+                <div className="empty-state">暂无关系线索。</div>
               </div>
             )}
           </div>
         </div>
 
         <div className="pane">
-          <SectionHeader title="Trace" eyebrow="Pipeline evidence" />
+          <SectionHeader title="研究过程" eyebrow="可追溯记录" />
           {workspace?.trace ? (
-            <div>
+            <div className="content-grid content-pad">
               <div className="trace-row">
-                <div className="trace-label">Thought</div>
-                <div>{workspace.trace.thought_trace.length} steps</div>
+                <div className="trace-label">分析步骤</div>
+                <div>{workspace.trace.thought_trace.length} 步</div>
               </div>
               <div className="trace-row">
-                <div className="trace-label">Actions</div>
-                <div>{workspace.trace.action_history.length} records</div>
+                <div className="trace-label">检索动作</div>
+                <div>{workspace.trace.action_history.length} 条</div>
               </div>
               <div className="trace-row">
-                <div className="trace-label">Context</div>
-                <div>{workspace.trace.context_inputs.length} inputs</div>
+                <div className="trace-label">上下文</div>
+                <div>{workspace.trace.context_inputs.length} 组</div>
               </div>
-              <pre className="json-block" style={{ margin: 12 }}>
-                {compactJson(workspace.trace)}
-              </pre>
+              <div className="empty-state">系统已保留本次分析过程，可用于继续追问、复盘和后续整理。</div>
             </div>
           ) : (
             <div className="content-pad">
-              <div className="empty-state">暂无 trace 数据。</div>
+              <div className="empty-state">暂无研究过程记录。</div>
             </div>
           )}
         </div>
