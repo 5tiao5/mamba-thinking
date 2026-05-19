@@ -11,7 +11,7 @@ from product_agent.schemas import (
     FollowUpTaskPreview,
     UpdateToolRequest,
 )
-from product_agent.services import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
+from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
 
 from .response import fail, ok
 
@@ -54,6 +54,23 @@ class ProductApiHandlers:
                 "title": conversation.title,
             }
         )
+
+    def list_conversations(self, *, limit: int | None = None):
+        """列出历史会话，供历史页和会话选择器使用。"""
+        items = self.conversation_service.list_conversations(limit=limit)
+        return ok({"items": [self._conversation_payload(item) for item in items]})
+
+    def get_conversation(self, conversation_id: str):
+        """获取单个会话详情。"""
+        conversation = self.conversation_service.get_conversation(conversation_id)
+        if conversation is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+
+        messages = self.message_service.list_messages(conversation_id)
+        message_count = len(messages or [])
+        payload = self._conversation_payload(conversation)
+        payload["message_count"] = message_count
+        return ok(payload)
 
     def list_messages(self, conversation_id: str):
         """列出某个会话的消息。"""
@@ -156,6 +173,11 @@ class ProductApiHandlers:
             }
         )
 
+    def list_research_tasks(self, *, conversation_id: str | None = None, limit: int | None = None):
+        """列出历史研究任务，供历史页或会话详情页使用。"""
+        tasks = self.research_service.list_tasks(conversation_id=conversation_id, limit=limit)
+        return ok({"items": [self._task_payload(item) for item in tasks]})
+
     def run_research_task(self, task_id: str):
         """运行已创建的研究任务。"""
         try:
@@ -211,4 +233,29 @@ class ProductApiHandlers:
             "content": message.content,
             "metadata": message.metadata,
             "created_at": message.created_at.isoformat(),
+        }
+
+    @staticmethod
+    def _conversation_payload(conversation) -> dict:
+        return {
+            "conversation_id": conversation.conversation_id,
+            "topic": conversation.topic,
+            "title": conversation.title,
+            "status": conversation.status,
+            "latest_task_id": conversation.latest_task_id,
+            "created_at": conversation.created_at.isoformat(),
+            "updated_at": conversation.updated_at.isoformat(),
+        }
+
+    @staticmethod
+    def _task_payload(task) -> dict:
+        return {
+            "task_id": task.task_id,
+            "conversation_id": task.conversation_id,
+            "topic": task.topic,
+            "status": task.status,
+            "mode": task.mode,
+            "trigger_message_id": task.trigger_message_id,
+            "created_at": task.created_at.isoformat(),
+            "updated_at": task.updated_at.isoformat(),
         }

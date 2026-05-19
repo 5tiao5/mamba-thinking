@@ -12,6 +12,14 @@ from .memory_store import (
     InMemoryResearchTaskRepository,
     InMemoryWorkspaceRepository,
 )
+from .sqlite_db import SQLiteDatabase
+from .sqlite_store import (
+    SQLiteConversationRepository,
+    SQLiteKnowledgeRepository,
+    SQLiteMessageRepository,
+    SQLiteResearchTaskRepository,
+    SQLiteWorkspaceRepository,
+)
 
 __all__ = [
     "ConversationRepository",
@@ -24,4 +32,10 @@ __all__ = [
     "InMemoryResearchTaskRepository",
     "InMemoryWorkspaceRepository",
     "InMemoryKnowledgeRepository",
+    "SQLiteDatabase",
+    "SQLiteConversationRepository",
+    "SQLiteMessageRepository",
+    "SQLiteResearchTaskRepository",
+    "SQLiteWorkspaceRepository",
+    "SQLiteKnowledgeRepository",
 ]

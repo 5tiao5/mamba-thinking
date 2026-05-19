@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from product_agent.domain import ResearchTask, ResearchWorkspace
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
-from product_agent.research_agent.pipeline import run_pipeline
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
 from product_agent.services.workspace_mapper import workspace_from_agent_state
 
@@ -107,6 +106,25 @@ class ResearchService:
             raise TaskNotFoundError(f"Research task `{task_id}` does not exist.")
         return task
 
+    def list_tasks(
+        self,
+        *,
+        conversation_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[ResearchTask]:
+        """
+        列出历史研究任务。
+        约束:
+        - 若指定 `conversation_id`，则只返回对应会话下的任务
+        - 默认按最近更新时间倒序返回
+        """
+        items = self.task_repository.list_all()
+        if conversation_id is not None:
+            items = [item for item in items if item.conversation_id == conversation_id]
+        if limit is not None:
+            return items[:limit]
+        return items
+
     def run_task(self, task: ResearchTask) -> ResearchWorkspace:
         """
         运行一条研究任务，并把 Agent 结果投影为产品工作台数据。
@@ -122,6 +140,8 @@ class ResearchService:
         self.task_repository.update(task)
 
         try:
+            from product_agent.research_agent.pipeline import run_pipeline
+
             state = run_pipeline(task.topic, show_progress=False)
             workspace: ResearchWorkspace = workspace_from_agent_state(
                 task_id=task.task_id,

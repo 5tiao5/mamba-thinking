@@ -1,54 +1,28 @@
 from __future__ import annotations
 
 import os
-import re
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 from llm_client import call_openai_json
 from observability import record_audit_event, record_decision, record_tool_event
 
 from product_agent.schemas.audit import AuditGap, AuditReport, AuditSummary
+from product_agent.services.audit_common import (
+    EVALUATION_TERMS,
+    IMPROVEMENT_TERMS,
+    LOW_CONFIDENCE_THRESHOLD,
+    OVERLAP_THRESHOLD,
+    TaxonomyBranch,
+    canonical,
+    contains_phrase,
+    keyword_overlap,
+    paper_search_text,
+)
 from product_agent.services.graph_audit_service import GraphAuditService
 from product_agent.services.llm_audit_service import LLMAuditService
 from product_agent.services.taxonomy_audit_service import TaxonomyAuditService
 
 from ..models import EvolutionEdge, PaperNode, ResearchState
-
-
-OVERLAP_THRESHOLD = 0.40
-LOW_CONFIDENCE_THRESHOLD = 0.45
-
-IMPROVEMENT_TERMS = {
-    "improve",
-    "improved",
-    "improves",
-    "better",
-    "enhance",
-    "enhanced",
-    "extend",
-    "extends",
-    "solve",
-    "address",
-}
-EVALUATION_TERMS = {
-    "experiment",
-    "evaluation",
-    "benchmark",
-    "result",
-    "results",
-    "accuracy",
-    "performance",
-    "dataset",
-}
-
-
-@dataclass(frozen=True)
-class TaxonomyBranch:
-    name: str
-    description: str
-    required_concepts: Tuple[str, ...]
 
 
 def auditor_node(state: ResearchState) -> ResearchState:
@@ -236,7 +210,7 @@ def _enrich_edge_reasoning(papers: Dict[str, PaperNode], edges: List[EvolutionEd
             continue
         edge.reasoning = (
             f"Audited as '{edge.relationship}' because source and target share taxonomy or keywords; "
-            f"keyword_overlap={_keyword_overlap(source, target):.2f}."
+            f"keyword_overlap={keyword_overlap(source, target):.2f}."
         )
 
 
@@ -249,23 +223,19 @@ def _mark_gap_candidates(papers: Dict[str, PaperNode], gaps: Sequence[AuditGap])
 
 
 def _paper_search_text(paper: PaperNode) -> str:
-    return _canonical(" ".join([paper.title, paper.abstract, paper.taxonomy_category, " ".join(paper.keywords)]))
+    return paper_search_text(paper)
 
 
 def _keyword_overlap(left: PaperNode, right: PaperNode) -> float:
-    left_words = set(left.keywords or re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", _paper_search_text(left)))
-    right_words = set(right.keywords or re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", _paper_search_text(right)))
-    if not left_words or not right_words:
-        return 0.0
-    return len(left_words & right_words) / len(left_words | right_words)
+    return keyword_overlap(left, right)
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:
-    return bool(phrase) and _canonical(phrase) in text
+    return contains_phrase(text, phrase)
 
 
 def _canonical(value: str) -> str:
-    return re.sub(r"\s+", " ", value.replace("_", " ").replace("-", " ").lower()).strip()
+    return canonical(value)
 
 
 def _dedupe_gaps(items: Iterable[AuditGap]) -> List[AuditGap]:

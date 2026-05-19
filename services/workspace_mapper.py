@@ -149,6 +149,21 @@ def _map_graph_edge(raw_edge: Any, gap_ids: set) -> Dict[str, Any]:
         elif str(source).startswith("gap_") or str(target).startswith("gap_"):
             is_gap_related = True
 
+    edge_type = str(payload.get("type", relationship or "semantic")).strip() or "semantic"
+
+    return {
+        "edge_id": edge_id,
+        "source": source,
+        "target": target,
+        "relationship": relationship,
+        "reasoning": reasoning,
+        "type": edge_type,
+        "confidence": confidence,
+        "is_weak": is_weak,
+        "is_gap_related": is_gap_related,
+        "metadata": metadata,
+    }
+
 
 
 def _map_idea(task_id: str, raw_idea: Any, papers: List[PaperRecord], gaps: List[GapRecord]) -> ResearchIdeaRecord:

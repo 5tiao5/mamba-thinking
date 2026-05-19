@@ -1,16 +1,21 @@
 from .common import ApiError, ApiResponse
 from .conversation import (
+    ConversationDetailResponse,
+    ConversationSummaryView,
     ContinueConversationRequest,
     ContinueConversationResponse,
     CreateConversationRequest,
     CreateConversationResponse,
     FollowUpTaskPreview,
+    ListConversationsResponse,
     SendMessageRequest,
 )
 from .message import CreateMessageRequest, ListMessagesResponse, MessageView
 from .research import (
     CreateResearchTaskRequest,
     CreateResearchTaskResponse,
+    ListResearchTasksResponse,
+    ResearchTaskSummaryView,
     WorkspaceGapView,
     WorkspaceGraphEdgeView,
     WorkspaceIdeaView,
@@ -25,6 +30,9 @@ __all__ = [
     "ApiError",
     "CreateConversationRequest",
     "CreateConversationResponse",
+    "ConversationSummaryView",
+    "ConversationDetailResponse",
+    "ListConversationsResponse",
     "SendMessageRequest",
     "ContinueConversationRequest",
     "ContinueConversationResponse",
@@ -34,6 +42,8 @@ __all__ = [
     "ListMessagesResponse",
     "CreateResearchTaskRequest",
     "CreateResearchTaskResponse",
+    "ResearchTaskSummaryView",
+    "ListResearchTasksResponse",
     "WorkspacePaperView",
     "WorkspaceGraphEdgeView",
     "WorkspaceGapView",
