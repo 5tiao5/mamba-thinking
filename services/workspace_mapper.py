@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List
 
 from product_agent.domain import GapRecord, PaperRecord, ResearchIdeaRecord, ResearchWorkspace
+from product_agent.services.taxonomy_grounding_service import ground_taxonomy
 
 
 def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any]) -> ResearchWorkspace:
@@ -37,7 +38,7 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
     return ResearchWorkspace(
         task_id=task_id,
         topic=topic,
-        summary=state.get("final_report", "")[:400],
+        summary=_build_workspace_summary(topic=topic, state=state),
         summary_payload=state.get("final_report_summary", {}),
         papers=papers,
         taxonomy=taxonomy,
@@ -47,6 +48,99 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
         alignment_score=float(state.get("alignment_score", 0.0) or 0.0),
         trace=trace,
     )
+
+
+def _build_workspace_summary(*, topic: str, state: Dict[str, Any]) -> str:
+    summary_payload = state.get("final_report_summary", {}) or {}
+    structured_summary = _summary_from_payload(topic=topic, summary_payload=summary_payload)
+    if structured_summary:
+        return structured_summary
+
+    report_text = str(state.get("final_report", "") or "")
+    cleaned_report = _strip_report_noise(report_text)
+    if not cleaned_report:
+        return ""
+
+    paragraphs = [segment.strip() for segment in re.split(r"\n\s*\n", cleaned_report) if segment.strip()]
+    if not paragraphs:
+        return cleaned_report[:400].strip()
+
+    selected: List[str] = []
+    for paragraph in paragraphs:
+        if "taxonomy" in paragraph.lower() and "{" in paragraph:
+            continue
+        selected.append(paragraph)
+        if len(" ".join(selected)) >= 360:
+            break
+
+    text = "\n\n".join(selected).strip() or cleaned_report.strip()
+    return text[:400].strip()
+
+
+def _summary_from_payload(*, topic: str, summary_payload: Dict[str, Any]) -> str:
+    if not isinstance(summary_payload, dict) or not summary_payload:
+        return ""
+
+    headline = str(summary_payload.get("headline", "") or "").strip()
+    score = summary_payload.get("score")
+    counts = summary_payload.get("counts", {}) or {}
+    recommendation = str(summary_payload.get("recommendation", "") or "").strip()
+    top_gaps = summary_payload.get("top_gaps", []) or []
+
+    lines: List[str] = []
+    if headline:
+        lines.append(headline)
+    else:
+        lines.append(f"科研演进审计报告：{topic}")
+
+    papers = counts.get("papers")
+    gaps = counts.get("gaps")
+    ideas = counts.get("ideas")
+    metrics: List[str] = []
+    if papers is not None:
+        metrics.append(f"论文 {papers} 篇")
+    if gaps is not None:
+        metrics.append(f"研究空白 {gaps} 条")
+    if ideas is not None:
+        metrics.append(f"研究建议 {ideas} 条")
+    if isinstance(score, (int, float)):
+        metrics.append(f"对齐分数 {float(score):.3f}")
+    if metrics:
+        lines.append("本轮分析共得到 " + "，".join(metrics) + "。")
+
+    if top_gaps:
+        gap_summaries = []
+        for gap in top_gaps[:2]:
+            if isinstance(gap, dict):
+                summary = str(gap.get("summary", "") or "").strip()
+            else:
+                summary = str(gap).strip()
+            if summary:
+                gap_summaries.append(summary)
+        if gap_summaries:
+            lines.append("优先关注：" + "；".join(gap_summaries) + "。")
+
+    if recommendation:
+        lines.append("建议：" + recommendation)
+
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _strip_report_noise(report_text: str) -> str:
+    if not report_text.strip():
+        return ""
+
+    text = report_text
+    text = re.sub(r"```json[\s\S]*?```", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"```[\s\S]*?```", "", text)
+    text = re.sub(
+        r"(?:^|\n)\s*\d+\.\s*专家\s*Taxonomy[\s\S]*?(?=(?:\n\s*\d+\.\s)|\Z)",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _map_paper(paper: Any) -> PaperRecord:
@@ -230,91 +324,7 @@ def _extract_title(raw_idea: str) -> str:
 
 
 def _normalize_taxonomy(raw_taxonomy: Any, papers: List[PaperRecord], gaps: List[GapRecord] = None) -> Dict[str, Any]:
-    if isinstance(raw_taxonomy, dict) and "taxonomy" in raw_taxonomy:
-        raw_taxonomy = raw_taxonomy["taxonomy"]
-    gaps = gaps or []
-
-    branches: List[Dict[str, Any]] = []
-    if isinstance(raw_taxonomy, dict):
-        for name, payload in raw_taxonomy.items():
-            if isinstance(payload, str):
-                payload = {"description": payload}
-            elif not isinstance(payload, dict):
-                payload = {"description": str(payload)}
-
-            branch_name = str(name).strip()
-            description = str(payload.get("description", "")).strip()
-            required_concepts = [
-                str(item).strip() for item in payload.get("required_concepts", []) if str(item).strip()
-            ]
-            paper_count = sum(
-                1
-                for paper in papers
-                if branch_name and branch_name.lower() in str(paper.taxonomy_category or "").lower()
-            )
-            branches.append(
-                {
-                    "branch_id": _slug(branch_name),
-                    "name": branch_name,
-                    "description": description,
-                    "required_concepts": required_concepts,
-                    "paper_count": paper_count,
-                }
-            )
-    elif isinstance(raw_taxonomy, list):
-        for item in raw_taxonomy:
-            branch_name = str(item).strip()
-            branches.append(
-                {
-                    "branch_id": _slug(branch_name),
-                    "name": branch_name,
-                    "description": "",
-                    "required_concepts": [],
-                    "paper_count": 0,
-                }
-            )
-    elif raw_taxonomy:
-        branch_name = str(raw_taxonomy).strip()
-        branches.append(
-            {
-                "branch_id": _slug(branch_name),
-                "name": branch_name,
-                "description": "",
-                "required_concepts": [],
-                "paper_count": 0,
-            }
-        )
-
-    # build a simple tree structure from branch names using '/' or '>' separators
-    tree = []
-    for b in branches:
-        parts = [p.strip() for p in re.split(r"[/>]", b["name"]) if p.strip()]
-        node = {"branch_id": b["branch_id"], "name": b["name"], "children": []}
-        if not parts:
-            tree.append(node)
-            continue
-        # For simplicity attach as flat entries grouped by first part
-        root = next((t for t in tree if t["name"] == parts[0]), None)
-        if not root:
-            root = {"branch_id": _slug(parts[0]), "name": parts[0], "children": []}
-            tree.append(root)
-        if len(parts) > 1:
-            child = {"branch_id": b["branch_id"], "name": b["name"], "children": []}
-            root["children"].append(child)
-
-    # coverage overlay: count papers and gaps per branch
-    coverage = {}
-    for b in branches:
-        bid = b["branch_id"]
-        paper_count = b.get("paper_count", 0)
-        gap_count = sum(1 for g in gaps if bid in str(g.summary).lower() or (g.gap_id and bid in g.gap_id))
-        coverage[bid] = {
-            "paper_count": paper_count,
-            "gap_count": gap_count,
-            "coverage_score": float(paper_count) / (1 + gap_count) if (paper_count or gap_count) else 0.0,
-        }
-
-    return {"branches": branches, "tree": tree, "coverage": coverage, "raw": raw_taxonomy}
+    return ground_taxonomy(raw_taxonomy, papers, gaps or [])
 
 
 def _slug(value: str) -> str:

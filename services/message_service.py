@@ -81,6 +81,27 @@ class MessageService:
             return None
         return self.repository.list_by_conversation(conversation_id)
 
+    def create_assistant_message(
+        self,
+        *,
+        conversation_id: str,
+        content: str,
+        metadata: dict | None = None,
+    ) -> MessageRecord | None:
+        """
+        写入一条 assistant 消息。
+
+        说明：
+        - 这是对 `create_message(..., role="assistant")` 的轻量封装
+        - 用于把任务运行结果、失败提示、摘要结论沉淀回会话历史
+        """
+        return self.create_message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=content,
+            metadata=metadata,
+        )
+
     def get_recent_context(self, conversation_id: str, *, limit: int = 6) -> list[MessageRecord] | None:
         """
         获取最近若干条消息，作为 follow-up 任务的轻量上下文输入。

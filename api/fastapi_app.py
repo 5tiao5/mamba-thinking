@@ -92,6 +92,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     ):
         return handlers.list_research_tasks(conversation_id=conversation_id, limit=limit).model_dump()
 
+    @app.get("/research/tasks/{task_id}")
+    def get_research_task(task_id: str = Path(..., description="研究任务 ID")):
+        return handlers.get_research_task(task_id).model_dump()
+
     @app.post("/research/tasks/{task_id}/run")
     def run_research_task(task_id: str = Path(..., description="研究任务 ID")):
         return handlers.run_research_task(task_id).model_dump()

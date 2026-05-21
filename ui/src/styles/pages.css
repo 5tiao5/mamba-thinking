@@ -1,0 +1,242 @@
+.launch-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+  gap: 12px;
+}
+
+.launch-page {
+  align-content: start;
+}
+
+.launch-command {
+  display: grid;
+  gap: 10px;
+}
+
+.launch-ops-grid {
+  display: grid;
+  grid-template-columns: minmax(460px, 1fr) minmax(420px, 0.9fr);
+  gap: 12px;
+}
+
+.prompt-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.prompt-button {
+  min-height: 28px;
+  padding: 5px 9px;
+}
+
+.output-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.output-preview-item {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 10px;
+  border-right: 1px solid #e7eef8;
+  padding: 14px 16px;
+}
+
+.output-preview-item:last-child {
+  border-right: 0;
+}
+
+.output-preview-item h3 {
+  margin: 0 0 5px;
+  color: #172033;
+  font-size: 0.9rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.output-preview-item p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.workflow-steps {
+  display: grid;
+  gap: 0;
+}
+
+.workflow-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  border-bottom: 1px solid #e7eef8;
+  padding: 10px 12px;
+}
+
+.workflow-step:last-child {
+  border-bottom: 0;
+}
+
+.step-index {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e8f2ff;
+  color: #255fd6;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.conversation-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(360px, 1fr) 360px;
+  gap: 12px;
+  align-items: start;
+}
+
+.message-feed {
+  display: grid;
+  align-content: start;
+}
+
+.message-row {
+  display: grid;
+  grid-template-columns: 124px minmax(0, 1fr);
+  border-bottom: 1px solid #e7eef8;
+  min-height: 66px;
+}
+
+.message-row:last-child {
+  border-bottom: 0;
+}
+
+.message-meta {
+  border-right: 1px solid #e7eef8;
+  padding: 10px 12px;
+  color: #708098;
+  font-size: 0.74rem;
+}
+
+.message-meta strong {
+  display: block;
+  color: #172033;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.message-body {
+  border-left: 3px solid transparent;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+
+.message-user .message-body {
+  border-left-color: #2f6fed;
+}
+
+.message-assistant .message-body {
+  border-left-color: #285cc4;
+}
+
+.history-toolbar {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.85fr);
+  gap: 12px;
+}
+
+.config-cell {
+  max-width: 130px;
+  overflow: hidden;
+  color: #64748b;
+  font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-tools-table {
+  table-layout: fixed;
+}
+
+.settings-tools-table th:nth-child(1),
+.settings-tools-table td:nth-child(1) {
+  width: 150px;
+}
+
+.settings-tools-table th:nth-child(2),
+.settings-tools-table td:nth-child(2) {
+  width: 82px;
+}
+
+.settings-tools-table th:nth-child(4),
+.settings-tools-table td:nth-child(4) {
+  width: 92px;
+}
+
+@media (max-width: 1180px) {
+  .conversation-grid,
+  .settings-grid,
+  .launch-ops-grid,
+  .launch-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+
+  .output-preview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .output-preview-item:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .output-preview-item:nth-child(-n + 2) {
+    border-bottom: 1px solid #e7eef8;
+  }
+
+  .history-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .message-row {
+    grid-template-columns: 1fr;
+  }
+
+  .message-meta {
+    border-right: 0;
+    border-bottom: 1px solid #e7eef8;
+  }
+
+  .output-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .output-preview-item,
+  .output-preview-item:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .output-preview-item,
+  .output-preview-item:nth-child(-n + 2) {
+    border-bottom: 1px solid #e7eef8;
+  }
+
+  .output-preview-item:last-child {
+    border-bottom: 0;
+  }
+}
