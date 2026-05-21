@@ -99,10 +99,60 @@ export const demoWorkspace: WorkspaceSnapshot = {
     },
   ],
   taxonomy: {
-    "tool-use benchmark": ["API selection", "argument generation", "execution feedback"],
-    "code agent evaluation": ["issue reproduction", "patch generation", "test feedback"],
-    "general agent benchmark": ["planning", "memory", "environment interaction"],
-    "missing dimensions": ["recovery", "cost awareness", "multi-tool dependency", "human handoff"],
+    branches: [
+      {
+        branch_id: "tool-use-benchmark",
+        name: "Tool-Use Benchmark",
+        description: "围绕 API 调用、参数生成和执行反馈的评测设计。",
+        required_concepts: ["API selection", "argument generation", "execution feedback"],
+        paper_count: 1,
+      },
+      {
+        branch_id: "code-agent-evaluation",
+        name: "Code Agent Evaluation",
+        description: "围绕 issue reproduction、patch generation 和 test feedback 的评测。",
+        required_concepts: ["issue reproduction", "patch generation", "test feedback"],
+        paper_count: 1,
+      },
+      {
+        branch_id: "general-agent-benchmark",
+        name: "General Agent Benchmark",
+        description: "覆盖 planning、memory 与 environment interaction 的通用 benchmark。",
+        required_concepts: ["planning", "memory", "environment interaction"],
+        paper_count: 2,
+      },
+      {
+        branch_id: "missing-dimensions",
+        name: "Missing Dimensions",
+        description: "当前 benchmark 中仍然覆盖不足的关键维度。",
+        required_concepts: ["recovery", "cost awareness", "multi-tool dependency", "human handoff"],
+        paper_count: 0,
+      },
+    ],
+    tree: [
+      {
+        branch_id: "evaluation",
+        name: "Evaluation",
+        children: [
+          { branch_id: "tool-use-benchmark", name: "Tool-Use Benchmark", children: [] },
+          { branch_id: "code-agent-evaluation", name: "Code Agent Evaluation", children: [] },
+          { branch_id: "general-agent-benchmark", name: "General Agent Benchmark", children: [] },
+          { branch_id: "missing-dimensions", name: "Missing Dimensions", children: [] },
+        ],
+      },
+    ],
+    coverage: {
+      "tool-use-benchmark": { paper_count: 1, gap_count: 0, coverage_score: 1 },
+      "code-agent-evaluation": { paper_count: 1, gap_count: 0, coverage_score: 1 },
+      "general-agent-benchmark": { paper_count: 2, gap_count: 1, coverage_score: 1 },
+      "missing-dimensions": { paper_count: 0, gap_count: 3, coverage_score: 0 },
+    },
+    raw: {
+      "tool-use benchmark": ["API selection", "argument generation", "execution feedback"],
+      "code agent evaluation": ["issue reproduction", "patch generation", "test feedback"],
+      "general agent benchmark": ["planning", "memory", "environment interaction"],
+      "missing dimensions": ["recovery", "cost awareness", "multi-tool dependency", "human handoff"],
+    },
   },
   graph_edges: [
     {

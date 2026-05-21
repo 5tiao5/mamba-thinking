@@ -178,6 +178,14 @@ class ProductApiHandlers:
         tasks = self.research_service.list_tasks(conversation_id=conversation_id, limit=limit)
         return ok({"items": [self._task_payload(item) for item in tasks]})
 
+    def get_research_task(self, task_id: str):
+        """获取单个研究任务的状态与元数据。"""
+        try:
+            task = self.research_service.get_task(task_id)
+        except TaskNotFoundError:
+            return fail("task_not_found", "Research task does not exist.")
+        return ok(self._task_payload(task))
+
     def run_research_task(self, task_id: str):
         """运行已创建的研究任务。"""
         try:
@@ -188,7 +196,32 @@ class ProductApiHandlers:
         try:
             workspace = self.research_service.run_task(task)
         except Exception as error:
+            self.message_service.create_assistant_message(
+                conversation_id=task.conversation_id,
+                content=self._build_task_failure_message(task=task, error_message=str(error)),
+                metadata={
+                    "kind": "task_result",
+                    "task_id": task.task_id,
+                    "task_status": "failed",
+                    "topic": task.topic,
+                },
+            )
             return fail("task_run_failed", str(error))
+
+        assistant_message = self.message_service.create_assistant_message(
+            conversation_id=task.conversation_id,
+            content=self._build_task_result_message(task=task, workspace=workspace),
+            metadata={
+                "kind": "task_result",
+                "task_id": workspace.task_id,
+                "task_status": "completed",
+                "topic": workspace.topic,
+                "alignment_score": workspace.alignment_score,
+                "paper_count": len(workspace.papers),
+                "gap_count": len(workspace.gaps),
+                "idea_count": len(workspace.ideas),
+            },
+        )
 
         return ok(
             {
@@ -196,6 +229,7 @@ class ProductApiHandlers:
                 "topic": workspace.topic,
                 "alignment_score": workspace.alignment_score,
                 "trace_keys": list(workspace.trace.keys()),
+                "assistant_message_id": assistant_message.message_id if assistant_message else None,
             }
         )
 
@@ -259,3 +293,35 @@ class ProductApiHandlers:
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
         }
+
+    @staticmethod
+    def _build_task_result_message(*, task, workspace) -> str:
+        summary = " ".join((workspace.summary or "").split())
+        if len(summary) > 220:
+            summary = f"{summary[:217]}..."
+
+        lines = [
+            f"已完成本轮研究任务：{task.topic}",
+            f"- 论文数：{len(workspace.papers)}",
+            f"- 研究空白：{len(workspace.gaps)}",
+            f"- 研究建议：{len(workspace.ideas)}",
+            f"- 对齐分数：{workspace.alignment_score:.3f}",
+        ]
+        if summary:
+            lines.append(f"- 摘要：{summary}")
+        lines.append(f"- 工作台任务：{workspace.task_id}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_task_failure_message(*, task, error_message: str) -> str:
+        compact_error = " ".join((error_message or "").split())
+        if len(compact_error) > 220:
+            compact_error = f"{compact_error[:217]}..."
+        return "\n".join(
+            [
+                f"本轮研究任务运行失败：{task.topic}",
+                f"- 任务编号：{task.task_id}",
+                f"- 错误信息：{compact_error or '未知错误'}",
+                "- 建议：可以调整追问范围、切换模式，或稍后重试。",
+            ]
+        )

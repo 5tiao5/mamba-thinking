@@ -113,7 +113,7 @@ npm run dev
 
 还在持续建设中的部分：
 
-- 历史页真实页面联调
+- 历史页的筛选、详情联动和视觉打磨
 - 更完整的会话详情与历史交互
 - PostgreSQL 等更正式的持久化后端
 - 完整 RAG / shared knowledge

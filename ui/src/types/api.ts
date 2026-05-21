@@ -45,6 +45,8 @@ export type ResearchTaskSummaryItem = {
   updated_at: string;
 };
 
+export type ResearchTaskDetailItem = ResearchTaskSummaryItem;
+
 export type ContinueConversationPayload = {
   conversation_id: string;
   next_focus: string;
@@ -86,12 +88,42 @@ export type WorkspaceIdea = {
   raw_text: string;
 };
 
+export type WorkspaceTaxonomyBranch = {
+  branch_id: string;
+  name: string;
+  description: string;
+  required_concepts: string[];
+  paper_count: number;
+};
+
+export type WorkspaceTaxonomyTreeNode = {
+  branch_id: string;
+  name: string;
+  children: WorkspaceTaxonomyTreeNode[];
+};
+
+export type WorkspaceTaxonomyCoverage = Record<
+  string,
+  {
+    paper_count: number;
+    gap_count: number;
+    coverage_score: number;
+  }
+>;
+
+export type WorkspaceTaxonomy = {
+  branches: WorkspaceTaxonomyBranch[];
+  tree: WorkspaceTaxonomyTreeNode[];
+  coverage: WorkspaceTaxonomyCoverage;
+  raw: unknown;
+};
+
 export type WorkspaceSnapshot = {
   task_id: string;
   topic: string;
   summary: string;
   papers: WorkspacePaper[];
-  taxonomy: Record<string, unknown>;
+  taxonomy: WorkspaceTaxonomy;
   graph_edges: WorkspaceGraphEdge[];
   gaps: WorkspaceGap[];
   ideas: WorkspaceIdea[];

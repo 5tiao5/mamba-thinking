@@ -4,6 +4,7 @@ import type {
   ConversationResponsePayload,
   ConversationSummaryItem,
   MessageItem,
+  ResearchTaskDetailItem,
   ResearchTaskSummaryItem,
   SkillItem,
   ToolItem,
@@ -142,6 +143,8 @@ export const api = {
       `/research/tasks${query ? `?${query}` : ""}`
     );
   },
+  getTask: (taskId: string) =>
+    request<{ success: boolean; data: ResearchTaskDetailItem }>(`/research/tasks/${taskId}`),
   runTask: (taskId: string) => {
     if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
       return Promise.resolve({
