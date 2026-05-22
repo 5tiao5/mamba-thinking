@@ -108,6 +108,8 @@ export type WorkspaceTaxonomyCoverage = Record<
     paper_count: number;
     gap_count: number;
     coverage_score: number;
+    matched_paper_ids?: string[];
+    matched_gap_ids?: string[];
   }
 >;
 
@@ -116,6 +118,17 @@ export type WorkspaceTaxonomy = {
   tree: WorkspaceTaxonomyTreeNode[];
   coverage: WorkspaceTaxonomyCoverage;
   raw: unknown;
+};
+
+export type WorkspaceEvidenceStatus = {
+  insufficient: boolean;
+  total_papers: number;
+  real_paper_count: number;
+  fallback_paper_count: number;
+  fallback_ratio: number;
+  covered_branch_count: number;
+  candidate_branches: string[];
+  message: string;
 };
 
 export type WorkspaceSnapshot = {
@@ -128,6 +141,7 @@ export type WorkspaceSnapshot = {
   gaps: WorkspaceGap[];
   ideas: WorkspaceIdea[];
   alignment_score: number;
+  evidence_status: WorkspaceEvidenceStatus;
   trace: {
     thought_trace: Array<Record<string, unknown>>;
     action_history: Array<Record<string, unknown>>;

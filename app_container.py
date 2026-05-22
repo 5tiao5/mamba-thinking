@@ -77,7 +77,11 @@ class AppContainer:
             task_repository=self.task_repository,
             workspace_repository=self.workspace_repository,
         )
-        self.workspace_service = WorkspaceService(self.workspace_repository)
+        self.workspace_service = WorkspaceService(
+            self.workspace_repository,
+            conversation_repository=self.conversation_repository,
+            task_repository=self.task_repository,
+        )
         self.tool_service = ToolService(self.tool_registry)
         self.skill_service = SkillService(self.skill_registry)
         self.knowledge_service = KnowledgeService(self.knowledge_repository)

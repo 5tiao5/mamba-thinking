@@ -55,6 +55,22 @@ CHINESE_TERM_HINTS = {
 }
 
 
+BRANCH_ALIAS_HINTS = {
+    "evaluation": ("benchmark", "metric", "metrics", "efficiency", "robustness", "cost", "performance"),
+    "benchmark": ("evaluation", "metric", "dataset", "efficiency", "robustness"),
+    "method": ("approach", "algorithm", "architecture", "framework", "planning", "tool use"),
+    "methods": ("approach", "algorithm", "architecture", "framework", "planning", "tool use"),
+    "architecture": ("planning", "tool use", "module", "framework", "agent workflow"),
+    "software": ("repository", "code", "testing", "issue", "review", "development"),
+    "engineering": ("repository", "code", "testing", "issue", "review", "development"),
+    "interaction": ("human", "feedback", "usability", "trust", "developer"),
+    "human": ("interaction", "feedback", "developer", "control", "trust"),
+    "application": ("real world", "deployment", "production", "workflow", "industry"),
+    "security": ("threat", "risk", "attack", "safety", "robustness"),
+    "review": ("peer review", "reviewer", "submission", "paper review"),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class TaxonomyBranchProfile:
     branch_id: str
@@ -179,6 +195,7 @@ def _normalize_branch_payloads(raw_taxonomy: Any) -> List[Dict[str, Any]]:
 
 
 def _build_branch_profile(payload: Dict[str, Any]) -> TaxonomyBranchProfile:
+    expanded_required = _expand_branch_aliases(payload)
     phrases = tuple(
         phrase
         for phrase in _unique(
@@ -186,11 +203,12 @@ def _build_branch_profile(payload: Dict[str, Any]) -> TaxonomyBranchProfile:
                 str(payload["name"]).strip().lower(),
                 str(payload["description"]).strip().lower(),
                 *[str(item).strip().lower() for item in payload["required_concepts"]],
+                *expanded_required,
             ]
         )
         if len(phrase) >= 4
     )
-    token_sources = [payload["name"], payload["description"], *payload["required_concepts"]]
+    token_sources = [payload["name"], payload["description"], *payload["required_concepts"], *expanded_required]
     tokens = frozenset(_focused_terms(" ".join(token_sources)))
     return TaxonomyBranchProfile(
         branch_id=payload["branch_id"],
@@ -217,12 +235,13 @@ def _assign_papers_to_branches(
             continue
         scored.sort(key=lambda item: item[1], reverse=True)
         top_score = scored[0][1]
-        if top_score < 0.32:
+        min_score = max(0.18, min(0.32, top_score * 0.82))
+        if top_score < min_score:
             continue
         selected = [
             branch_id
             for branch_id, score in scored
-            if score >= 0.32 and score >= top_score * 0.72
+            if score >= min_score and score >= top_score * 0.72
         ]
         for branch_id in selected:
             assignments[branch_id].append(paper.paper_id)
@@ -260,24 +279,32 @@ def _paper_branch_score(paper: PaperRecord, profile: TaxonomyBranchProfile) -> f
             paper.title or "",
             paper.abstract or "",
             " ".join(paper.authors or []),
+            " ".join(paper.keywords or []),
             paper.taxonomy_category or "",
         ]
     ).lower()
     paper_tokens = _focused_terms(paper_text)
     title_tokens = _focused_terms(paper.title or "")
+    keyword_tokens = _focused_terms(" ".join(paper.keywords or []))
+    category_tokens = _focused_terms(paper.taxonomy_category or "")
 
     shared_tokens = len(profile.tokens & paper_tokens)
     title_hits = len(profile.tokens & title_tokens)
+    keyword_hits = len(profile.tokens & keyword_tokens)
     phrase_hits = sum(1 for phrase in profile.phrases if _phrase_match(phrase, paper_text))
+    category_hits = len(profile.tokens & category_tokens)
 
     score = 0.0
-    score += shared_tokens * 0.14
+    score += shared_tokens * 0.12
     score += title_hits * 0.18
+    score += keyword_hits * 0.24
     score += phrase_hits * 0.24
+    score += category_hits * 0.12
 
-    if paper.taxonomy_category:
-        category_terms = _focused_terms(paper.taxonomy_category)
-        score += len(profile.tokens & category_terms) * 0.08
+    if not keyword_hits and any(_phrase_match(phrase, " ".join(paper.keywords or []).lower()) for phrase in profile.phrases):
+        score += 0.22
+    if not category_hits and profile.name and _phrase_match(profile.name.lower(), (paper.taxonomy_category or "").lower()):
+        score += 0.18
 
     return round(score, 4)
 
@@ -287,7 +314,7 @@ def _gap_branch_score(gap: GapRecord, profile: TaxonomyBranchProfile) -> float:
     gap_tokens = _focused_terms(gap_text)
     shared_tokens = len(profile.tokens & gap_tokens)
     phrase_hits = sum(1 for phrase in profile.phrases if _phrase_match(phrase, gap_text))
-    score = shared_tokens * 0.16 + phrase_hits * 0.24
+    score = shared_tokens * 0.16 + phrase_hits * 0.28
     return round(score, 4)
 
 
@@ -324,6 +351,21 @@ def _terms(text: str) -> List[str]:
         if chinese_hint in text:
             tokens.extend(_normalize_phrase(english_token).split(" "))
     return _unique(tokens)
+
+
+def _expand_branch_aliases(payload: Dict[str, Any]) -> List[str]:
+    seed_text = " ".join(
+        [
+            str(payload.get("name", "")),
+            str(payload.get("description", "")),
+            *[str(item) for item in payload.get("required_concepts", [])],
+        ]
+    )
+    seed_tokens = _focused_terms(seed_text)
+    aliases: List[str] = []
+    for token in seed_tokens:
+        aliases.extend(BRANCH_ALIAS_HINTS.get(token, ()))
+    return _unique(aliases)
 
 
 def _normalize_token(token: str) -> str:

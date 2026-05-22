@@ -1,5 +1,9 @@
 import type { WorkspaceSnapshot, WorkspaceTaxonomyBranch } from "../../types/api";
-import { coverageLabel, formatCoverageScore, formatTaxonomyHeading } from "./workspaceFormatters";
+import {
+  coverageLabel,
+  formatCoverageScore,
+  formatTaxonomyHeading,
+} from "./workspaceFormatters";
 
 type WorkspaceTaxonomyMapProps = {
   topic: string;
@@ -25,7 +29,7 @@ function branchNodeStyle(score: number, paperCount: number, active: boolean) {
   return { fill: "#eff6ff", stroke: "#2563eb", badge: "#2563eb" };
 }
 
-function truncateLabel(label: string, maxLength = 22) {
+function truncateLabel(label: string, maxLength = 26) {
   if (label.length <= maxLength) {
     return label;
   }
@@ -40,26 +44,36 @@ export function WorkspaceTaxonomyMap({
   onSelectBranch,
 }: WorkspaceTaxonomyMapProps) {
   if (!branches.length) {
-    return <div className="empty-state">暂无 taxonomy 结构可视化。</div>;
+    return <div className="empty-state">当前没有可视化 taxonomy 结构。</div>;
   }
 
-  const width = 820;
-  const height = 360;
+  const width = 980;
+  const height = 480;
   const centerX = width / 2;
   const centerY = height / 2;
-  const radiusX = 275;
-  const radiusY = 120;
+  const radiusX = 340;
+  const radiusY = 170;
 
   return (
     <div className="taxonomy-map-card">
       <svg className="taxonomy-map" viewBox={`0 0 ${width} ${height}`}>
         <g>
-          <circle className="taxonomy-map-root" cx={centerX} cy={centerY} r="56" />
-          <text className="taxonomy-map-root-title" textAnchor="middle" x={centerX} y={centerY - 4}>
+          <circle className="taxonomy-map-root" cx={centerX} cy={centerY} r="66" />
+          <text
+            className="taxonomy-map-root-title"
+            textAnchor="middle"
+            x={centerX}
+            y={centerY - 6}
+          >
             Taxonomy
           </text>
-          <text className="taxonomy-map-root-subtitle" textAnchor="middle" x={centerX} y={centerY + 18}>
-            {truncateLabel(topic, 20)}
+          <text
+            className="taxonomy-map-root-subtitle"
+            textAnchor="middle"
+            x={centerX}
+            y={centerY + 22}
+          >
+            {truncateLabel(topic, 24)}
           </text>
         </g>
 
@@ -75,30 +89,56 @@ export function WorkspaceTaxonomyMap({
           const title = formatTaxonomyHeading(branch);
 
           return (
-            <g className="taxonomy-map-branch" key={branch.branch_id} onClick={() => onSelectBranch(branch.branch_id)}>
-              <line className="taxonomy-map-link" stroke={style.stroke} x1={centerX} x2={x} y1={centerY} y2={y} />
+            <g
+              className="taxonomy-map-branch"
+              key={branch.branch_id}
+              onClick={() => onSelectBranch(branch.branch_id)}
+            >
+              <line
+                className="taxonomy-map-link"
+                stroke={style.stroke}
+                x1={centerX}
+                x2={x}
+                y1={centerY}
+                y2={y}
+              />
               <circle
-                className={active ? "taxonomy-map-node taxonomy-map-node-active" : "taxonomy-map-node"}
+                className={
+                  active
+                    ? "taxonomy-map-node taxonomy-map-node-active"
+                    : "taxonomy-map-node"
+                }
                 cx={x}
                 cy={y}
                 fill={style.fill}
-                r={paperCount ? 36 : 32}
+                r={paperCount ? 42 : 36}
                 stroke={style.stroke}
               />
-              <circle className="taxonomy-map-badge" cx={x + 24} cy={y - 24} fill={style.badge} r="13" />
-              <text className="taxonomy-map-badge-text" textAnchor="middle" x={x + 24} y={y - 19}>
+              <circle
+                className="taxonomy-map-badge"
+                cx={x + 29}
+                cy={y - 28}
+                fill={style.badge}
+                r="15"
+              />
+              <text
+                className="taxonomy-map-badge-text"
+                textAnchor="middle"
+                x={x + 29}
+                y={y - 22}
+              >
                 {paperCount}
               </text>
-              <text className="taxonomy-map-node-title" textAnchor="middle" x={x} y={y - 2}>
-                {truncateLabel(title, 18)}
+              <text className="taxonomy-map-node-title" textAnchor="middle" x={x} y={y - 4}>
+                {truncateLabel(title, 24)}
               </text>
-              <text className="taxonomy-map-node-meta" textAnchor="middle" x={x} y={y + 16}>
+              <text className="taxonomy-map-node-meta" textAnchor="middle" x={x} y={y + 19}>
                 {coverageLabel(score)}
               </text>
               <title>
-                {`${title}\nPapers: ${paperCount}\nCoverage: ${formatCoverageScore(score)}\nGap: ${
-                  branchCoverage?.gap_count ?? 0
-                }`}
+                {`${title}\nPapers: ${paperCount}\nCoverage: ${formatCoverageScore(
+                  score
+                )}\nGap: ${branchCoverage?.gap_count ?? 0}`}
               </title>
             </g>
           );

@@ -4,6 +4,7 @@ from observability import StageTimer, record_decision, record_tool_event
 from tools import build_taxonomy
 
 from ..models import ResearchState
+from ...services.taxonomy_evidence_service import build_taxonomy_evidence_brief
 
 
 def taxonomy_node(state: ResearchState) -> ResearchState:
@@ -19,8 +20,15 @@ def taxonomy_node(state: ResearchState) -> ResearchState:
         )
         return state
 
-    paper_text = "\n\n".join(f"{paper.title}\n{paper.abstract}" for paper in state.get("paper_nodes", {}).values())
-    source_text = "\n\n".join(state.get("review_texts", [])) or paper_text
+    papers = list(state.get("paper_nodes", {}).values())
+    evidence_brief = build_taxonomy_evidence_brief(
+        topic=state.get("topic", ""),
+        papers=papers,
+        review_texts=state.get("review_texts", []),
+    )
+    paper_text = "\n\n".join(f"{paper.title}\n{paper.abstract}" for paper in papers)
+    survey_text = "\n\n".join(state.get("review_texts", []))
+    source_text = "\n\n".join(part for part in [evidence_brief, survey_text, paper_text] if part)
     timer = StageTimer()
     taxonomy = build_taxonomy(source_text)
 
@@ -33,7 +41,7 @@ def taxonomy_node(state: ResearchState) -> ResearchState:
         status="success",
         output_count=len(taxonomy.get("taxonomy", {})) if isinstance(taxonomy, dict) else 0,
         duration_sec=timer.elapsed(),
-        note="LLM or rule-based fallback depending on mode/API availability.",
+        note="Evidence-first taxonomy summary built from retrieved papers, keywords, categories, and optional review text.",
     )
     record_decision(
         updated,

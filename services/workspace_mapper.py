@@ -155,6 +155,7 @@ def _map_paper(paper: Any) -> PaperRecord:
         title=str(payload.get("title", "")),
         abstract=str(payload.get("abstract", "")),
         authors=list(payload.get("authors", [])),
+        keywords=[str(item).strip() for item in payload.get("keywords", []) if str(item).strip()],
         publish_date=str(payload.get("publish_date", "")),
         source=str(payload.get("source", "")),
         taxonomy_category=str(payload.get("taxonomy_category", "")),

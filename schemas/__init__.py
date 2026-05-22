@@ -11,6 +11,11 @@ from .conversation import (
     SendMessageRequest,
 )
 from .message import CreateMessageRequest, ListMessagesResponse, MessageView
+from .knowledge import (
+    CreateKnowledgeDocumentRequest,
+    KnowledgeDocumentView,
+    ListKnowledgeDocumentsResponse,
+)
 from .research import (
     CreateResearchTaskRequest,
     CreateResearchTaskResponse,
@@ -19,6 +24,7 @@ from .research import (
     WorkspaceGapView,
     WorkspaceGraphEdgeView,
     WorkspaceIdeaView,
+    WorkspaceEvidenceStatusView,
     WorkspacePaperView,
     WorkspaceSnapshotResponse,
     WorkspaceTraceView,
@@ -40,6 +46,9 @@ __all__ = [
     "CreateMessageRequest",
     "MessageView",
     "ListMessagesResponse",
+    "CreateKnowledgeDocumentRequest",
+    "KnowledgeDocumentView",
+    "ListKnowledgeDocumentsResponse",
     "CreateResearchTaskRequest",
     "CreateResearchTaskResponse",
     "ResearchTaskSummaryView",
@@ -48,6 +57,7 @@ __all__ = [
     "WorkspaceGraphEdgeView",
     "WorkspaceGapView",
     "WorkspaceIdeaView",
+    "WorkspaceEvidenceStatusView",
     "WorkspaceTraceView",
     "WorkspaceSnapshotResponse",
     "ToolView",

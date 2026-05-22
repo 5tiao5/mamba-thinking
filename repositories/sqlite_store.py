@@ -325,6 +325,7 @@ class SQLiteWorkspaceRepository:
             "title": paper.title,
             "abstract": paper.abstract,
             "authors": list(paper.authors),
+            "keywords": list(paper.keywords),
             "publish_date": paper.publish_date,
             "source": paper.source,
             "taxonomy_category": paper.taxonomy_category,

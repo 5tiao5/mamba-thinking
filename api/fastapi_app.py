@@ -3,9 +3,14 @@ from __future__ import annotations
 from fastapi import FastAPI, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from product_agent.env_loader import load_product_agent_dotenv
+
+load_product_agent_dotenv()
+
 from product_agent.app_container import AppContainer
 from product_agent.schemas import (
     ContinueConversationRequest,
+    CreateKnowledgeDocumentRequest,
     CreateConversationRequest,
     CreateMessageRequest,
     CreateResearchTaskRequest,
@@ -31,6 +36,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         workspace_service=active_container.workspace_service,
         tool_service=active_container.tool_service,
         skill_service=active_container.skill_service,
+        knowledge_service=active_container.knowledge_service,
     )
 
     app = FastAPI(
@@ -65,6 +71,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.get("/conversations/{conversation_id}")
     def get_conversation(conversation_id: str = Path(..., description="会话 ID")):
         return handlers.get_conversation(conversation_id).model_dump()
+
+    @app.get("/conversations/{conversation_id}/workspace")
+    def get_conversation_workspace(conversation_id: str = Path(..., description="浼氳瘽 ID")):
+        return handlers.get_conversation_workspace(conversation_id).model_dump()
 
     @app.get("/conversations/{conversation_id}/messages")
     def list_messages(conversation_id: str = Path(..., description="会话 ID")):
@@ -118,6 +128,18 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.get("/skills")
     def list_skills():
         return handlers.list_skills().model_dump()
+
+    @app.get("/knowledge/documents")
+    def list_knowledge_documents():
+        return handlers.list_knowledge_documents().model_dump()
+
+    @app.post("/knowledge/documents")
+    def create_knowledge_document(request: CreateKnowledgeDocumentRequest):
+        return handlers.create_knowledge_document(request).model_dump()
+
+    @app.delete("/knowledge/documents/{document_id}")
+    def delete_knowledge_document(document_id: str = Path(..., description="知识文档 ID")):
+        return handlers.delete_knowledge_document(document_id).model_dump()
 
     return app
 

@@ -5,6 +5,7 @@ from dataclasses import asdict
 from product_agent.schemas import (
     ContinueConversationRequest,
     ContinueConversationResponse,
+    CreateKnowledgeDocumentRequest,
     CreateConversationRequest,
     CreateMessageRequest,
     CreateResearchTaskRequest,
@@ -36,6 +37,7 @@ class ProductApiHandlers:
         workspace_service,
         tool_service,
         skill_service,
+        knowledge_service,
     ):
         self.conversation_service = conversation_service
         self.message_service = message_service
@@ -43,6 +45,7 @@ class ProductApiHandlers:
         self.workspace_service = workspace_service
         self.tool_service = tool_service
         self.skill_service = skill_service
+        self.knowledge_service = knowledge_service
 
     def create_conversation(self, request: CreateConversationRequest):
         """创建新会话。"""
@@ -240,6 +243,12 @@ class ProductApiHandlers:
             return fail("workspace_not_found", "Workspace does not exist.")
         return ok(snapshot.model_dump())
 
+    def get_conversation_workspace(self, conversation_id: str):
+        snapshot = self.workspace_service.get_conversation_workspace_snapshot(conversation_id)
+        if snapshot is None:
+            return fail("conversation_workspace_not_found", "Conversation workspace does not exist.")
+        return ok(snapshot.model_dump())
+
     def list_tools(self):
         """列出当前已注册工具及其开关状态。"""
         tools = self.tool_service.list_tools()
@@ -257,6 +266,27 @@ class ProductApiHandlers:
         """列出当前已注册 skill。"""
         skills = self.skill_service.list_skills()
         return ok([asdict(skill) for skill in skills])
+
+    def list_knowledge_documents(self):
+        documents = self.knowledge_service.list_documents()
+        return ok({"items": [self._knowledge_payload(item) for item in documents]})
+
+    def create_knowledge_document(self, request: CreateKnowledgeDocumentRequest):
+        document = self.knowledge_service.import_document(
+            title=request.title,
+            content=request.content,
+            tags=request.tags,
+            source_url=request.source_url,
+            source_task_id=request.source_task_id,
+            notes=request.notes,
+        )
+        return ok(self._knowledge_payload(document))
+
+    def delete_knowledge_document(self, document_id: str):
+        deleted = self.knowledge_service.delete_document(document_id)
+        if not deleted:
+            return fail("knowledge_document_not_found", "Knowledge document does not exist.")
+        return ok({"document_id": document_id, "deleted": True})
 
     @staticmethod
     def _message_payload(message) -> dict:
@@ -292,6 +322,17 @@ class ProductApiHandlers:
             "trigger_message_id": task.trigger_message_id,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
+        }
+
+    @staticmethod
+    def _knowledge_payload(document) -> dict:
+        return {
+            "document_id": document.document_id,
+            "title": document.title,
+            "source_task_id": document.source_task_id,
+            "content": document.content,
+            "tags": list(document.tags),
+            "metadata": dict(document.metadata),
         }
 
     @staticmethod

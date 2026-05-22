@@ -53,6 +53,7 @@ class PaperRecord:
     title: str
     abstract: str = ""
     authors: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
     publish_date: str = ""
     source: str = ""
     taxonomy_category: str = ""

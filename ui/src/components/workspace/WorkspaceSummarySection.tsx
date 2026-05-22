@@ -1,3 +1,4 @@
+import type { WorkspaceEvidenceStatus } from "../../types/api";
 import { StatusPill } from "../ui/StatusPill";
 
 type WorkspaceSummarySectionProps = {
@@ -10,6 +11,7 @@ type WorkspaceSummarySectionProps = {
   priorityNote?: string;
   recommendation?: string;
   usesFallbackPapers: boolean;
+  evidenceStatus?: WorkspaceEvidenceStatus;
 };
 
 function formatScore(score: number) {
@@ -37,14 +39,17 @@ export function WorkspaceSummarySection({
   priorityNote,
   recommendation,
   usesFallbackPapers,
+  evidenceStatus,
 }: WorkspaceSummarySectionProps) {
+  const isEvidenceInsufficient = evidenceStatus?.insufficient;
+
   return (
     <section className="workspace-hero surface">
       <div className="workspace-hero-main">
-        <div className="section-eyebrow">研究概览</div>
+        <div className="section-eyebrow">Research Overview</div>
         <h1 className="workspace-hero-title">{topic || "未加载研究主题"}</h1>
         <div className="workspace-hero-summary">
-          {summary ? cleanSummaryText(summary) : "运行任务后，这里会汇总本轮研究分析的核心结论。"}
+          {summary ? cleanSummaryText(summary) : "运行任务后，这里会汇总本轮分析的核心结论。"}
         </div>
 
         {priorityNote || recommendation ? (
@@ -84,13 +89,26 @@ export function WorkspaceSummarySection({
         </div>
       </div>
 
-      {usesFallbackPapers ? (
+      {isEvidenceInsufficient ? (
+        <div className="workspace-fallback-banner workspace-fallback-banner-evidence">
+          <StatusPill compact tone="warning">
+            证据不足模式
+          </StatusPill>
+          <span>
+            {evidenceStatus?.message}
+            {evidenceStatus?.candidate_branches?.length
+              ? ` 当前更适合把 ${evidenceStatus.candidate_branches.join(" / ")} 当作候选研究分支，而不是直接展示完整 taxonomy。`
+              : ""}
+          </span>
+        </div>
+      ) : usesFallbackPapers ? (
         <div className="workspace-fallback-banner">
           <StatusPill compact tone="warning">
             系统回退
           </StatusPill>
           <span>
-            当前结果包含保底论文，说明外部检索证据不足。系统先用种子论文维持 taxonomy 与 gap 分析链路，后续仍建议继续补充真实论文。
+            当前结果包含保底论文，说明外部检索证据不足。系统先用种子论文维持
+            taxonomy 与 gap 分析链路，后续仍建议继续补充真实论文。
           </span>
         </div>
       ) : null}

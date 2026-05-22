@@ -72,6 +72,17 @@ class WorkspaceTraceView(BaseModel):
     context_inputs: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class WorkspaceEvidenceStatusView(BaseModel):
+    insufficient: bool = False
+    total_papers: int = 0
+    real_paper_count: int = 0
+    fallback_paper_count: int = 0
+    fallback_ratio: float = 0.0
+    covered_branch_count: int = 0
+    candidate_branches: List[str] = Field(default_factory=list)
+    message: str = ""
+
+
 class WorkspaceSnapshotResponse(BaseModel):
     task_id: str
     topic: str
@@ -82,4 +93,5 @@ class WorkspaceSnapshotResponse(BaseModel):
     gaps: List[WorkspaceGapView] = Field(default_factory=list)
     ideas: List[WorkspaceIdeaView] = Field(default_factory=list)
     alignment_score: float = 0.0
+    evidence_status: WorkspaceEvidenceStatusView = Field(default_factory=WorkspaceEvidenceStatusView)
     trace: Optional[WorkspaceTraceView] = None

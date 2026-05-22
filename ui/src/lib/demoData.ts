@@ -210,6 +210,20 @@ export const demoWorkspace: WorkspaceSnapshot = {
     },
   ],
   alignment_score: 0.82,
+  evidence_status: {
+    insufficient: false,
+    total_papers: 4,
+    real_paper_count: 4,
+    fallback_paper_count: 0,
+    fallback_ratio: 0,
+    covered_branch_count: 3,
+    candidate_branches: [
+      "Tool-Use Benchmark",
+      "Code Agent Evaluation",
+      "General Agent Benchmark",
+    ],
+    message: "当前证据量足够支撑一版可解释的 taxonomy 草图。",
+  },
   trace: {
     thought_trace: [
       { step: "scope", detail: "识别 AI Agent Tool Use 与 evaluation benchmark 的交集。" },

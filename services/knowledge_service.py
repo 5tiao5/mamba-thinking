@@ -293,6 +293,40 @@ class KnowledgeService:
                 self._index_document(saved_doc)
         return saved_doc
 
+    def import_document(
+        self,
+        *,
+        title: str,
+        content: str,
+        tags: List[str] | None = None,
+        source_url: str | None = None,
+        source_task_id: str | None = None,
+        notes: str | None = None,
+        index_immediately: bool = True
+    ) -> KnowledgeDocument:
+        """Save a user-imported knowledge document for later retrieval and grounding."""
+        metadata = {"created_at": datetime.now(UTC).isoformat(), "source_type": "user_import"}
+        if source_url:
+            metadata["source_url"] = source_url
+        if notes:
+            metadata["notes"] = notes
+
+        document = KnowledgeDocument(
+            document_id=f"doc_{uuid4().hex[:12]}",
+            title=title,
+            source_task_id=source_task_id,
+            content=content,
+            tags=tags or [],
+            metadata=metadata,
+        )
+        saved_doc = self.repository.save(document)
+        if index_immediately:
+            if self.async_indexing:
+                asyncio.create_task(self._index_document_async(saved_doc))
+            else:
+                self._index_document(saved_doc)
+        return saved_doc
+
     async def _index_document_async(self, document: KnowledgeDocument) -> None:
         """异步索引文档（避免阻塞主线程）。"""
         await asyncio.to_thread(self._index_document, document)
@@ -508,3 +542,9 @@ class KnowledgeService:
         self.vector_store.delete_by_document_id(document_id)
         # 从仓库中删除（需要 repository 支持 delete）
         return self.repository.delete(document_id)
+
+    def list_documents(self) -> List[KnowledgeDocument]:
+        """List documents in reverse created_at order for predictable UI rendering."""
+        documents = self.repository.list_all()
+        documents.sort(key=lambda item: item.metadata.get("created_at", ""), reverse=True)
+        return documents
