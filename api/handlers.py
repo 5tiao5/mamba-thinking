@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Any
 
+from product_agent.llm_client import call_openai_text
 from product_agent.schemas import (
     ContinueConversationRequest,
     ContinueConversationResponse,
@@ -133,13 +135,7 @@ class ProductApiHandlers:
 
         follow_up_task = None
         if request.create_follow_up_task:
-            # Enrich focus with knowledge context for better follow-up task generation
             enriched_focus = request.focus
-            if knowledge_context:
-                knowledge_hint = " | ".join(
-                    s.replace("[Knowledge]", "").strip()[:100] for s in knowledge_context[:2]
-                )
-                enriched_focus = f"{request.focus or ''} [prior knowledge: {knowledge_hint}]".strip()
 
             try:
                 task = self.research_service.create_follow_up_task(
@@ -227,6 +223,9 @@ class ProductApiHandlers:
             )
             return fail("task_run_failed", str(error))
 
+        # Invalidate conversation workspace cache so next read picks up new data
+        self.workspace_service.invalidate_conversation_cache(task.conversation_id)
+
         assistant_message = self.message_service.create_assistant_message(
             conversation_id=task.conversation_id,
             content=self._build_task_result_message(task=task, workspace=workspace),
@@ -290,7 +289,7 @@ class ProductApiHandlers:
                     content=content,
                     source_task_id=task.task_id,
                     tags=tags if tags else None,
-                    index_immediately=False,  # skip vector indexing since we use keyword search
+                    index_immediately=True,  # async indexing won't block task completion
                 )
         except Exception:
             pass  # knowledge auto-save is best-effort, never block task completion
@@ -411,22 +410,120 @@ class ProductApiHandlers:
             "metadata": dict(document.metadata),
         }
 
-    @staticmethod
-    def _build_task_result_message(*, task, workspace) -> str:
-        summary = " ".join((workspace.summary or "").split())
-        if len(summary) > 220:
-            summary = f"{summary[:217]}..."
+    def _build_task_result_message(self, *, task, workspace) -> str:
+        """Build a natural research summary from workspace data.
 
-        lines = [
-            f"已完成本轮研究任务：{task.topic}",
-            f"- 论文数：{len(workspace.papers)}",
-            f"- 研究空白：{len(workspace.gaps)}",
-            f"- 研究建议：{len(workspace.ideas)}",
-            f"- 对齐分数：{workspace.alignment_score:.3f}",
-        ]
-        if summary:
-            lines.append(f"- 摘要：{summary}")
-        lines.append(f"- 工作台任务：{workspace.task_id}")
+        Uses LLM when available for richer responses; falls back to
+        a detailed template that reads like a research assistant finding,
+        not a task log.
+        """
+        return self._build_natural_assistant_message(task=task, workspace=workspace)
+
+    def _build_natural_assistant_message(self, *, task, workspace) -> str:
+        """Generate a natural-language research assistant response.
+
+        Tries LLM first; falls back to a rich template that includes
+        specific paper titles, top gaps, and key ideas.
+        """
+        llm_text = self._try_llm_assistant_message(task=task, workspace=workspace)
+        if llm_text:
+            return llm_text
+        return self._build_template_assistant_message(task=task, workspace=workspace)
+
+    def _try_llm_assistant_message(self, *, task, workspace) -> str | None:
+        """Attempt LLM-powered response. Returns None if unavailable."""
+        papers_preview = []
+        for p in workspace.papers[:5]:
+            papers_preview.append(f"- {p.title} ({p.source})")
+
+        gaps_preview = []
+        for g in workspace.gaps[:3]:
+            gaps_preview.append(f"[{g.severity}] {g.summary[:150]}")
+
+        ideas_preview = []
+        for idea in workspace.ideas[:2]:
+            ideas_preview.append(idea.title[:120])
+
+        prompt = (
+            f"You are a research assistant. Summarize the following research findings "
+            f"in 3-5 natural Chinese sentences. Be concise and informative.\n\n"
+            f"Research topic: {task.topic}\n"
+            f"Papers found ({len(workspace.papers)}):\n"
+            f"{chr(10).join(papers_preview)}\n"
+            f"Research gaps ({len(workspace.gaps)}):\n"
+            f"{chr(10).join(gaps_preview)}\n"
+            f"Ideas ({len(workspace.ideas)}):\n"
+            f"{chr(10).join(ideas_preview)}\n"
+            f"Alignment score: {workspace.alignment_score:.3f}\n\n"
+            f"Start directly with the findings. Do NOT say 'here is a summary'. "
+            f"End with: '详细结果可在工作台中查看。'"
+        )
+        try:
+            text = call_openai_text(prompt, temperature=0.5, max_output_tokens=400)
+            if text and len(text.strip()) > 30:
+                return text.strip()
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _build_template_assistant_message(*, task, workspace) -> str:
+        """Template-based natural research summary."""
+        evidence = workspace.evidence_status or {}
+        insufficient = evidence.get("insufficient", False)
+        total_papers = len(workspace.papers)
+        real_papers = [p for p in workspace.papers if p.source not in ("seed", "fallback")]
+        fallback_count = total_papers - len(real_papers)
+
+        lines: list[str] = []
+
+        # Opening
+        if insufficient:
+            lines.append(f"关于「{task.topic}」的初步探索已完成。")
+            lines.append(
+                f"当前检索到 {total_papers} 篇相关文献"
+                + (f"（其中 {fallback_count} 篇为系统保底论文）" if fallback_count else "")
+                + f"，识别出 {len(workspace.gaps)} 个研究空白和 {len(workspace.ideas)} 条研究建议。"
+            )
+            lines.append("由于证据尚不充分，以下结果更适合作为探索方向而非最终结论。")
+        else:
+            lines.append(f"关于「{task.topic}」的研究分析已完成。")
+            lines.append(
+                f"本轮共检索到 {total_papers} 篇相关论文"
+                + (f"，其中 {len(real_papers)} 篇来自真实学术来源" if fallback_count else "")
+                + f"，识别出 {len(workspace.gaps)} 个研究空白，并提出 {len(workspace.ideas)} 条研究建议。"
+            )
+
+        # Representative papers
+        top_papers = (real_papers or workspace.papers)[:3]
+        if top_papers:
+            lines.append("")
+            lines.append("代表性论文：")
+            for p in top_papers:
+                cite = f" (引用 {p.citation_count})" if p.citation_count > 0 else ""
+                lines.append(f"  - {p.title}{cite}")
+
+        # Top gap
+        if workspace.gaps:
+            top_gap = max(workspace.gaps, key=lambda g: 0 if g.severity == "low" else (1 if g.severity == "medium" else 2))
+            lines.append("")
+            lines.append(f"关键研究空白：{top_gap.summary[:200]}")
+
+        # Top idea
+        if workspace.ideas:
+            best_idea = max(workspace.ideas, key=lambda i: i.confidence)
+            lines.append("")
+            lines.append(f"研究建议：{best_idea.title[:200]}")
+
+        # Closing
+        lines.append("")
+        if workspace.alignment_score >= 0.5:
+            lines.append(f"研究结果与主题的对齐分数为 {workspace.alignment_score:.2f}，整体相关性较好。")
+        else:
+            lines.append(f"研究结果与主题的对齐分数为 {workspace.alignment_score:.2f}，建议进一步聚焦问题范围。")
+
+        lines.append(f"详细结果可在工作台中查看（任务：{workspace.task_id}）。")
+
         return "\n".join(lines)
 
     @staticmethod

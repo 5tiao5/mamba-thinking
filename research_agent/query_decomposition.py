@@ -59,21 +59,46 @@ def build_search_queries(topic: str, *, fast: bool = False, balanced: bool = Fal
     if not clean_topic:
         return []
 
+    # 提取纯英文关键词用于学术搜索（ArXiv 不接受中文）
+    search_topic = _extract_english_search_topic(clean_topic)
+    if not search_topic:
+        return [clean_topic]  # fallback: 原样交给 ArXiv
+
     if fast:
-        return [clean_topic]
+        return [search_topic]
 
     facets = infer_research_facets(clean_topic)
+    # 过滤掉非英文 facet（如中文 focus 短语不会变成搜索 query）
+    english_facets = [ef for f in facets if (ef := _extract_english_search_topic(f))]
+
     if balanced:
-        return _dedupe([clean_topic, *[f"{clean_topic} {facet}" for facet in facets[:3]], f"{clean_topic} survey"])[:4]
+        return _dedupe([search_topic, *[f"{search_topic} {f}" for f in english_facets[:3]], f"{search_topic} survey"])[:4]
 
     return _dedupe(
         [
-            clean_topic,
-            *[f"{clean_topic} {facet}" for facet in facets],
-            f"{clean_topic} survey review",
-            f"{clean_topic} state of the art",
+            search_topic,
+            *[f"{search_topic} {f}" for f in english_facets],
+            f"{search_topic} survey review",
+            f"{search_topic} state of the art",
         ]
     )[:6]
+
+
+def _extract_english_search_topic(text: str) -> str:
+    """从可能混合中文的文本中提取英文关键词用于 ArXiv 搜索。
+
+    保留 ASCII 字母单词（>=2 字符），去掉中文、标点等非 ASCII 内容。
+    """
+    if not text:
+        return ""
+    # 去掉 "focus on" 结构中的中文部分，只保留英文关键词
+    text = re.sub(r"focus on\s+\S+", "", text, flags=re.IGNORECASE)
+    # 提取 ASCII 单词（允许 2 字符以上的词，保留 "AI" 这类缩写）
+    words = re.findall(r"[a-zA-Z]{2,}", text)
+    # 过滤掉常见无意义词
+    stop = {"the", "and", "for", "with", "from", "that", "this", "are", "was", "were", "have", "has", "been", "focus", "use", "using", "on", "in", "to", "of", "by", "as", "at", "is", "it", "an", "or", "be", "we", "not"}
+    words = [w.lower() for w in words if w.lower() not in stop]
+    return " ".join(words) if words else ""
 
 
 def infer_research_facets(topic: str) -> List[str]:

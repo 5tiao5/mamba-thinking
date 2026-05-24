@@ -18,6 +18,7 @@ from .sqlite_store import (
     SQLiteKnowledgeRepository,
     SQLiteMessageRepository,
     SQLiteResearchTaskRepository,
+    SQLiteVectorStore,
     SQLiteWorkspaceRepository,
 )
 
@@ -38,4 +39,5 @@ __all__ = [
     "SQLiteResearchTaskRepository",
     "SQLiteWorkspaceRepository",
     "SQLiteKnowledgeRepository",
+    "SQLiteVectorStore",
 ]

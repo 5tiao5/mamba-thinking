@@ -439,3 +439,136 @@ class SQLiteKnowledgeRepository:
             tags=list(_load_json(row["tags_json"]) or []),
             metadata=dict(_load_json(row["metadata_json"]) or {}),
         )
+
+
+class SQLiteVectorStore:
+    """
+    SQLite 持久化向量存储。
+
+    将文档块及其 embedding 向量持久化到 SQLite，
+    服务重启后无需重新索引。支持余弦相似度检索和标签过滤。
+    """
+
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def add(self, chunks: list, vectors: list[list[float]]) -> None:
+        """添加文档块及其向量。"""
+        with self.database.connect() as connection:
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO vector_chunks (
+                    chunk_id, document_id, source_title, source_task_id,
+                    content, start_idx, end_idx, tags_json, metadata_json, vector_blob
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        chunk.chunk_id,
+                        chunk.document_id,
+                        chunk.source_title,
+                        chunk.source_task_id,
+                        chunk.content,
+                        chunk.start_idx,
+                        chunk.end_idx,
+                        _dump_json(chunk.tags),
+                        _dump_json(chunk.metadata),
+                        _dump_json(vector),
+                    )
+                    for chunk, vector in zip(chunks, vectors)
+                ],
+            )
+            connection.commit()
+
+    def similarity_search(
+        self,
+        query_vector: list[float],
+        top_k: int,
+        filter_tags: list[str] | None = None,
+    ) -> list[tuple]:
+        """向量相似度检索，可选标签过滤。返回 [(chunk, score), ...]。
+
+        当前实现：加载所有向量，在 Python 中计算余弦相似度。
+        适合中小规模知识库（<10万 chunks），大规模应换用专用向量库。
+        """
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT chunk_id, document_id, source_title, source_task_id,
+                       content, start_idx, end_idx, tags_json, metadata_json, vector_blob
+                FROM vector_chunks
+                """
+            ).fetchall()
+
+        scored = []
+        for row in rows:
+            # Tag filtering
+            if filter_tags:
+                stored_tags = set(_load_json(row["tags_json"]) or [])
+                if not any(tag in stored_tags for tag in filter_tags):
+                    continue
+
+            vector_blob = row["vector_blob"]
+            if not vector_blob:
+                continue
+
+            stored_vector = _load_json(vector_blob)
+            sim = _cosine_similarity(query_vector, stored_vector)
+
+            # Reconstruct a lightweight chunk-like object for API compatibility
+            chunk = _VectorChunkProxy(
+                chunk_id=row["chunk_id"],
+                document_id=row["document_id"],
+                source_title=row["source_title"],
+                source_task_id=row["source_task_id"],
+                content=row["content"],
+                start_idx=row["start_idx"],
+                end_idx=row["end_idx"],
+                tags=_load_json(row["tags_json"]) or [],
+                metadata=dict(_load_json(row["metadata_json"]) or {}),
+            )
+            scored.append((chunk, sim))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
+
+    def delete_by_document_id(self, document_id: str) -> None:
+        """删除指定文档的所有块。"""
+        with self.database.connect() as connection:
+            connection.execute(
+                "DELETE FROM vector_chunks WHERE document_id = ?",
+                (document_id,),
+            )
+            connection.commit()
+
+    def count(self) -> int:
+        """返回向量块总数。"""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS cnt FROM vector_chunks"
+            ).fetchone()
+            return row["cnt"] if row else 0
+
+
+def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = sum(a * a for a in v1) ** 0.5
+    norm2 = sum(b * b for b in v2) ** 0.5
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot / (norm1 * norm2)
+
+
+class _VectorChunkProxy:
+    """轻量级代理，模拟 DocumentChunk 接口用于向上兼容。"""
+
+    def __init__(self, **kwargs) -> None:
+        self.chunk_id = kwargs["chunk_id"]
+        self.document_id = kwargs["document_id"]
+        self.source_title = kwargs["source_title"]
+        self.source_task_id = kwargs["source_task_id"]
+        self.content = kwargs["content"]
+        self.start_idx = kwargs["start_idx"]
+        self.end_idx = kwargs["end_idx"]
+        self.tags = kwargs["tags"]
+        self.metadata = kwargs["metadata"]

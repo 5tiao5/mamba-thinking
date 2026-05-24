@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
 from product_agent.schemas import (
@@ -14,6 +14,9 @@ from product_agent.schemas import (
     WorkspaceSnapshotResponse,
     WorkspaceTraceView,
 )
+
+
+_CONV_CACHE_MAX_SIZE = 128
 
 
 class WorkspaceService:
@@ -34,6 +37,24 @@ class WorkspaceService:
         self.repository = repository
         self.conversation_repository = conversation_repository
         self.task_repository = task_repository
+        # conversation 总 workspace 缓存：conv_id -> (latest_task_ts, snapshot)
+        self._conv_ws_cache: OrderedDict[str, tuple[str, WorkspaceSnapshotResponse]] = OrderedDict()
+
+    def invalidate_conversation_cache(self, conversation_id: str) -> None:
+        """当 conversation 下有新 task 完成时调用，使对应缓存失效。"""
+        self._conv_ws_cache.pop(conversation_id, None)
+
+    def _get_conversation_latest_ts(self, conversation_id: str) -> str:
+        """获取 conversation 下所有 task 的最新更新时间戳，用于缓存键。"""
+        if self.task_repository is None:
+            return ""
+        tasks = [
+            t for t in self.task_repository.list_all()
+            if t.conversation_id == conversation_id
+        ]
+        if not tasks:
+            return ""
+        return max(t.updated_at.isoformat() for t in tasks)
 
     def get_workspace(self, task_id: str):
         """根据 `task_id` 读取工作台 domain 对象。"""
@@ -110,7 +131,18 @@ class WorkspaceService:
         """
         Build a conversation-level aggregated workspace by merging all completed
         task workspaces under the same conversation.
+
+        Results are cached using the conversation's latest task timestamp as key.
+        Call invalidate_conversation_cache() when a new task completes.
         """
+        # Cache check: if no task changes since last compute, reuse cached result
+        latest_ts = self._get_conversation_latest_ts(conversation_id)
+        if conversation_id in self._conv_ws_cache:
+            cached_ts, cached = self._conv_ws_cache[conversation_id]
+            if cached_ts == latest_ts:
+                self._conv_ws_cache.move_to_end(conversation_id)
+                return cached
+
         if self.conversation_repository is not None:
             conversation = self.conversation_repository.get(conversation_id)
             if conversation is None:
@@ -162,7 +194,7 @@ class WorkspaceService:
 
         trace = synthetic_workspace.trace or {}
         evidence_status = _build_evidence_status(synthetic_workspace)
-        return WorkspaceSnapshotResponse(
+        result = WorkspaceSnapshotResponse(
             task_id=synthetic_workspace.task_id,
             topic=synthetic_workspace.topic,
             summary=synthetic_workspace.summary,
@@ -215,6 +247,14 @@ class WorkspaceService:
                 context_inputs=_normalize_trace_entries(trace.get("context_inputs", [])),
             ),
         )
+
+        # Write cache
+        self._conv_ws_cache[conversation_id] = (latest_ts, result)
+        self._conv_ws_cache.move_to_end(conversation_id)
+        if len(self._conv_ws_cache) > _CONV_CACHE_MAX_SIZE:
+            self._conv_ws_cache.popitem(last=False)
+
+        return result
 
 
 def _build_evidence_status(workspace) -> dict:

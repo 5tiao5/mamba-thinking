@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from product_agent.domain import ResearchTask, ResearchWorkspace
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
 from product_agent.services.workspace_mapper import workspace_from_agent_state
-
-if TYPE_CHECKING:
-    from product_agent.services.knowledge_service import KnowledgeService
 
 
 class ResearchService:
@@ -30,12 +26,10 @@ class ResearchService:
         conversation_repository: ConversationRepository,
         task_repository: ResearchTaskRepository,
         workspace_repository: WorkspaceRepository,
-        knowledge_service: KnowledgeService | None = None,
     ) -> None:
         self.conversation_repository = conversation_repository
         self.task_repository = task_repository
         self.workspace_repository = workspace_repository
-        self.knowledge_service = knowledge_service
 
     def create_task(
         self,
@@ -136,7 +130,6 @@ class ResearchService:
         运行一条研究任务，并把 Agent 结果投影为产品工作台数据。
 
         当前副作用：
-        - 检索相关知识库文档并注入到任务主题中
         - 调用 `product_agent.research_agent.pipeline.run_pipeline`
         - 调用 `workspace_repository.save` 保存工作台快照
         - 成功时更新 `task.status=completed`
@@ -149,8 +142,9 @@ class ResearchService:
         try:
             from product_agent.research_agent.pipeline import run_pipeline
 
-            enriched_topic = self._enrich_topic_with_knowledge(task.topic)
-            state = run_pipeline(enriched_topic, show_progress=False)
+            # 知识上下文不再拼入 topic（会污染搜索 query），
+            # 而是通过 state["knowledge_context"] 传给后续节点使用
+            state = run_pipeline(task.topic, show_progress=False)
             workspace: ResearchWorkspace = workspace_from_agent_state(
                 task_id=task.task_id,
                 topic=task.topic,
@@ -166,27 +160,6 @@ class ResearchService:
             task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
             raise
-
-    def _enrich_topic_with_knowledge(self, topic: str) -> str:
-        """Retrieve related knowledge and prepend as context to the topic."""
-        if not self.knowledge_service:
-            return topic
-
-        try:
-            snippets = self.knowledge_service.retrieve_for_context(
-                topic, top_k=3, max_chars_per_doc=300,
-            )
-            if not snippets:
-                return topic
-
-            knowledge_block = "\n".join(snippets)
-            return (
-                f"{topic}\n\n"
-                f"[Prior research knowledge - use this to reduce fallback and improve search relevance]\n"
-                f"{knowledge_block}"
-            )
-        except Exception:
-            return topic
 
     @staticmethod
     def _derive_follow_up_topic(

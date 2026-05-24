@@ -126,6 +126,69 @@ class SimpleChunker:
         return chunks
 
 
+class HashEmbedder:
+    """
+    确定性哈希嵌入器，无需外部依赖。
+
+    使用多哈希特征哈希技巧将文本映射为固定维度的稠密向量。
+    相同文本始终产生相同向量，支持有意义的余弦相似度比较。
+    用于替代 Test DummyEmbedder（随机向量，无意义）。
+    """
+
+    def __init__(self, dimension: int = 768, num_hashes: int = 2):
+        self.dim = dimension
+        self.num_hashes = num_hashes
+
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        import hashlib
+        import math
+        import struct
+
+        results = []
+        for text in texts:
+            vec = [0.0] * self.dim
+            words = self._tokenize(text)
+            if not words:
+                results.append(vec)
+                continue
+
+            for word in words:
+                for seed in range(self.num_hashes):
+                    h = hashlib.md5(f"{seed}:{word}".encode()).digest()
+                    idx = struct.unpack_from("I", h[:4])[0] % self.dim
+                    sign = 1 if (h[4] & 1) == 0 else -1
+                    vec[idx] += sign
+
+            norm = math.sqrt(sum(v * v for v in vec))
+            if norm > 0:
+                vec = [v / norm for v in vec]
+            results.append(vec)
+
+        return results
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        import re
+
+        text = text.lower()
+        tokens = re.findall(r"[a-z][a-z0-9]{2,}", text)
+        stop_words = {
+            "the", "and", "for", "are", "was", "but", "not", "you", "all",
+            "can", "had", "her", "his", "its", "out", "see", "may", "use",
+            "has", "how", "new", "now", "our", "way", "who", "did", "due",
+            "get", "got", "yet", "any", "few", "own", "set", "too", "two",
+            "also", "been", "each", "from", "have", "into", "like", "more",
+            "much", "only", "over", "some", "such", "than", "that", "them",
+            "then", "they", "this", "very", "well", "what", "when", "will",
+            "with", "which", "their", "there", "where", "about", "would",
+            "could", "should", "after", "before", "other", "between",
+            "paper", "papers", "study", "studies", "research", "survey",
+            "results", "method", "using", "based", "approach", "propose",
+            "methods", "models", "model", "data", "analysis",
+        }
+        return [t for t in tokens if t not in stop_words and len(t) >= 3]
+
+
 class DummyEmbedder:
     """占位 embedding 模型（随机向量）。仅用于测试。"""
 
@@ -246,7 +309,7 @@ class KnowledgeService:
         """
         self.repository = repository
         self.chunker = chunker or SimpleChunker()
-        self.embedder = embedder or DummyEmbedder()
+        self.embedder = embedder or HashEmbedder()
         self.vector_store = vector_store or InMemoryVectorStore()
         self.reranker = reranker or NoopReranker()
         self.enable_hybrid_search = enable_hybrid_search
@@ -287,10 +350,7 @@ class KnowledgeService:
         )
         saved_doc = self.repository.save(document)
         if index_immediately:
-            if self.async_indexing:
-                asyncio.create_task(self._index_document_async(saved_doc))
-            else:
-                self._index_document(saved_doc)
+            self._maybe_index_document(saved_doc)
         return saved_doc
 
     def import_document(
@@ -321,11 +381,19 @@ class KnowledgeService:
         )
         saved_doc = self.repository.save(document)
         if index_immediately:
-            if self.async_indexing:
-                asyncio.create_task(self._index_document_async(saved_doc))
-            else:
-                self._index_document(saved_doc)
+            self._maybe_index_document(saved_doc)
         return saved_doc
+
+    def _maybe_index_document(self, document: KnowledgeDocument) -> None:
+        """Index a document, using async if an event loop is running, else sync."""
+        if self.async_indexing:
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(self._index_document_async(document))
+                return
+            except RuntimeError:
+                pass  # no running event loop, fall through to sync
+        self._index_document(document)
 
     async def _index_document_async(self, document: KnowledgeDocument) -> None:
         """异步索引文档（避免阻塞主线程）。"""
@@ -596,10 +664,6 @@ class KnowledgeService:
     def get_document(self, document_id: str) -> Optional[KnowledgeDocument]:
         """根据文档 ID 获取原始文档。"""
         return self.repository.get(document_id)
-
-    def list_documents(self) -> List[KnowledgeDocument]:
-        """列出所有原始文档（调试用）。"""
-        return self.repository.list_all()
 
     def delete_document(self, document_id: str) -> bool:
         """

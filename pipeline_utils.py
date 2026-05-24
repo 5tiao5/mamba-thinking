@@ -220,10 +220,37 @@ def _relevance_score(paper: PaperNode, terms: set) -> float:
 
     # Normalize by number of terms
     score /= max(1, len(terms))
+
+    # 🎯 Citation bonus: highly-cited papers are more influential
+    if paper.citation_count >= 500:
+        score += 0.8
+    elif paper.citation_count >= 100:
+        score += 0.5
+    elif paper.citation_count >= 10:
+        score += 0.2
+
+    # 🎯 Source quality bonus: prioritize real papers over seed/fallback
+    source_lower = (paper.source or "").lower()
+    if source_lower in ("arxiv", "semantic_scholar"):
+        score += 0.5
+    elif source_lower == "seed":
+        score -= 0.3  # penalize synthetic seed papers
+
+    # 🎯 Recency bonus: prefer newer papers (publish_date like "2024")
+    pub_year = (paper.publish_date or "")[:4]
+    if pub_year.isdigit():
+        year = int(pub_year)
+        current_year = 2026
+        if year >= current_year - 1:
+            score += 0.3
+        elif year >= current_year - 3:
+            score += 0.15
+
     # Bonus for papers with non-empty abstracts
     if paper.abstract:
         score += 0.5
-    return score
+
+    return max(0.0, score)
 
 
 def _tokenize(text: str) -> List[str]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import os
 from typing import Dict, List
 
@@ -199,5 +200,126 @@ def searcher_node(state: ResearchState) -> ResearchState:
         reason="The agent uses retrieved metadata as evidence for taxonomy and graph construction.",
         next_step="taxonomy",
     )
+    # ── Cross-source title deduplication ──────────────────────────────────────
+    papers = _deduplicate_papers_by_title(papers)
+    working.setdefault("logs", []).append(
+        f"Searcher collected {len(papers)} papers after title dedup."
+    )
+
+    # ── Source diversity check ───────────────────────────────────────────────
+    diversity_report = _source_diversity_report(papers)
+    if diversity_report:
+        working.setdefault("logs", []).append(diversity_report)
+
     updated.setdefault("logs", []).append(f"Searcher collected {len(papers)} papers.")
     return updated
+
+
+# ── Cross-source deduplication helpers ──────────────────────────────────────
+
+
+def _deduplicate_papers_by_title(
+    papers: Dict[str, PaperNode],
+    title_similarity_threshold: float = 0.85,
+) -> Dict[str, PaperNode]:
+    """
+    Deduplicate papers across different sources by title similarity.
+
+    When two papers from different sources (e.g., ArXiv and Semantic Scholar)
+    have very similar titles but different paper_ids, merge the richer one
+    and remove the duplicate.
+    """
+    if len(papers) < 2:
+        return papers
+
+    titles = [(pid, p.title.lower().strip()) for pid, p in papers.items()]
+    to_merge: list[tuple[str, str]] = []  # (keep_id, remove_id)
+
+    for i in range(len(titles)):
+        for j in range(i + 1, len(titles)):
+            id_i, title_i = titles[i]
+            id_j, title_j = titles[j]
+
+            # Quick check: same paper_id → already merged
+            if id_i == id_j:
+                continue
+
+            # Quick rejection on length ratio (avoid comparing very different titles)
+            len_ratio = max(len(title_i), len(title_j)) / max(1, min(len(title_i), len(title_j)))
+            if len_ratio > 2.0:
+                continue
+
+            similarity = difflib.SequenceMatcher(None, title_i, title_j).ratio()
+            if similarity >= title_similarity_threshold:
+                # Keep the one with richer metadata
+                p_i, p_j = papers[id_i], papers[id_j]
+                i_quality = _paper_metadata_quality(p_i)
+                j_quality = _paper_metadata_quality(p_j)
+                keep, remove = (id_i, id_j) if i_quality >= j_quality else (id_j, id_i)
+                to_merge.append((keep, remove))
+
+    removed = set()
+    for keep_id, remove_id in to_merge:
+        if remove_id in removed or keep_id in removed:
+            continue
+        # Merge metadata from removed into kept
+        keep_paper = papers[keep_id]
+        remove_paper = papers[remove_id]
+
+        # Ensure we keep the best abstract
+        if not keep_paper.abstract or (remove_paper.abstract and len(remove_paper.abstract) > len(keep_paper.abstract)):
+            keep_paper.abstract = remove_paper.abstract
+
+        # Keep higher citation count
+        if remove_paper.citation_count > keep_paper.citation_count:
+            keep_paper.citation_count = remove_paper.citation_count
+
+        # Merge keywords
+        existing_kw = {k.lower() for k in keep_paper.keywords}
+        for kw in remove_paper.keywords:
+            if kw.lower() not in existing_kw:
+                keep_paper.keywords.append(kw)
+
+        # Prefer arxiv or s2 source over seed/fallback
+        if keep_paper.source in ("seed", "fallback") and remove_paper.source not in ("seed", "fallback"):
+            keep_paper.source = remove_paper.source
+
+        papers[keep_id] = keep_paper
+        removed.add(remove_id)
+
+    for remove_id in removed:
+        del papers[remove_id]
+
+    return papers
+
+
+def _paper_metadata_quality(paper: PaperNode) -> int:
+    """Score metadata richness (higher = richer)."""
+    score = 0
+    if paper.abstract:
+        score += 2
+    if paper.citation_count > 0:
+        score += 1
+    if paper.keywords:
+        score += 1
+    if paper.source not in ("seed", "fallback"):
+        score += 2
+    if paper.url:
+        score += 1
+    return score
+
+
+def _source_diversity_report(papers: Dict[str, PaperNode]) -> str:
+    """Check source diversity and return a log message if imbalanced."""
+    sources: Dict[str, int] = {}
+    for p in papers.values():
+        src = p.source or "unknown"
+        sources[src] = sources.get(src, 0) + 1
+
+    real_sources = {s: c for s, c in sources.items() if s not in ("seed", "fallback")}
+    total_real = sum(real_sources.values())
+    if total_real == 0:
+        return "Source diversity: all papers are seed/fallback."
+
+    details = ", ".join(f"{s}={c}" for s, c in sorted(real_sources.items(), key=lambda x: -x[1]))
+    return f"Source diversity: {total_real} real papers ({details})"

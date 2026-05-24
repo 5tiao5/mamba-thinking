@@ -67,6 +67,24 @@ SCHEMA_STATEMENTS = (
         metadata_json TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS vector_chunks (
+        chunk_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        source_title TEXT NOT NULL,
+        source_task_id TEXT,
+        content TEXT NOT NULL,
+        start_idx INTEGER NOT NULL,
+        end_idx INTEGER NOT NULL,
+        tags_json TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        vector_blob BLOB
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_vector_chunks_document_id
+    ON vector_chunks(document_id)
+    """,
 )
 
 

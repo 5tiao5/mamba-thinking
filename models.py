@@ -19,6 +19,7 @@ class PaperNode:
     doi: str = ""
     references: List[str] = field(default_factory=list)
     is_gap_candidate: bool = False
+    confidence_score: float = 1.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class PaperNode:
             "doi": self.doi,
             "references": self.references,
             "is_gap_candidate": self.is_gap_candidate,
+            "confidence_score": self.confidence_score,
         }
 
 
