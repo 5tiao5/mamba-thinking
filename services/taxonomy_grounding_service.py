@@ -7,6 +7,23 @@ from typing import Any, Dict, Iterable, List, Sequence
 from product_agent.domain import GapRecord, PaperRecord
 
 
+# ── Evidence tier thresholds ──────────────────────────────────────────────────
+# Tunable constants for classifying taxonomy branch evidence strength.
+STRONG_PAPER_MIN = 3
+STRONG_COVERAGE_MIN = 0.5
+MODERATE_COVERAGE_MIN = 0.3
+
+
+def _compute_evidence_tier(paper_count: int, coverage_score: float) -> str:
+    if paper_count <= 0:
+        return "candidate"
+    if paper_count >= STRONG_PAPER_MIN and coverage_score >= STRONG_COVERAGE_MIN:
+        return "strong"
+    if coverage_score >= MODERATE_COVERAGE_MIN:
+        return "moderate"
+    return "weak"
+
+
 GENERIC_TERMS = {
     "agent",
     "agents",
@@ -71,7 +88,7 @@ BRANCH_ALIAS_HINTS = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TaxonomyBranchProfile:
     branch_id: str
     name: str
@@ -97,12 +114,19 @@ def ground_taxonomy(
     coverage: Dict[str, Dict[str, Any]] = {}
     tree: List[Dict[str, Any]] = []
 
+    paper_by_id = {p.paper_id: p for p in papers}
+
     for payload, profile in zip(branch_payloads, branch_profiles):
         matched_paper_ids = paper_assignments.get(profile.branch_id, [])
         matched_gap_ids = gap_assignments.get(profile.branch_id, [])
         paper_count = len(matched_paper_ids)
         gap_count = len(matched_gap_ids)
         coverage_score = _coverage_score(paper_count=paper_count, gap_count=gap_count)
+        evidence_tier = _compute_evidence_tier(paper_count, coverage_score)
+        branch_confidence = _compute_branch_confidence(
+            matched_paper_ids=matched_paper_ids,
+            paper_by_id=paper_by_id,
+        )
 
         branches.append(
             {
@@ -111,6 +135,8 @@ def ground_taxonomy(
                 "description": payload["description"],
                 "required_concepts": list(payload["required_concepts"]),
                 "paper_count": paper_count,
+                "evidence_tier": evidence_tier,
+                "branch_confidence": branch_confidence,
                 "matched_paper_ids": matched_paper_ids,
                 "matched_gap_ids": matched_gap_ids,
             }
@@ -119,19 +145,30 @@ def ground_taxonomy(
             "paper_count": paper_count,
             "gap_count": gap_count,
             "coverage_score": coverage_score,
+            "evidence_tier": evidence_tier,
             "matched_paper_ids": matched_paper_ids,
             "matched_gap_ids": matched_gap_ids,
         }
 
     for branch in branches:
         parts = [part.strip() for part in re.split(r"[/>]", branch["name"]) if part.strip()]
-        node = {"branch_id": branch["branch_id"], "name": branch["name"], "children": []}
+        node = {
+            "branch_id": branch["branch_id"],
+            "name": branch["name"],
+            "evidence_tier": branch["evidence_tier"],
+            "children": [],
+        }
         if not parts:
             tree.append(node)
             continue
         root = next((candidate for candidate in tree if candidate["name"] == parts[0]), None)
         if root is None:
-            root = {"branch_id": _slug(parts[0]), "name": parts[0], "children": []}
+            root = {
+                "branch_id": _slug(parts[0]),
+                "name": parts[0],
+                "evidence_tier": branch["evidence_tier"],
+                "children": [],
+            }
             tree.append(root)
         if len(parts) > 1:
             root["children"].append(node)
@@ -322,6 +359,35 @@ def _coverage_score(*, paper_count: int, gap_count: int) -> float:
     if paper_count <= 0 and gap_count <= 0:
         return 0.0
     return round(float(paper_count) / (paper_count + gap_count + 1), 3)
+
+
+def _compute_branch_confidence(
+    *,
+    matched_paper_ids: List[str],
+    paper_by_id: Dict[str, Any],
+) -> float:
+    """Confidence in [0,1] factoring paper count, citation counts, and source quality."""
+    if not matched_paper_ids:
+        return 0.0
+    papers = [paper_by_id[pid] for pid in matched_paper_ids if pid in paper_by_id]
+    if not papers:
+        return 0.0
+
+    paper_count = len(papers)
+    citations = [getattr(p, "citation_count", 0) or 0 for p in papers]
+    avg_citations = sum(citations) / len(citations) if citations else 0
+
+    real_count = sum(
+        1 for p in papers if getattr(p, "source", "") not in ("seed", "fallback")
+    )
+    real_ratio = real_count / paper_count if paper_count > 0 else 0
+
+    confidence = (
+        min(1.0, paper_count * 0.15)
+        + min(1.0, avg_citations / 100.0) * 0.30
+        + real_ratio * 0.40
+    )
+    return round(min(1.0, confidence), 3)
 
 
 def _phrase_match(phrase: str, text: str) -> bool:

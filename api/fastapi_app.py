@@ -141,6 +141,14 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     def delete_knowledge_document(document_id: str = Path(..., description="知识文档 ID")):
         return handlers.delete_knowledge_document(document_id).model_dump()
 
+    @app.get("/knowledge/search")
+    def search_knowledge(
+        q: str = Query(default="", description="搜索关键词或标签（逗号分隔）"),
+        by: str = Query(default="keyword", description="检索方式: keyword 或 tags"),
+        limit: int = Query(default=10, ge=1, le=50, description="返回数量上限"),
+    ):
+        return handlers.search_knowledge(q=q, by=by, limit=limit).model_dump()
+
     return app
 
 

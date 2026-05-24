@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
-@dataclass(slots=True)
+@dataclass
 class Conversation:
     """一次多轮交互会话。"""
 
@@ -19,7 +19,7 @@ class Conversation:
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
 
-@dataclass(slots=True)
+@dataclass
 class MessageRecord:
     """一条对话消息，既可以来自用户，也可以来自系统或 Agent。"""
 
@@ -31,7 +31,7 @@ class MessageRecord:
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 
-@dataclass(slots=True)
+@dataclass
 class ResearchTask:
     """会话中的一次具体研究分析任务。"""
 
@@ -45,7 +45,7 @@ class ResearchTask:
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
 
-@dataclass(slots=True)
+@dataclass
 class PaperRecord:
     """工作台中展示的一篇论文。"""
 
@@ -61,7 +61,7 @@ class PaperRecord:
     url: str = ""
 
 
-@dataclass(slots=True)
+@dataclass
 class GapRecord:
     """审计后发现的一个 gap。"""
 
@@ -72,7 +72,7 @@ class GapRecord:
     evidence: List[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass
 class ResearchIdea:
     """Agent 内部生成的结构化研究 idea 模型。"""
 
@@ -108,7 +108,7 @@ class ResearchIdea:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class ResearchIdeaRecord:
     """基于 gap 生成的一个研究建议。"""
 
@@ -126,13 +126,13 @@ class ResearchIdeaRecord:
     raw_text: str = ""
 
 
-@dataclass(slots=True)
+@dataclass
 class ResearchWorkspace:
     """
     一次研究任务最终沉淀下来的工作台数据快照。
 
     说明:
-    - 这是“前端工作台视角”的核心对象
+    - 这是"前端工作台视角"的核心对象
     - 不要求与 Agent 内部 state 一一对应
     - 目标是给 UI 一个稳定、可渲染、可持久化的结果结构
     """
@@ -147,10 +147,11 @@ class ResearchWorkspace:
     gaps: List[GapRecord] = field(default_factory=list)
     ideas: List[ResearchIdeaRecord] = field(default_factory=list)
     alignment_score: float = 0.0
+    evidence_status: Dict[str, Any] = field(default_factory=dict)
     trace: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class ToolDescriptor:
     """一个可注册的工具定义。"""
 
@@ -161,7 +162,7 @@ class ToolDescriptor:
     config: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class SkillDescriptor:
     """一个可注册的 skill 定义。"""
 
@@ -173,7 +174,7 @@ class SkillDescriptor:
     required_tools: List[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass
 class KnowledgeDocument:
     """用于共享知识或后续 RAG 的知识文档。"""
 

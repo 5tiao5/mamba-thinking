@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from product_agent.domain import MessageRecord
@@ -59,12 +59,12 @@ class MessageService:
             role=role,
             content=content,
             metadata=metadata or {},
-            created_at=datetime.now(UTC),
+            created_at=datetime.now(timezone.utc),
         )
         created = self.repository.create(message)
 
         conversation.message_ids.append(created.message_id)
-        conversation.updated_at = datetime.now(UTC)
+        conversation.updated_at = datetime.now(timezone.utc)
         self.conversation_repository.update(conversation)
         return created
 

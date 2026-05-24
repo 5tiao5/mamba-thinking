@@ -106,6 +106,7 @@ class ProductApiHandlers:
         当前版本已经会：
         - 写入用户消息
         - 读取最近上下文预览
+        - 检索相关知识库文档
         - 可选创建一条 follow-up 研究任务记录
         """
         conversation = self.conversation_service.get_conversation(request.conversation_id)
@@ -124,14 +125,28 @@ class ProductApiHandlers:
         recent_context = self.message_service.get_recent_context(request.conversation_id, limit=4) or []
         context_preview = [f"{item.role}: {item.content[:80]}" for item in recent_context]
 
+        # Retrieve related knowledge from knowledge base
+        knowledge_query = f"{conversation.topic} {request.content} {request.focus or ''}"
+        knowledge_context = self.knowledge_service.retrieve_for_context(
+            knowledge_query, top_k=3, max_chars_per_doc=250,
+        )
+
         follow_up_task = None
         if request.create_follow_up_task:
+            # Enrich focus with knowledge context for better follow-up task generation
+            enriched_focus = request.focus
+            if knowledge_context:
+                knowledge_hint = " | ".join(
+                    s.replace("[Knowledge]", "").strip()[:100] for s in knowledge_context[:2]
+                )
+                enriched_focus = f"{request.focus or ''} [prior knowledge: {knowledge_hint}]".strip()
+
             try:
                 task = self.research_service.create_follow_up_task(
                     conversation_id=conversation.conversation_id,
                     base_topic=conversation.topic,
                     latest_message_content=request.content,
-                    focus=request.focus,
+                    focus=enriched_focus,
                     mode=request.mode,
                     trigger_message_id=message.message_id,
                 )
@@ -151,6 +166,7 @@ class ProductApiHandlers:
             message=request.content,
             message_id=message.message_id,
             context_preview=context_preview,
+            knowledge_context=knowledge_context,
             follow_up_task=follow_up_task,
         )
         return ok(response.model_dump())
@@ -226,6 +242,9 @@ class ProductApiHandlers:
             },
         )
 
+        # Auto-save workspace summary as reusable knowledge
+        self._auto_save_workspace_knowledge(task=task, workspace=workspace)
+
         return ok(
             {
                 "task_id": workspace.task_id,
@@ -235,6 +254,46 @@ class ProductApiHandlers:
                 "assistant_message_id": assistant_message.message_id if assistant_message else None,
             }
         )
+
+    def _auto_save_workspace_knowledge(self, *, task, workspace) -> None:
+        """Extract key findings from workspace and save as reusable knowledge document."""
+        try:
+            # Build a concise knowledge summary from workspace
+            parts: list[str] = []
+            if workspace.summary:
+                parts.append(workspace.summary[:600])
+
+            top_papers = workspace.papers[:5]
+            if top_papers:
+                parts.append("Key papers:")
+                for p in top_papers:
+                    parts.append(f"- {p.title} ({p.source})")
+
+            top_gaps = workspace.gaps[:3]
+            if top_gaps:
+                parts.append("Research gaps:")
+                for g in top_gaps:
+                    parts.append(f"- [{g.severity}] {g.summary[:120]}")
+
+            # Extract tags from taxonomy branches
+            taxonomy = workspace.taxonomy or {}
+            branches = taxonomy.get("branches", []) if isinstance(taxonomy, dict) else []
+            tags = [
+                b["name"] for b in branches
+                if b.get("evidence_tier") in ("strong", "moderate")
+            ][:5]
+
+            content = "\n".join(parts)
+            if content.strip():
+                self.knowledge_service.save_summary(
+                    title=f"[Auto] {workspace.topic[:100]}",
+                    content=content,
+                    source_task_id=task.task_id,
+                    tags=tags if tags else None,
+                    index_immediately=False,  # skip vector indexing since we use keyword search
+                )
+        except Exception:
+            pass  # knowledge auto-save is best-effort, never block task completion
 
     def get_workspace(self, task_id: str):
         """获取某次任务的工作台快照。"""
@@ -287,6 +346,23 @@ class ProductApiHandlers:
         if not deleted:
             return fail("knowledge_document_not_found", "Knowledge document does not exist.")
         return ok({"document_id": document_id, "deleted": True})
+
+    def search_knowledge(self, *, q: str = "", by: str = "keyword", limit: int = 10):
+        """搜索知识库文档。by='keyword' 使用关键词检索，by='tags' 按标签过滤。"""
+        if not q.strip():
+            return ok({"items": []})
+
+        if by == "tags":
+            tags = [t.strip() for t in q.split(",") if t.strip()]
+            docs = self.knowledge_service.retrieve_by_tags(tags, limit=limit)
+        else:
+            docs = self.knowledge_service.search_by_keyword(q, limit=limit)
+
+        return ok({
+            "items": [self._knowledge_payload(doc) for doc in docs],
+            "query": q,
+            "total": len(docs),
+        })
 
     @staticmethod
     def _message_payload(message) -> dict:

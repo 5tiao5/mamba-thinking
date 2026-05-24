@@ -1,4 +1,5 @@
 import type {
+  EvidenceTier,
   WorkspaceEvidenceStatus,
   WorkspacePaper,
   WorkspaceSnapshot,
@@ -26,6 +27,26 @@ type WorkspaceTaxonomyRailProps = {
   selectedBranchId: string;
   onSelectBranch: (branchId: string) => void;
 };
+
+function tierLabel(tier: EvidenceTier): string {
+  switch (tier) {
+    case "strong": return "强证据";
+    case "moderate": return "中等证据";
+    case "weak": return "弱证据";
+    case "candidate": return "候选分支";
+    default: return tier;
+  }
+}
+
+function tierBadgeStyle(tier: EvidenceTier): { bg: string; text: string } {
+  switch (tier) {
+    case "strong": return { bg: "#2563eb", text: "#fff" };
+    case "moderate": return { bg: "#16a34a", text: "#fff" };
+    case "weak": return { bg: "#ea580c", text: "#fff" };
+    case "candidate": return { bg: "#f5f5f5", text: "#737373" };
+    default: return { bg: "#e5e5e5", text: "#525252" };
+  }
+}
 
 function sourceLabel(source: string) {
   const normalized = (source || "").toLowerCase();
@@ -191,6 +212,22 @@ export function WorkspaceTaxonomyRail({
                       <span>Gap 数</span>
                       <strong>{selectedCoverage?.gap_count ?? 0}</strong>
                     </div>
+                    <div className="taxonomy-stat">
+                      <span>证据等级</span>
+                      <strong
+                        style={{
+                          color: tierBadgeStyle(selectedBranch.evidence_tier || "candidate").bg,
+                        }}
+                      >
+                        {tierLabel(selectedBranch.evidence_tier || "candidate")}
+                      </strong>
+                    </div>
+                    {selectedBranch.branch_confidence > 0 ? (
+                      <div className="taxonomy-stat">
+                        <span>置信度</span>
+                        <strong>{(selectedBranch.branch_confidence * 100).toFixed(0)}%</strong>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="workspace-coverage-caption">

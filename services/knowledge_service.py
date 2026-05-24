@@ -4,7 +4,7 @@ import asyncio
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from uuid import uuid4
 
@@ -283,7 +283,7 @@ class KnowledgeService:
             source_task_id=source_task_id,
             content=content,
             tags=tags or [],
-            metadata={"created_at": datetime.now(UTC).isoformat()},
+            metadata={"created_at": datetime.now(timezone.utc).isoformat()},
         )
         saved_doc = self.repository.save(document)
         if index_immediately:
@@ -305,7 +305,7 @@ class KnowledgeService:
         index_immediately: bool = True
     ) -> KnowledgeDocument:
         """Save a user-imported knowledge document for later retrieval and grounding."""
-        metadata = {"created_at": datetime.now(UTC).isoformat(), "source_type": "user_import"}
+        metadata = {"created_at": datetime.now(timezone.utc).isoformat(), "source_type": "user_import"}
         if source_url:
             metadata["source_url"] = source_url
         if notes:
@@ -369,25 +369,101 @@ class KnowledgeService:
         """
         return self.repository.list_by_tags(tags, limit)
 
-    def search_by_keyword(self, keyword: str, limit: int = 10) -> List[KnowledgeDocument]:
+    def search_by_keyword(
+        self, keyword: str, limit: int = 10, min_score: float = 0.0
+    ) -> List[KnowledgeDocument]:
         """
-        简单关键词检索（不区分大小写）。
+        关键词检索（不区分大小写，按相关性评分排序）。
 
         Args:
-            keyword: 关键词
+            keyword: 关键词（支持多词，空格分隔）
             limit: 返回数量上限
+            min_score: 最低分数阈值（低于此分的文档不返回）
 
         Returns:
-            匹配的 KnowledgeDocument 列表
+            匹配的 KnowledgeDocument 列表（按分数降序）
         """
-        keyword_lower = keyword.lower()
-        results = []
+        query_words = [w.strip().lower() for w in keyword.split() if len(w.strip()) >= 2]
+        if not query_words:
+            return []
+
+        scored: list[tuple[float, KnowledgeDocument]] = []
         for doc in self.repository.list_all():
-            if keyword_lower in doc.title.lower() or keyword_lower in doc.content.lower():
-                results.append(doc)
-                if len(results) >= limit:
-                    break
-        return results
+            title_lower = doc.title.lower()
+            content_lower = doc.content.lower()
+            tags_lower = [t.lower() for t in (doc.tags or [])]
+
+            score = 0.0
+            for word in query_words:
+                # Title scoring
+                if word == title_lower:
+                    score += 5.0
+                elif word in title_lower:
+                    score += 3.0
+                # Content scoring
+                if word in content_lower:
+                    score += 1.0
+                # Tag scoring
+                for tag in tags_lower:
+                    if word in tag:
+                        score += 2.0
+                        break
+
+            # Normalize by content length (long docs shouldn't dominate)
+            content_len = max(1, len(content_lower))
+            length_penalty = min(1.0, 500.0 / content_len)
+            score *= length_penalty
+
+            if score > 0:
+                scored.append((score, doc))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if min_score > 0:
+            scored = [(s, d) for s, d in scored if s >= min_score]
+        return [doc for _, doc in scored[:limit]]
+
+    def retrieve_for_context(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        max_chars_per_doc: int = 300,
+    ) -> list[str]:
+        """
+        检索相关知识并格式化为可注入上下文的文本片段。
+
+        Args:
+            query: 查询字符串（用户消息 + 主题）
+            top_k: 最多返回的知识片段数
+            max_chars_per_doc: 每个知识文档的摘要最大字符数
+
+        Returns:
+            格式化的知识上下文字符串列表，如 ["[Knowledge] DocTitle: excerpt...", ...]
+        """
+        docs = self.search_by_keyword(query, limit=top_k * 2, min_score=0.5)
+        if not docs:
+            return []
+
+        snippets: list[str] = []
+        for doc in docs:
+            title = doc.title.strip()
+            # Use content summary: first meaningful lines, trim whitespace
+            content = " ".join((doc.content or "").split())
+            excerpt = content[:max_chars_per_doc]
+            if len(content) > max_chars_per_doc:
+                excerpt += "..."
+
+            source_tag = ""
+            if doc.source_task_id:
+                source_tag = f" [task:{doc.source_task_id[:8]}]"
+            elif doc.metadata.get("source_url"):
+                source_tag = f" [imported]"
+
+            snippets.append(f"[Knowledge]{source_tag} {title}: {excerpt}")
+            if len(snippets) >= top_k:
+                break
+
+        return snippets
 
     def vector_search(
         self,

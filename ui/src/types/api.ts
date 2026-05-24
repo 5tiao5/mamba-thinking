@@ -88,17 +88,23 @@ export type WorkspaceIdea = {
   raw_text: string;
 };
 
+export type EvidenceTier = "strong" | "moderate" | "weak" | "candidate";
+
 export type WorkspaceTaxonomyBranch = {
   branch_id: string;
   name: string;
   description: string;
   required_concepts: string[];
   paper_count: number;
+  evidence_tier: EvidenceTier;
+  coverage_score?: number;
+  branch_confidence: number;
 };
 
 export type WorkspaceTaxonomyTreeNode = {
   branch_id: string;
   name: string;
+  evidence_tier?: EvidenceTier;
   children: WorkspaceTaxonomyTreeNode[];
 };
 
@@ -108,6 +114,7 @@ export type WorkspaceTaxonomyCoverage = Record<
     paper_count: number;
     gap_count: number;
     coverage_score: number;
+    evidence_tier: EvidenceTier;
     matched_paper_ids?: string[];
     matched_gap_ids?: string[];
   }

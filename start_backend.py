@@ -16,6 +16,8 @@ def _ensure_outer_project_root() -> Path:
     outer_root = repo_root.parent
     if str(outer_root) not in sys.path:
         sys.path.insert(0, str(outer_root))
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     return repo_root
 
 

@@ -1,4 +1,4 @@
-import type { WorkspaceSnapshot, WorkspaceTaxonomyBranch } from "../../types/api";
+import type { EvidenceTier, WorkspaceSnapshot, WorkspaceTaxonomyBranch } from "../../types/api";
 import {
   coverageLabel,
   formatCoverageScore,
@@ -13,20 +13,26 @@ type WorkspaceTaxonomyMapProps = {
   onSelectBranch: (branchId: string) => void;
 };
 
-function branchNodeStyle(score: number, paperCount: number, active: boolean) {
+function branchNodeStyle(
+  score: number,
+  paperCount: number,
+  evidenceTier: EvidenceTier,
+  active: boolean,
+) {
   if (active) {
-    return { fill: "#eef5ff", stroke: "#2f6fed", badge: "#2f6fed" };
+    return { fill: "#eef5ff", stroke: "#2f6fed", badge: "#2f6fed", dash: false };
   }
-  if (!paperCount) {
-    return { fill: "#fff8f1", stroke: "#f59e0b", badge: "#f59e0b" };
+  if (evidenceTier === "candidate") {
+    return { fill: "#fefce8", stroke: "#a3a3a3", badge: "#a3a3a3", dash: true };
   }
-  if (score < 0.45) {
-    return { fill: "#fff7ed", stroke: "#ea580c", badge: "#ea580c" };
+  if (evidenceTier === "weak") {
+    return { fill: "#fff7ed", stroke: "#ea580c", badge: "#ea580c", dash: false };
   }
-  if (score < 0.8) {
-    return { fill: "#f0fdf4", stroke: "#16a34a", badge: "#16a34a" };
+  if (evidenceTier === "moderate") {
+    return { fill: "#f0fdf4", stroke: "#16a34a", badge: "#16a34a", dash: false };
   }
-  return { fill: "#eff6ff", stroke: "#2563eb", badge: "#2563eb" };
+  // strong
+  return { fill: "#eff6ff", stroke: "#2563eb", badge: "#2563eb", dash: false };
 }
 
 function truncateLabel(label: string, maxLength = 26) {
@@ -84,9 +90,11 @@ export function WorkspaceTaxonomyMap({
           const branchCoverage = coverage[branch.branch_id];
           const paperCount = branch.paper_count;
           const score = branchCoverage?.coverage_score ?? 0;
+          const tier: EvidenceTier = branch.evidence_tier || "candidate";
           const active = branch.branch_id === selectedBranchId;
-          const style = branchNodeStyle(score, paperCount, active);
+          const style = branchNodeStyle(score, paperCount, tier, active);
           const title = formatTaxonomyHeading(branch);
+          const isCandidate = tier === "candidate";
 
           return (
             <g
@@ -97,6 +105,7 @@ export function WorkspaceTaxonomyMap({
               <line
                 className="taxonomy-map-link"
                 stroke={style.stroke}
+                strokeDasharray={style.dash ? "6,3" : undefined}
                 x1={centerX}
                 x2={x}
                 y1={centerY}
@@ -111,8 +120,9 @@ export function WorkspaceTaxonomyMap({
                 cx={x}
                 cy={y}
                 fill={style.fill}
-                r={paperCount ? 42 : 36}
+                r={isCandidate ? 36 : 42}
                 stroke={style.stroke}
+                strokeDasharray={style.dash ? "5,3" : undefined}
               />
               <circle
                 className="taxonomy-map-badge"
@@ -127,18 +137,18 @@ export function WorkspaceTaxonomyMap({
                 x={x + 29}
                 y={y - 22}
               >
-                {paperCount}
+                {isCandidate ? "?" : paperCount}
               </text>
               <text className="taxonomy-map-node-title" textAnchor="middle" x={x} y={y - 4}>
                 {truncateLabel(title, 24)}
               </text>
               <text className="taxonomy-map-node-meta" textAnchor="middle" x={x} y={y + 19}>
-                {coverageLabel(score)}
+                {isCandidate ? "(candidate)" : coverageLabel(score)}
               </text>
               <title>
                 {`${title}\nPapers: ${paperCount}\nCoverage: ${formatCoverageScore(
                   score
-                )}\nGap: ${branchCoverage?.gap_count ?? 0}`}
+                )}\nTier: ${tier}\nGap: ${branchCoverage?.gap_count ?? 0}`}
               </title>
             </g>
           );

@@ -57,6 +57,7 @@ class ContinueConversationResponse(BaseModel):
     message: str
     message_id: Optional[str] = None
     context_preview: list[str] = Field(default_factory=list)
+    knowledge_context: list[str] = Field(default_factory=list, description="Retrieved knowledge snippets")
     follow_up_task: Optional[FollowUpTaskPreview] = None
 
 
