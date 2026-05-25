@@ -40,6 +40,29 @@ function formatTime(value: string) {
   return date.toLocaleString();
 }
 
+function getMessageTaskId(message: MessageItem) {
+  const taskId = message.metadata?.task_id;
+  return typeof taskId === "string" && taskId.trim() ? taskId : "";
+}
+
+function getMessageTaskStatus(message: MessageItem) {
+  const taskStatus = message.metadata?.task_status;
+  return typeof taskStatus === "string" && taskStatus.trim() ? taskStatus : "";
+}
+
+function getDisplayMessageContent(message: MessageItem) {
+  const taskId = getMessageTaskId(message);
+  if (!taskId) {
+    return message.content;
+  }
+
+  return message.content
+    .split("\n")
+    .filter((line) => !line.includes(taskId))
+    .join("\n")
+    .trim();
+}
+
 export function ConversationPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -222,7 +245,24 @@ export function ConversationPage() {
                   <strong>{roleLabelMap[message.role] ?? message.role}</strong>
                   <span>{formatTime(message.created_at)}</span>
                 </div>
-                <div className="message-body">{message.content}</div>
+                <div className="message-body">
+                  <div>{getDisplayMessageContent(message)}</div>
+                  {message.role === "assistant" && getMessageTaskId(message) ? (
+                    <div className="message-task-actions">
+                      {getMessageTaskStatus(message) ? (
+                        <StatusPill compact tone={getMessageTaskStatus(message) === "completed" ? "success" : "warning"}>
+                          {taskStatusLabelMap[getMessageTaskStatus(message)] ?? getMessageTaskStatus(message)}
+                        </StatusPill>
+                      ) : null}
+                      <Link
+                        className="secondary-button"
+                        to={`/workspace?task_id=${encodeURIComponent(getMessageTaskId(message))}`}
+                      >
+                        在工作台中打开
+                      </Link>
+                    </div>
+                  ) : null}
+                </div>
               </article>
             ))
           ) : (

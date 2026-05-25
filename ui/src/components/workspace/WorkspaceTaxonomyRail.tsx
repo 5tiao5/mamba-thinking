@@ -1,4 +1,7 @@
 import type {
+  EvidenceTier,
+  WorkspaceEvidenceStatus,
+  WorkspacePaper,
   WorkspaceSnapshot,
   WorkspaceTaxonomyBranch,
 } from "../../types/api";
@@ -14,6 +17,8 @@ import { WorkspaceTaxonomyMap } from "./WorkspaceTaxonomyMap";
 type WorkspaceTaxonomyRailProps = {
   topic: string;
   paperCount: number;
+  papers: WorkspacePaper[];
+  evidenceStatus?: WorkspaceEvidenceStatus;
   categories: Array<{ name: string; count: number }>;
   selectedCategory: string;
   onSelectCategory: (category: string) => void;
@@ -23,9 +28,39 @@ type WorkspaceTaxonomyRailProps = {
   onSelectBranch: (branchId: string) => void;
 };
 
+function tierLabel(tier: EvidenceTier): string {
+  switch (tier) {
+    case "strong": return "强证据";
+    case "moderate": return "中等证据";
+    case "weak": return "弱证据";
+    case "candidate": return "候选分支";
+    default: return tier;
+  }
+}
+
+function tierBadgeStyle(tier: EvidenceTier): { bg: string; text: string } {
+  switch (tier) {
+    case "strong": return { bg: "#2563eb", text: "#fff" };
+    case "moderate": return { bg: "#16a34a", text: "#fff" };
+    case "weak": return { bg: "#ea580c", text: "#fff" };
+    case "candidate": return { bg: "#f5f5f5", text: "#737373" };
+    default: return { bg: "#e5e5e5", text: "#525252" };
+  }
+}
+
+function sourceLabel(source: string) {
+  const normalized = (source || "").toLowerCase();
+  if (normalized === "fallback") return "系统回退";
+  if (normalized === "arxiv") return "ArXiv";
+  if (normalized === "semantic_scholar") return "Semantic Scholar";
+  return source || "未知来源";
+}
+
 export function WorkspaceTaxonomyRail({
   topic,
   paperCount,
+  papers,
+  evidenceStatus,
   categories,
   selectedCategory,
   onSelectCategory,
@@ -34,13 +69,21 @@ export function WorkspaceTaxonomyRail({
   selectedBranchId,
   onSelectBranch,
 }: WorkspaceTaxonomyRailProps) {
-  const selectedBranch = branches.find((branch) => branch.branch_id === selectedBranchId) ?? branches[0];
-  const selectedCoverage = selectedBranch ? coverage[selectedBranch.branch_id] : undefined;
-  const selectedEnglishLabel = selectedBranch ? inferEnglishTaxonomyLabel(selectedBranch) : "";
-  const selectedHeading = selectedBranch ? formatTaxonomyHeading(selectedBranch) : "";
+  const insufficientEvidence = evidenceStatus?.insufficient ?? false;
+  const selectedBranch =
+    branches.find((branch) => branch.branch_id === selectedBranchId) ?? branches[0];
+  const selectedCoverage = selectedBranch
+    ? coverage[selectedBranch.branch_id]
+    : undefined;
+  const selectedEnglishLabel = selectedBranch
+    ? inferEnglishTaxonomyLabel(selectedBranch)
+    : "";
+  const selectedHeading = selectedBranch
+    ? formatTaxonomyHeading(selectedBranch)
+    : "";
 
   return (
-    <aside className="workspace-rail">
+    <aside className="workspace-rail workspace-rail-wide">
       <section className="pane">
         <div className="section-header">
           <div>
@@ -51,7 +94,11 @@ export function WorkspaceTaxonomyRail({
         <div className="pane-scroll">
           <div className="workspace-filter-list">
             <button
-              className={selectedCategory === "all" ? "workspace-filter-card workspace-filter-card-active" : "workspace-filter-card"}
+              className={
+                selectedCategory === "all"
+                  ? "workspace-filter-card workspace-filter-card-active"
+                  : "workspace-filter-card"
+              }
               onClick={() => onSelectCategory("all")}
               type="button"
             >
@@ -61,7 +108,9 @@ export function WorkspaceTaxonomyRail({
             {categories.map((entry) => (
               <button
                 className={
-                  selectedCategory === entry.name ? "workspace-filter-card workspace-filter-card-active" : "workspace-filter-card"
+                  selectedCategory === entry.name
+                    ? "workspace-filter-card workspace-filter-card-active"
+                    : "workspace-filter-card"
                 }
                 key={entry.name}
                 onClick={() => onSelectCategory(entry.name)}
@@ -75,7 +124,7 @@ export function WorkspaceTaxonomyRail({
         </div>
       </section>
 
-      <section className="pane">
+      <section className="pane taxonomy-pane-expanded">
         <div className="section-header">
           <div>
             <div className="section-eyebrow">{branches.length} branches</div>
@@ -83,7 +132,51 @@ export function WorkspaceTaxonomyRail({
           </div>
         </div>
         <div className="pane-scroll taxonomy-panel">
-          {branches.length ? (
+          {insufficientEvidence ? (
+            <div className="taxonomy-layout">
+              <div className="taxonomy-detail-card taxonomy-detail-card-warning">
+                <div className="section-eyebrow">Candidate branches</div>
+                <div className="taxonomy-detail-title">当前不展示完整 taxonomy 图</div>
+                <div className="taxonomy-detail-copy">
+                  {evidenceStatus?.message ||
+                    "当前真实论文证据过薄，这一轮更适合先展示候选研究分支与补证建议。"}
+                </div>
+
+                {evidenceStatus?.candidate_branches?.length ? (
+                  <>
+                    <div className="section-eyebrow">Suggested branch draft</div>
+                    <div className="taxonomy-chip-wrap">
+                      {evidenceStatus.candidate_branches.map((branchName) => (
+                        <span className="taxonomy-chip taxonomy-chip-warning" key={branchName}>
+                          {branchName}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
+                <div className="taxonomy-detail-stats">
+                  <div className="taxonomy-stat">
+                    <span>真实论文</span>
+                    <strong>{evidenceStatus?.real_paper_count ?? 0}</strong>
+                  </div>
+                  <div className="taxonomy-stat">
+                    <span>回退论文</span>
+                    <strong>{evidenceStatus?.fallback_paper_count ?? 0}</strong>
+                  </div>
+                  <div className="taxonomy-stat">
+                    <span>覆盖分支</span>
+                    <strong>{evidenceStatus?.covered_branch_count ?? 0}</strong>
+                  </div>
+                </div>
+
+                <div className="taxonomy-helper-copy">
+                  这时候继续强行绘制完整 taxonomy，往往会把薄证据包装成很完整的研究地图。更合理的下一步是：
+                  缩小问题、补充论文，或者先导入已有知识后再刷新总 workspace。
+                </div>
+              </div>
+            </div>
+          ) : branches.length ? (
             <div className="taxonomy-layout">
               <WorkspaceTaxonomyMap
                 branches={branches}
@@ -98,13 +191,17 @@ export function WorkspaceTaxonomyRail({
                   <div className="section-eyebrow">Current branch</div>
                   <div className="taxonomy-detail-title">{selectedHeading}</div>
                   {selectedHeading !== selectedEnglishLabel ? (
-                    <div className="taxonomy-detail-english">{selectedEnglishLabel}</div>
+                    <div className="taxonomy-detail-english">
+                      {selectedEnglishLabel}
+                    </div>
                   ) : null}
-                  <div className="taxonomy-detail-copy">{selectedBranch.description || "暂无分支描述"}</div>
+                  <div className="taxonomy-detail-copy">
+                    {selectedBranch.description || "当前分支暂时没有补充说明。"}
+                  </div>
 
                   <div className="taxonomy-detail-stats">
                     <div className="taxonomy-stat">
-                      <span>论文</span>
+                      <span>论文数</span>
                       <strong>{selectedBranch.paper_count}</strong>
                     </div>
                     <div className="taxonomy-stat">
@@ -112,17 +209,38 @@ export function WorkspaceTaxonomyRail({
                       <strong>{formatCoverageScore(selectedCoverage?.coverage_score)}</strong>
                     </div>
                     <div className="taxonomy-stat">
-                      <span>Gap</span>
+                      <span>Gap 数</span>
                       <strong>{selectedCoverage?.gap_count ?? 0}</strong>
                     </div>
+                    <div className="taxonomy-stat">
+                      <span>证据等级</span>
+                      <strong
+                        style={{
+                          color: tierBadgeStyle(selectedBranch.evidence_tier || "candidate").bg,
+                        }}
+                      >
+                        {tierLabel(selectedBranch.evidence_tier || "candidate")}
+                      </strong>
+                    </div>
+                    {selectedBranch.branch_confidence > 0 ? (
+                      <div className="taxonomy-stat">
+                        <span>置信度</span>
+                        <strong>{(selectedBranch.branch_confidence * 100).toFixed(0)}%</strong>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="workspace-coverage-caption">{coverageLabel(selectedCoverage?.coverage_score)}</div>
+                  <div className="workspace-coverage-caption">
+                    {coverageLabel(selectedCoverage?.coverage_score)}
+                  </div>
                   <div className="taxonomy-helper-copy">
-                    {coverageExplanation(selectedCoverage?.coverage_score, selectedBranch.paper_count)}
+                    {coverageExplanation(
+                      selectedCoverage?.coverage_score,
+                      selectedBranch.paper_count
+                    )}
                   </div>
 
-                  <div className="section-eyebrow">Required Concepts</div>
+                  <div className="section-eyebrow">Required concepts</div>
                   {selectedBranch.required_concepts.length ? (
                     <div className="taxonomy-chip-wrap">
                       {selectedBranch.required_concepts.map((concept) => (
@@ -132,13 +250,35 @@ export function WorkspaceTaxonomyRail({
                       ))}
                     </div>
                   ) : (
-                    <div className="empty-state">暂未列出必要概念。</div>
+                    <div className="empty-state">当前分支还没有列出必要概念。</div>
+                  )}
+
+                  <div className="section-eyebrow">Matched papers</div>
+                  {papers.length ? (
+                    <div className="taxonomy-evidence-list">
+                      {papers.map((paper) => (
+                        <article className="taxonomy-evidence-item" key={paper.paper_id}>
+                          <div className="taxonomy-evidence-title">{paper.title}</div>
+                          <div className="taxonomy-evidence-meta">
+                            <span>{paper.paper_id}</span>
+                            <span>{sourceLabel(paper.source)}</span>
+                            <span>{paper.taxonomy_category || "未分类"}</span>
+                            <span>{paper.publish_date || "-"}</span>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      当前 branch 还没有稳定归属的论文证据。如果这一轮证据偏弱，后端后续更适合切换到
+                      candidate branch 模式，而不是继续强行长完整 taxonomy。
+                    </div>
                   )}
                 </div>
               ) : null}
             </div>
           ) : (
-            <div className="empty-state">暂无研究 taxonomy 摘要。</div>
+            <div className="empty-state">当前还没有可视化的 taxonomy 结构。</div>
           )}
         </div>
       </section>

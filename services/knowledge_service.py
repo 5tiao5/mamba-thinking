@@ -4,7 +4,7 @@ import asyncio
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from uuid import uuid4
 
@@ -124,6 +124,69 @@ class SimpleChunker:
                 start += (self.chunk_size - self.overlap)
             global_pos += para_len + 2
         return chunks
+
+
+class HashEmbedder:
+    """
+    确定性哈希嵌入器，无需外部依赖。
+
+    使用多哈希特征哈希技巧将文本映射为固定维度的稠密向量。
+    相同文本始终产生相同向量，支持有意义的余弦相似度比较。
+    用于替代 Test DummyEmbedder（随机向量，无意义）。
+    """
+
+    def __init__(self, dimension: int = 768, num_hashes: int = 2):
+        self.dim = dimension
+        self.num_hashes = num_hashes
+
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        import hashlib
+        import math
+        import struct
+
+        results = []
+        for text in texts:
+            vec = [0.0] * self.dim
+            words = self._tokenize(text)
+            if not words:
+                results.append(vec)
+                continue
+
+            for word in words:
+                for seed in range(self.num_hashes):
+                    h = hashlib.md5(f"{seed}:{word}".encode()).digest()
+                    idx = struct.unpack_from("I", h[:4])[0] % self.dim
+                    sign = 1 if (h[4] & 1) == 0 else -1
+                    vec[idx] += sign
+
+            norm = math.sqrt(sum(v * v for v in vec))
+            if norm > 0:
+                vec = [v / norm for v in vec]
+            results.append(vec)
+
+        return results
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        import re
+
+        text = text.lower()
+        tokens = re.findall(r"[a-z][a-z0-9]{2,}", text)
+        stop_words = {
+            "the", "and", "for", "are", "was", "but", "not", "you", "all",
+            "can", "had", "her", "his", "its", "out", "see", "may", "use",
+            "has", "how", "new", "now", "our", "way", "who", "did", "due",
+            "get", "got", "yet", "any", "few", "own", "set", "too", "two",
+            "also", "been", "each", "from", "have", "into", "like", "more",
+            "much", "only", "over", "some", "such", "than", "that", "them",
+            "then", "they", "this", "very", "well", "what", "when", "will",
+            "with", "which", "their", "there", "where", "about", "would",
+            "could", "should", "after", "before", "other", "between",
+            "paper", "papers", "study", "studies", "research", "survey",
+            "results", "method", "using", "based", "approach", "propose",
+            "methods", "models", "model", "data", "analysis",
+        }
+        return [t for t in tokens if t not in stop_words and len(t) >= 3]
 
 
 class DummyEmbedder:
@@ -246,7 +309,7 @@ class KnowledgeService:
         """
         self.repository = repository
         self.chunker = chunker or SimpleChunker()
-        self.embedder = embedder or DummyEmbedder()
+        self.embedder = embedder or HashEmbedder()
         self.vector_store = vector_store or InMemoryVectorStore()
         self.reranker = reranker or NoopReranker()
         self.enable_hybrid_search = enable_hybrid_search
@@ -283,15 +346,54 @@ class KnowledgeService:
             source_task_id=source_task_id,
             content=content,
             tags=tags or [],
-            metadata={"created_at": datetime.now(UTC).isoformat()},
+            metadata={"created_at": datetime.now(timezone.utc).isoformat()},
         )
         saved_doc = self.repository.save(document)
         if index_immediately:
-            if self.async_indexing:
-                asyncio.create_task(self._index_document_async(saved_doc))
-            else:
-                self._index_document(saved_doc)
+            self._maybe_index_document(saved_doc)
         return saved_doc
+
+    def import_document(
+        self,
+        *,
+        title: str,
+        content: str,
+        tags: List[str] | None = None,
+        source_url: str | None = None,
+        source_task_id: str | None = None,
+        notes: str | None = None,
+        index_immediately: bool = True
+    ) -> KnowledgeDocument:
+        """Save a user-imported knowledge document for later retrieval and grounding."""
+        metadata = {"created_at": datetime.now(timezone.utc).isoformat(), "source_type": "user_import"}
+        if source_url:
+            metadata["source_url"] = source_url
+        if notes:
+            metadata["notes"] = notes
+
+        document = KnowledgeDocument(
+            document_id=f"doc_{uuid4().hex[:12]}",
+            title=title,
+            source_task_id=source_task_id,
+            content=content,
+            tags=tags or [],
+            metadata=metadata,
+        )
+        saved_doc = self.repository.save(document)
+        if index_immediately:
+            self._maybe_index_document(saved_doc)
+        return saved_doc
+
+    def _maybe_index_document(self, document: KnowledgeDocument) -> None:
+        """Index a document, using async if an event loop is running, else sync."""
+        if self.async_indexing:
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(self._index_document_async(document))
+                return
+            except RuntimeError:
+                pass  # no running event loop, fall through to sync
+        self._index_document(document)
 
     async def _index_document_async(self, document: KnowledgeDocument) -> None:
         """异步索引文档（避免阻塞主线程）。"""
@@ -335,25 +437,101 @@ class KnowledgeService:
         """
         return self.repository.list_by_tags(tags, limit)
 
-    def search_by_keyword(self, keyword: str, limit: int = 10) -> List[KnowledgeDocument]:
+    def search_by_keyword(
+        self, keyword: str, limit: int = 10, min_score: float = 0.0
+    ) -> List[KnowledgeDocument]:
         """
-        简单关键词检索（不区分大小写）。
+        关键词检索（不区分大小写，按相关性评分排序）。
 
         Args:
-            keyword: 关键词
+            keyword: 关键词（支持多词，空格分隔）
             limit: 返回数量上限
+            min_score: 最低分数阈值（低于此分的文档不返回）
 
         Returns:
-            匹配的 KnowledgeDocument 列表
+            匹配的 KnowledgeDocument 列表（按分数降序）
         """
-        keyword_lower = keyword.lower()
-        results = []
+        query_words = [w.strip().lower() for w in keyword.split() if len(w.strip()) >= 2]
+        if not query_words:
+            return []
+
+        scored: list[tuple[float, KnowledgeDocument]] = []
         for doc in self.repository.list_all():
-            if keyword_lower in doc.title.lower() or keyword_lower in doc.content.lower():
-                results.append(doc)
-                if len(results) >= limit:
-                    break
-        return results
+            title_lower = doc.title.lower()
+            content_lower = doc.content.lower()
+            tags_lower = [t.lower() for t in (doc.tags or [])]
+
+            score = 0.0
+            for word in query_words:
+                # Title scoring
+                if word == title_lower:
+                    score += 5.0
+                elif word in title_lower:
+                    score += 3.0
+                # Content scoring
+                if word in content_lower:
+                    score += 1.0
+                # Tag scoring
+                for tag in tags_lower:
+                    if word in tag:
+                        score += 2.0
+                        break
+
+            # Normalize by content length (long docs shouldn't dominate)
+            content_len = max(1, len(content_lower))
+            length_penalty = min(1.0, 500.0 / content_len)
+            score *= length_penalty
+
+            if score > 0:
+                scored.append((score, doc))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if min_score > 0:
+            scored = [(s, d) for s, d in scored if s >= min_score]
+        return [doc for _, doc in scored[:limit]]
+
+    def retrieve_for_context(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        max_chars_per_doc: int = 300,
+    ) -> list[str]:
+        """
+        检索相关知识并格式化为可注入上下文的文本片段。
+
+        Args:
+            query: 查询字符串（用户消息 + 主题）
+            top_k: 最多返回的知识片段数
+            max_chars_per_doc: 每个知识文档的摘要最大字符数
+
+        Returns:
+            格式化的知识上下文字符串列表，如 ["[Knowledge] DocTitle: excerpt...", ...]
+        """
+        docs = self.search_by_keyword(query, limit=top_k * 2, min_score=0.5)
+        if not docs:
+            return []
+
+        snippets: list[str] = []
+        for doc in docs:
+            title = doc.title.strip()
+            # Use content summary: first meaningful lines, trim whitespace
+            content = " ".join((doc.content or "").split())
+            excerpt = content[:max_chars_per_doc]
+            if len(content) > max_chars_per_doc:
+                excerpt += "..."
+
+            source_tag = ""
+            if doc.source_task_id:
+                source_tag = f" [task:{doc.source_task_id[:8]}]"
+            elif doc.metadata.get("source_url"):
+                source_tag = f" [imported]"
+
+            snippets.append(f"[Knowledge]{source_tag} {title}: {excerpt}")
+            if len(snippets) >= top_k:
+                break
+
+        return snippets
 
     def vector_search(
         self,
@@ -487,10 +665,6 @@ class KnowledgeService:
         """根据文档 ID 获取原始文档。"""
         return self.repository.get(document_id)
 
-    def list_documents(self) -> List[KnowledgeDocument]:
-        """列出所有原始文档（调试用）。"""
-        return self.repository.list_all()
-
     def delete_document(self, document_id: str) -> bool:
         """
         删除文档及其所有索引块。
@@ -508,3 +682,9 @@ class KnowledgeService:
         self.vector_store.delete_by_document_id(document_id)
         # 从仓库中删除（需要 repository 支持 delete）
         return self.repository.delete(document_id)
+
+    def list_documents(self) -> List[KnowledgeDocument]:
+        """List documents in reverse created_at order for predictable UI rendering."""
+        documents = self.repository.list_all()
+        documents.sort(key=lambda item: item.metadata.get("created_at", ""), reverse=True)
+        return documents

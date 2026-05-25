@@ -34,6 +34,7 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
     ideas = [_map_idea(task_id, idea, papers, gaps) for idea in state.get("generated_ideas", [])]
 
     trace = _build_trace(state)
+    evidence_status = _build_evidence_status(papers=papers, taxonomy=taxonomy)
 
     return ResearchWorkspace(
         task_id=task_id,
@@ -46,6 +47,7 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
         gaps=gaps,
         ideas=ideas,
         alignment_score=float(state.get("alignment_score", 0.0) or 0.0),
+        evidence_status=evidence_status,
         trace=trace,
     )
 
@@ -155,6 +157,7 @@ def _map_paper(paper: Any) -> PaperRecord:
         title=str(payload.get("title", "")),
         abstract=str(payload.get("abstract", "")),
         authors=list(payload.get("authors", [])),
+        keywords=[str(item).strip() for item in payload.get("keywords", []) if str(item).strip()],
         publish_date=str(payload.get("publish_date", "")),
         source=str(payload.get("source", "")),
         taxonomy_category=str(payload.get("taxonomy_category", "")),
@@ -365,6 +368,80 @@ def _build_trace(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_evidence_status(
+    *,
+    papers: List[PaperRecord],
+    taxonomy: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Generate WorkspaceEvidenceStatus from papers and grounded taxonomy."""
+    total_papers = len(papers)
+    real_paper_count = sum(
+        1 for p in papers if getattr(p, "source", "") not in ("seed", "fallback")
+    )
+    fallback_paper_count = total_papers - real_paper_count
+    fallback_ratio = round(fallback_paper_count / total_papers, 3) if total_papers > 0 else 0.0
+
+    branches = taxonomy.get("branches", []) if isinstance(taxonomy, dict) else []
+    total_branches = len(branches)
+    if total_branches == 0:
+        return {
+            "insufficient": True,
+            "total_papers": total_papers,
+            "real_paper_count": real_paper_count,
+            "fallback_paper_count": fallback_paper_count,
+            "fallback_ratio": fallback_ratio,
+            "covered_branch_count": 0,
+            "candidate_branches": [],
+            "message": "No taxonomy branches were generated. Evidence is insufficient for structured analysis.",
+        }
+
+    candidate_branches = [
+        b["name"] for b in branches
+        if b.get("evidence_tier") == "candidate"
+    ]
+    covered_branch_count = total_branches - len(candidate_branches)
+
+    candidate_ratio = len(candidate_branches) / total_branches if total_branches > 0 else 0
+    insufficient = candidate_ratio > 0.5 or (total_papers <= 3 and fallback_ratio > 0.5)
+
+    if insufficient:
+        if candidate_branches:
+            message = (
+                f"当前{total_papers}篇论文中{fallback_paper_count}篇为保底论文，"
+                f"{total_branches}个研究分支中{len(candidate_branches)}个尚无文献支撑。"
+                f"当前更适合把 {' / '.join(candidate_branches[:3])} 当作候选研究分支，"
+                f"而不是直接展示完整 taxonomy。后续建议继续补充真实论文。"
+            )
+        else:
+            message = (
+                f"当前仅{total_papers}篇论文，证据总量不足以支撑可靠的研究分类。"
+                f"建议补充检索或缩小研究范围后重试。"
+            )
+    else:
+        weak_count = sum(1 for b in branches if b.get("evidence_tier") == "weak")
+        if weak_count > 0:
+            message = (
+                f"{total_branches}个分支中{covered_branch_count}个已有文献支撑，"
+                f"{weak_count}个证据偏弱。整体可视为初步研究地图。"
+            )
+        else:
+            message = (
+                f"所有{total_branches}个研究分支均有文献支撑，"
+                f"taxonomy 可作为可靠的研究导航使用。"
+            )
+
+    return {
+        "insufficient": insufficient,
+        "total_papers": total_papers,
+        "real_paper_count": real_paper_count,
+        "fallback_paper_count": fallback_paper_count,
+        "fallback_ratio": fallback_ratio,
+        "covered_branch_count": covered_branch_count,
+        "candidate_branches": candidate_branches,
+        "message": message,
+    }
+
+
 def json_safe(value: Any) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
@@ -379,7 +456,7 @@ def _infer_related_papers(text: str, papers: List[PaperRecord], top_n: int = 3) 
         return []
     scores = []
     for p in papers:
-        text_fields = f"{p.title or ""} {p.abstract or ""}".lower()
+        text_fields = f"{p.title or ''} {p.abstract or ''}".lower()
         score = sum(1 for t in tokens if t in text_fields)
         if score > 0:
             scores.append((score, p.paper_id or p.title))

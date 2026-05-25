@@ -7,6 +7,7 @@ from observability import StageTimer, record_decision, record_error_event, recor
 from pipeline_utils import balanced_mode, build_agent_plan, dedupe, fast_mode
 
 from ..models import ResearchState
+from ..query_decomposition import build_search_queries, infer_research_facets, is_broad_topic
 
 
 def planner_node(state: ResearchState) -> ResearchState:
@@ -16,7 +17,7 @@ def planner_node(state: ResearchState) -> ResearchState:
     updated = dict(state)
 
     if fast_mode():
-        queries = [topic]
+        queries = build_search_queries(topic, fast=True)
         updated["search_queries"] = queries
         updated["agent_plan"] = build_agent_plan(topic, ["ArXiv"], "fast")
         record_decision(
@@ -30,7 +31,7 @@ def planner_node(state: ResearchState) -> ResearchState:
         return updated
 
     if balanced_mode():
-        queries = [topic, f"{topic} benchmark evaluation", f"{topic} survey"]
+        queries = build_search_queries(topic, balanced=True)
         updated["search_queries"] = dedupe(queries)
         updated["agent_plan"] = build_agent_plan(topic, ["ArXiv", "DeepSeek ideas"], "balanced")
         record_decision(
@@ -44,7 +45,8 @@ def planner_node(state: ResearchState) -> ResearchState:
         return updated
 
     prompt = f"""
-Please expand the research topic into 3-5 English academic search queries.
+Please expand the research topic into 4-6 English academic search queries.
+If the topic is broad, decompose it into evidence-seeking facets such as methods, evaluation, applications, limitations, and future directions.
 Return JSON only: {{"queries": ["...", "..."]}}
 Topic: {topic}
 """
@@ -57,13 +59,11 @@ Topic: {topic}
     if data and isinstance(data.get("queries"), list):
         queries = [str(query).strip() for query in data["queries"] if str(query).strip()]
 
+    heuristic_queries = build_search_queries(topic, balanced=False)
+    if data and queries:
+        queries = dedupe([*heuristic_queries, *queries])
     if not queries:
-        queries = [
-            topic,
-            f"{topic} survey",
-            f"{topic} benchmark evaluation",
-            f"{topic} limitations future work",
-        ]
+        queries = heuristic_queries
         record_error_event(
             updated,
             stage="planner",
@@ -72,7 +72,7 @@ Topic: {topic}
             recovery="Used rule-based query expansion.",
         )
 
-    updated["search_queries"] = dedupe(queries)[:4]
+    updated["search_queries"] = dedupe(queries)[:6]
     updated["agent_plan"] = build_agent_plan(
         topic,
         ["ArXiv", "Semantic Scholar", "DeepSeek", "PDF parser"],
@@ -85,7 +85,10 @@ Topic: {topic}
         status="success" if data else "fallback",
         output_count=len(updated["search_queries"]),
         duration_sec=timer.elapsed(),
-        note="LLM query expansion" if data else "Rule-based query fallback.",
+        note=(
+            f"Evidence-oriented query decomposition; broad_topic={is_broad_topic(topic)}; "
+            f"facets={', '.join(infer_research_facets(topic)[:4])}"
+        ),
     )
     record_decision(
         updated,

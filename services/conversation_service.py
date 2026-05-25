@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from product_agent.domain import Conversation
@@ -46,8 +46,8 @@ class ConversationService:
             conversation_id=f"conv_{uuid4().hex[:12]}",
             topic=topic,
             title=title or topic,
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         return self.repository.create(conversation)
 

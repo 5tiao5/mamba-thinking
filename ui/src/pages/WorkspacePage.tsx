@@ -6,7 +6,7 @@ import { WorkspaceInsightsPanel } from "../components/workspace/WorkspaceInsight
 import { WorkspaceSummarySection } from "../components/workspace/WorkspaceSummarySection";
 import { WorkspaceTaxonomyRail } from "../components/workspace/WorkspaceTaxonomyRail";
 import { api, toErrorMessage } from "../lib/api";
-import type { ResearchTaskDetailItem, WorkspaceSnapshot } from "../types/api";
+import type { ResearchTaskDetailItem, WorkspacePaper, WorkspaceSnapshot } from "../types/api";
 
 function taskStatusMessage(task: ResearchTaskDetailItem) {
   if (task.status === "running") {
@@ -72,6 +72,18 @@ export function WorkspacePage() {
     }
     return papers.filter((paper) => (paper.taxonomy_category || "未分类") === selectedCategory);
   }, [selectedCategory, workspace]);
+
+  const taxonomyEvidencePapers = useMemo(() => {
+    if (!workspace || !selectedBranchId) {
+      return [] as WorkspacePaper[];
+    }
+    const matchedIds = workspace.taxonomy.coverage[selectedBranchId]?.matched_paper_ids ?? [];
+    if (!matchedIds.length) {
+      return [] as WorkspacePaper[];
+    }
+    const idSet = new Set(matchedIds);
+    return workspace.papers.filter((paper) => idSet.has(paper.paper_id));
+  }, [selectedBranchId, workspace]);
 
   const selectedPaper = useMemo(() => {
     if (!filteredPapers.length) {
@@ -180,6 +192,7 @@ export function WorkspacePage() {
 
       <WorkspaceSummarySection
         alignmentScore={workspace?.alignment_score ?? 0}
+        evidenceStatus={workspace?.evidence_status}
         gapCount={workspace?.gaps.length ?? 0}
         ideaCount={workspace?.ideas.length ?? 0}
         paperCount={workspace?.papers.length ?? 0}
@@ -195,9 +208,11 @@ export function WorkspacePage() {
           branches={taxonomyBranches}
           categories={paperCategories}
           coverage={taxonomyCoverage}
+          evidenceStatus={workspace?.evidence_status}
           onSelectBranch={setSelectedBranchId}
           onSelectCategory={setSelectedCategory}
           paperCount={workspace?.papers.length ?? 0}
+          papers={taxonomyEvidencePapers}
           selectedBranchId={selectedBranchId}
           selectedCategory={selectedCategory}
           topic={workspace?.topic ?? ""}
@@ -210,6 +225,7 @@ export function WorkspacePage() {
       </section>
 
       <WorkspaceInsightsPanel
+        evidenceStatus={workspace?.evidence_status}
         gaps={workspace?.gaps ?? []}
         graphEdges={workspace?.graph_edges ?? []}
         ideas={workspace?.ideas ?? []}

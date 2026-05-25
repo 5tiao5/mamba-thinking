@@ -88,17 +88,23 @@ export type WorkspaceIdea = {
   raw_text: string;
 };
 
+export type EvidenceTier = "strong" | "moderate" | "weak" | "candidate";
+
 export type WorkspaceTaxonomyBranch = {
   branch_id: string;
   name: string;
   description: string;
   required_concepts: string[];
   paper_count: number;
+  evidence_tier: EvidenceTier;
+  coverage_score?: number;
+  branch_confidence: number;
 };
 
 export type WorkspaceTaxonomyTreeNode = {
   branch_id: string;
   name: string;
+  evidence_tier?: EvidenceTier;
   children: WorkspaceTaxonomyTreeNode[];
 };
 
@@ -108,6 +114,9 @@ export type WorkspaceTaxonomyCoverage = Record<
     paper_count: number;
     gap_count: number;
     coverage_score: number;
+    evidence_tier: EvidenceTier;
+    matched_paper_ids?: string[];
+    matched_gap_ids?: string[];
   }
 >;
 
@@ -116,6 +125,17 @@ export type WorkspaceTaxonomy = {
   tree: WorkspaceTaxonomyTreeNode[];
   coverage: WorkspaceTaxonomyCoverage;
   raw: unknown;
+};
+
+export type WorkspaceEvidenceStatus = {
+  insufficient: boolean;
+  total_papers: number;
+  real_paper_count: number;
+  fallback_paper_count: number;
+  fallback_ratio: number;
+  covered_branch_count: number;
+  candidate_branches: string[];
+  message: string;
 };
 
 export type WorkspaceSnapshot = {
@@ -128,6 +148,7 @@ export type WorkspaceSnapshot = {
   gaps: WorkspaceGap[];
   ideas: WorkspaceIdea[];
   alignment_score: number;
+  evidence_status: WorkspaceEvidenceStatus;
   trace: {
     thought_trace: Array<Record<string, unknown>>;
     action_history: Array<Record<string, unknown>>;

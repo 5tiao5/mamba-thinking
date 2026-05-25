@@ -16,8 +16,10 @@ from product_agent.repositories import (
     SQLiteKnowledgeRepository,
     SQLiteMessageRepository,
     SQLiteResearchTaskRepository,
+    SQLiteVectorStore,
     SQLiteWorkspaceRepository,
 )
+from product_agent.services.knowledge_service import HashEmbedder
 from product_agent.services.conversation_service import ConversationService
 from product_agent.services.knowledge_service import KnowledgeService
 from product_agent.services.message_service import MessageService
@@ -37,10 +39,10 @@ class AppContainer:
     """
 
     def __init__(
-        self,
-        *,
-        storage_backend: str | None = None,
-        sqlite_path: str | None = None,
+            self,
+            *,
+            storage_backend: str | None = None,
+            sqlite_path: str | None = None,
     ) -> None:
         backend = (storage_backend or os.getenv("PRODUCT_AGENT_STORAGE", "sqlite")).strip().lower()
 
@@ -67,20 +69,44 @@ class AppContainer:
         self.skill_registry = SkillRegistry()
         self._register_defaults()
 
+        # Services - 注意顺序：先创建不依赖其他服务的，后创建有依赖的
         self.conversation_service = ConversationService(self.conversation_repository)
         self.message_service = MessageService(
             repository=self.message_repository,
             conversation_repository=self.conversation_repository,
         )
+
+        # ✅ 先创建 knowledge_service（被 research_service 依赖）
+        # SQLite mode: 注入持久化向量存储和确定性哈希嵌入器
+        if backend == "sqlite":
+            self.knowledge_service = KnowledgeService(
+                self.knowledge_repository,
+                vector_store=SQLiteVectorStore(self.database),
+                embedder=HashEmbedder(),
+                async_indexing=True,
+            )
+        else:
+            self.knowledge_service = KnowledgeService(
+                self.knowledge_repository,
+                embedder=HashEmbedder(),
+                async_indexing=True,
+            )
+
+        # ✅ 再创建 research_service
         self.research_service = ResearchService(
             conversation_repository=self.conversation_repository,
             task_repository=self.task_repository,
             workspace_repository=self.workspace_repository,
         )
-        self.workspace_service = WorkspaceService(self.workspace_repository)
+
+        self.workspace_service = WorkspaceService(
+            self.workspace_repository,
+            conversation_repository=self.conversation_repository,
+            task_repository=self.task_repository,
+        )
         self.tool_service = ToolService(self.tool_registry)
         self.skill_service = SkillService(self.skill_registry)
-        self.knowledge_service = KnowledgeService(self.knowledge_repository)
+        # 注意：self.knowledge_service 已经在上面创建，这里不要重复创建
 
     def _register_defaults(self) -> None:
         self.tool_registry.register(

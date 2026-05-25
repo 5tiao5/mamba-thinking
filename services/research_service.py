@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from product_agent.domain import ResearchTask, ResearchWorkspace
@@ -61,12 +61,12 @@ class ResearchService:
             mode=mode,
             trigger_message_id=trigger_message_id,
             status="created",
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         created_task = self.task_repository.create(task)
         conversation.latest_task_id = created_task.task_id
-        conversation.updated_at = datetime.now(UTC)
+        conversation.updated_at = datetime.now(timezone.utc)
         self.conversation_repository.update(conversation)
         return created_task
 
@@ -77,6 +77,7 @@ class ResearchService:
         base_topic: str,
         latest_message_content: str,
         focus: str | None = None,
+        knowledge_hints: list[str] | None = None,
         mode: str = "default",
         trigger_message_id: str | None = None,
     ) -> ResearchTask:
@@ -91,6 +92,7 @@ class ResearchService:
             base_topic=base_topic,
             latest_message_content=latest_message_content,
             focus=focus,
+            knowledge_hints=knowledge_hints,
         )
         return self.create_task(
             conversation_id=conversation_id,
@@ -136,12 +138,14 @@ class ResearchService:
         - 失败时更新 `task.status=failed`
         """
         task.status = "running"
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = datetime.now(timezone.utc)
         self.task_repository.update(task)
 
         try:
             from product_agent.research_agent.pipeline import run_pipeline
 
+            # 知识上下文不再拼入 topic（会污染搜索 query），
+            # 而是通过 state["knowledge_context"] 传给后续节点使用
             state = run_pipeline(task.topic, show_progress=False)
             workspace: ResearchWorkspace = workspace_from_agent_state(
                 task_id=task.task_id,
@@ -150,12 +154,12 @@ class ResearchService:
             )
             saved_workspace = self.workspace_repository.save(workspace)
             task.status = "completed"
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
             return saved_workspace
         except Exception:
             task.status = "failed"
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
             raise
 
@@ -165,12 +169,23 @@ class ResearchService:
         base_topic: str,
         latest_message_content: str,
         focus: str | None = None,
+        knowledge_hints: list[str] | None = None,
     ) -> str:
         focus_text = (focus or "").strip()
         if focus_text:
-            return f"{base_topic} - focus on {focus_text}"
+            topic = f"{base_topic} - focus on {focus_text}"
+        else:
+            snippet = " ".join(latest_message_content.strip().split())
+            if not snippet:
+                topic = base_topic
+            else:
+                topic = f"{base_topic} - follow up: {snippet[:80]}"
 
-        snippet = " ".join(latest_message_content.strip().split())
-        if not snippet:
-            return base_topic
-        return f"{base_topic} - follow up: {snippet[:80]}"
+        compact_hints = [hint.strip() for hint in (knowledge_hints or []) if hint and hint.strip()]
+        if not compact_hints:
+            return topic
+
+        hint_text = "; ".join(compact_hints[:2])
+        if len(hint_text) > 120:
+            hint_text = f"{hint_text[:117]}..."
+        return f"{topic} - informed by {hint_text}"
