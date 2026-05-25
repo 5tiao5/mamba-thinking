@@ -136,6 +136,7 @@ class ProductApiHandlers:
         follow_up_task = None
         if request.create_follow_up_task:
             enriched_focus = request.focus
+            knowledge_hints = self._extract_knowledge_hints(knowledge_context)
 
             try:
                 task = self.research_service.create_follow_up_task(
@@ -143,6 +144,7 @@ class ProductApiHandlers:
                     base_topic=conversation.topic,
                     latest_message_content=request.content,
                     focus=enriched_focus,
+                    knowledge_hints=knowledge_hints,
                     mode=request.mode,
                     trigger_message_id=message.message_id,
                 )
@@ -417,7 +419,11 @@ class ProductApiHandlers:
         a detailed template that reads like a research assistant finding,
         not a task log.
         """
-        return self._build_natural_assistant_message(task=task, workspace=workspace)
+        body = self._build_natural_assistant_message(task=task, workspace=workspace).strip()
+        prefix = f"已完成本轮研究任务：{task.topic}"
+        if body.startswith(prefix):
+            return body
+        return f"{prefix}\n{body}"
 
     def _build_natural_assistant_message(self, *, task, workspace) -> str:
         """Generate a natural-language research assistant response.
@@ -539,3 +545,29 @@ class ProductApiHandlers:
                 "- 建议：可以调整追问范围、切换模式，或稍后重试。",
             ]
         )
+
+    @staticmethod
+    def _extract_knowledge_hints(knowledge_context: list[str]) -> list[str]:
+        hints: list[str] = []
+        seen = set()
+        for item in knowledge_context:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if ":" in text:
+                title_part = text.split(":", 1)[0]
+            else:
+                title_part = text
+            title_part = title_part.replace("[Knowledge]", "").strip()
+            if "]" in title_part:
+                title_part = title_part.split("]", 1)[-1].strip()
+            if not title_part:
+                continue
+            normalized = title_part.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            hints.append(title_part[:80])
+            if len(hints) >= 2:
+                break
+        return hints

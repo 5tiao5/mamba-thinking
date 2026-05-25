@@ -77,6 +77,7 @@ class ResearchService:
         base_topic: str,
         latest_message_content: str,
         focus: str | None = None,
+        knowledge_hints: list[str] | None = None,
         mode: str = "default",
         trigger_message_id: str | None = None,
     ) -> ResearchTask:
@@ -91,6 +92,7 @@ class ResearchService:
             base_topic=base_topic,
             latest_message_content=latest_message_content,
             focus=focus,
+            knowledge_hints=knowledge_hints,
         )
         return self.create_task(
             conversation_id=conversation_id,
@@ -167,12 +169,23 @@ class ResearchService:
         base_topic: str,
         latest_message_content: str,
         focus: str | None = None,
+        knowledge_hints: list[str] | None = None,
     ) -> str:
         focus_text = (focus or "").strip()
         if focus_text:
-            return f"{base_topic} - focus on {focus_text}"
+            topic = f"{base_topic} - focus on {focus_text}"
+        else:
+            snippet = " ".join(latest_message_content.strip().split())
+            if not snippet:
+                topic = base_topic
+            else:
+                topic = f"{base_topic} - follow up: {snippet[:80]}"
 
-        snippet = " ".join(latest_message_content.strip().split())
-        if not snippet:
-            return base_topic
-        return f"{base_topic} - follow up: {snippet[:80]}"
+        compact_hints = [hint.strip() for hint in (knowledge_hints or []) if hint and hint.strip()]
+        if not compact_hints:
+            return topic
+
+        hint_text = "; ".join(compact_hints[:2])
+        if len(hint_text) > 120:
+            hint_text = f"{hint_text[:117]}..."
+        return f"{topic} - informed by {hint_text}"

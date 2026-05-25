@@ -154,3 +154,52 @@ npm run dev
 ## 当前状态一句话总结
 
 **它已经是一套可运行、可分工、可继续长大的工程基线，可以进入下一阶段的多人并行开发。**
+
+## 前端分支同步提醒
+
+如果前端同学当前在单独的前端分支上继续开发，请先同步本轮后端改动，再继续做页面与交互。
+
+这轮后端已经升级了 `workspace / taxonomy / evidence_status` 的返回结构，前端如果继续使用旧 mock 数据或旧类型，很容易出现：
+
+- `npm run build` 失败
+- taxonomy 区域字段缺失
+- evidence-insufficient 模式展示不完整
+- workspace 组件读取旧字段导致显示异常
+
+前端同学同步分支后，优先检查这些文件：
+
+1. [api.ts](/D:/iteration_two-master/iteration_two-master/product_agent/ui/src/types/api.ts)
+2. [demoData.ts](/D:/iteration_two-master/iteration_two-master/product_agent/ui/src/lib/demoData.ts)
+3. [WorkspacePage.tsx](/D:/iteration_two-master/iteration_two-master/product_agent/ui/src/pages/WorkspacePage.tsx)
+4. [WorkspaceTaxonomyRail.tsx](/D:/iteration_two-master/iteration_two-master/product_agent/ui/src/components/workspace/WorkspaceTaxonomyRail.tsx)
+5. [WorkspaceTaxonomyMap.tsx](/D:/iteration_two-master/iteration_two-master/product_agent/ui/src/components/workspace/WorkspaceTaxonomyMap.tsx)
+
+这轮前端需要重点适配的字段包括：
+
+- `WorkspaceTaxonomyBranch.evidence_tier`
+- `WorkspaceTaxonomyBranch.branch_confidence`
+- `WorkspaceTaxonomyBranch.matched_paper_ids`
+- `WorkspaceTaxonomyBranch.matched_gap_ids`
+- `taxonomy.coverage[branch_id].evidence_tier`
+- `workspace.evidence_status.*`
+
+## .env 放置位置
+
+后端现在会自动读取仓库内的 `.env` 文件，正确位置是：
+
+- [product_agent/.env](/D:/iteration_two-master/iteration_two-master/product_agent/.env)
+
+不是外层目录，也不是 `ui/` 目录。
+
+建议组员第一次启动前，先在 `product_agent/` 目录里执行：
+
+```powershell
+cd D:\iteration_two-master\iteration_two-master\product_agent
+Copy-Item .env.example .env
+```
+
+然后把自己的 API key 填进去，再启动后端：
+
+```powershell
+python .\start_backend.py
+```
