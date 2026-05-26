@@ -72,6 +72,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     def get_conversation(conversation_id: str = Path(..., description="会话 ID")):
         return handlers.get_conversation(conversation_id).model_dump()
 
+    @app.delete("/conversations/{conversation_id}")
+    def delete_conversation(conversation_id: str = Path(..., description="会话 ID")):
+        return handlers.delete_conversation(conversation_id).model_dump()
+
     @app.get("/conversations/{conversation_id}/workspace")
     def get_conversation_workspace(conversation_id: str = Path(..., description="浼氳瘽 ID")):
         return handlers.get_conversation_workspace(conversation_id).model_dump()

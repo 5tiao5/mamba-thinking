@@ -324,10 +324,44 @@
   overflow: hidden;
 }
 
+.taxonomy-map-card-expanded {
+  position: fixed;
+  inset: 24px;
+  z-index: 80;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.taxonomy-map-card-expanded::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: rgba(15, 23, 42, 0.24);
+}
+
+.taxonomy-map-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 10px 0;
+}
+
 .taxonomy-map {
+  cursor: zoom-in;
   width: 100%;
   min-height: 520px;
   display: block;
+}
+
+.taxonomy-map-card-expanded .taxonomy-map {
+  cursor: default;
+  min-height: min(76vh, 820px);
 }
 
 .taxonomy-map-root {
@@ -476,6 +510,27 @@
   gap: 12px;
 }
 
+.graph-canvas-card-expanded {
+  position: fixed;
+  inset: 24px;
+  z-index: 80;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.graph-canvas-card-expanded::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: rgba(15, 23, 42, 0.24);
+}
+
 .graph-legend {
   display: flex;
   flex-wrap: wrap;
@@ -545,6 +600,7 @@
 }
 
 .graph-canvas-wrap {
+  cursor: zoom-in;
   border: 1px solid #e3edf9;
   border-radius: 12px;
   background:
@@ -553,10 +609,18 @@
   overflow: hidden;
 }
 
+.graph-canvas-card-expanded .graph-canvas-wrap {
+  cursor: default;
+}
+
 .graph-canvas {
   width: 100%;
   min-height: 380px;
   display: block;
+}
+
+.graph-canvas-card-expanded .graph-canvas {
+  min-height: min(72vh, 760px);
 }
 
 .graph-node-group {

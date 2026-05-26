@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List
 
-from product_agent.research_agent.models import EvolutionEdge, PaperNode
 from product_agent.schemas.audit import AuditGap, AuditReport, AuditResult
 
 from .audit_common import (
@@ -14,6 +13,9 @@ from .audit_common import (
     keyword_overlap,
     paper_search_text,
 )
+
+if TYPE_CHECKING:
+    from product_agent.research_agent.models import EvolutionEdge, PaperNode
 
 
 class GraphAuditService:
@@ -134,7 +136,8 @@ class GraphAuditService:
                     )
 
         for paper in papers.values():
-            for ref_id in paper.references:
+            references = getattr(paper, "references", []) or []
+            for ref_id in references:
                 if ref_id in papers and (ref_id, paper.paper_id) not in existing_pairs:
                     total_checks += 1
                     failed_checks += 1
@@ -159,14 +162,15 @@ class GraphAuditService:
                         )
                     )
 
-            if paper.confidence_score and paper.confidence_score < LOW_CONFIDENCE_THRESHOLD:
+            confidence_score = getattr(paper, "confidence_score", 1.0)
+            if confidence_score and confidence_score < LOW_CONFIDENCE_THRESHOLD:
                 total_checks += 1
                 failed_checks += 1
                 reports.append(
                     AuditReport(
                         type="graph",
                         severity="warning",
-                        description=f"Paper {paper.paper_id} has low confidence_score={paper.confidence_score:.2f}.",
+                        description=f"Paper {paper.paper_id} has low confidence_score={confidence_score:.2f}.",
                         affected_items=[paper.paper_id],
                         suggestion="Review paper quality.",
                     )

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { cleanDisplayText } from "../../lib/displayText";
 import type { WorkspaceGraphEdge, WorkspacePaper } from "../../types/api";
 import { categoryTone, relationshipTone, shortPaperLabel } from "./workspaceFormatters";
 
@@ -77,6 +78,7 @@ function wrapTitle(title: string, maxCharsPerLine = 14, maxLines = 2) {
 export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanvasProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [activeRelationships, setActiveRelationships] = useState<string[]>([]);
+  const [graphExpanded, setGraphExpanded] = useState(false);
 
   const { nodes, edgesByNode, relationshipStats, categoryStats } = useMemo(() => {
     const ids = uniqueNodeIds(graphEdges);
@@ -98,10 +100,10 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
       const angle = (Math.PI * 2 * index) / Math.max(ids.length, 1) - Math.PI / 2;
       return {
         id,
-        title: shortPaperLabel(id, papers),
-        fullTitle: matchedPaper?.title?.trim() || id,
+        title: cleanDisplayText(shortPaperLabel(id, papers), 80),
+        fullTitle: cleanDisplayText(matchedPaper?.title?.trim() || id, 180),
         subtitle: matchedPaper?.paper_id ?? id,
-        category: matchedPaper?.taxonomy_category || "Uncategorized",
+        category: cleanDisplayText(matchedPaper?.taxonomy_category, 80) || "Uncategorized",
         x: cx + Math.cos(angle) * radiusX,
         y: cy + Math.sin(angle) * radiusY,
         degree: degreeMap.get(id) ?? 0,
@@ -113,7 +115,8 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
     const categoryCounter = new Map<string, number>();
 
     for (const edge of graphEdges) {
-      relationshipCounter.set(edge.relationship, (relationshipCounter.get(edge.relationship) ?? 0) + 1);
+      const relationship = cleanDisplayText(edge.relationship, 80);
+      relationshipCounter.set(relationship, (relationshipCounter.get(relationship) ?? 0) + 1);
       nodeEdges.set(edge.source, [...(nodeEdges.get(edge.source) ?? []), edge]);
       nodeEdges.set(edge.target, [...(nodeEdges.get(edge.target) ?? []), edge]);
     }
@@ -137,7 +140,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
         if (!visibleRelationships) {
           return true;
         }
-        return visibleRelationships.has(edge.relationship);
+        return visibleRelationships.has(cleanDisplayText(edge.relationship, 80));
       }),
     [graphEdges, visibleRelationships]
   );
@@ -145,7 +148,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0];
   const selectedEdges = selectedNode
     ? (edgesByNode.get(selectedNode.id) ?? []).filter((edge) =>
-        visibleRelationships ? visibleRelationships.has(edge.relationship) : true
+        visibleRelationships ? visibleRelationships.has(cleanDisplayText(edge.relationship, 80)) : true
       )
     : [];
 
@@ -166,8 +169,17 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
   }
 
   return (
-    <div className="graph-canvas-card">
+    <div className={graphExpanded ? "graph-canvas-card graph-canvas-card-expanded" : "graph-canvas-card"}>
       <div className="graph-legend">
+        {graphExpanded ? (
+          <button className="graph-reset-button" onClick={() => setGraphExpanded(false)} type="button">
+            关闭放大
+          </button>
+        ) : (
+          <button className="graph-reset-button" onClick={() => setGraphExpanded(true)} type="button">
+            放大查看
+          </button>
+        )}
         {relationshipStats.map(([relationship, count]) => (
           <button
             className={
@@ -202,7 +214,18 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
         })}
       </div>
 
-      <div className="graph-canvas-wrap">
+      <div
+        className="graph-canvas-wrap"
+        onClick={() => setGraphExpanded(true)}
+        role="button"
+        tabIndex={0}
+        title="单击放大演进图"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            setGraphExpanded(true);
+          }
+        }}
+      >
         <svg className="graph-canvas" viewBox="0 0 820 380">
           <defs>
             <marker
@@ -233,7 +256,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
                 key={`${edge.source}-${edge.target}-${index}`}
                 markerEnd="url(#workspace-graph-arrow)"
                 opacity={active ? 1 : 0.45}
-                stroke={relationshipTone(edge.relationship)}
+                stroke={relationshipTone(cleanDisplayText(edge.relationship, 80))}
                 strokeWidth={active ? 2.6 : 1.5}
               />
             );
@@ -281,11 +304,11 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
             {selectedEdges.length ? (
               selectedEdges.map((edge, index) => (
                 <div className="graph-node-detail-item" key={`${edge.source}-${edge.target}-${index}`}>
-                  <strong>{edge.relationship}</strong>
+                  <strong>{cleanDisplayText(edge.relationship, 80)}</strong>
                   <span>
-                    {edge.source} → {edge.target}
+                    {cleanDisplayText(edge.source, 80)} {"->"} {cleanDisplayText(edge.target, 80)}
                   </span>
-                  {edge.reasoning ? <small>{edge.reasoning}</small> : null}
+                  {edge.reasoning ? <small>{cleanDisplayText(edge.reasoning)}</small> : null}
                 </div>
               ))
             ) : (

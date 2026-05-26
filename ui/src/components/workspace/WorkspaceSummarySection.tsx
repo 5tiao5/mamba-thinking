@@ -1,4 +1,5 @@
 import type { WorkspaceEvidenceStatus } from "../../types/api";
+import { cleanDisplayText } from "../../lib/displayText";
 import { StatusPill } from "../ui/StatusPill";
 
 type WorkspaceSummarySectionProps = {
@@ -22,7 +23,7 @@ function formatScore(score: number) {
 }
 
 function cleanSummaryText(summary: string) {
-  return summary
+  return cleanDisplayText(summary)
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/\*\*/g, "")
     .replace(/^\s*[-*]\s+/gm, "• ")
@@ -47,7 +48,7 @@ export function WorkspaceSummarySection({
     <section className="workspace-hero surface">
       <div className="workspace-hero-main">
         <div className="section-eyebrow">Research Overview</div>
-        <h1 className="workspace-hero-title">{topic || "未加载研究主题"}</h1>
+        <h1 className="workspace-hero-title">{cleanDisplayText(topic, 160) || "Research topic"}</h1>
         <div className="workspace-hero-summary">
           {summary ? cleanSummaryText(summary) : "运行任务后，这里会汇总本轮分析的核心结论。"}
         </div>
@@ -57,13 +58,13 @@ export function WorkspaceSummarySection({
             {priorityNote ? (
               <div className="workspace-note-card">
                 <div className="workspace-note-label">优先关注</div>
-                <div>{priorityNote}</div>
+                <div>{cleanDisplayText(priorityNote)}</div>
               </div>
             ) : null}
             {recommendation ? (
               <div className="workspace-note-card workspace-note-card-accent">
                 <div className="workspace-note-label">建议动作</div>
-                <div>{recommendation}</div>
+                <div>{cleanDisplayText(recommendation)}</div>
               </div>
             ) : null}
           </div>
@@ -95,9 +96,9 @@ export function WorkspaceSummarySection({
             证据不足模式
           </StatusPill>
           <span>
-            {evidenceStatus?.message}
+            {cleanDisplayText(evidenceStatus?.message)}
             {evidenceStatus?.candidate_branches?.length
-              ? ` 当前更适合把 ${evidenceStatus.candidate_branches.join(" / ")} 当作候选研究分支，而不是直接展示完整 taxonomy。`
+              ? ` Candidate branches: ${evidenceStatus.candidate_branches.map((item) => cleanDisplayText(item, 80)).filter(Boolean).join(" / ")}.`
               : ""}
           </span>
         </div>
@@ -110,6 +111,27 @@ export function WorkspaceSummarySection({
             当前结果包含保底论文，说明外部检索证据不足。系统先用种子论文维持
             taxonomy 与 gap 分析链路，后续仍建议继续补充真实论文。
           </span>
+        </div>
+      ) : null}
+
+      {evidenceStatus ? (
+        <div className="workspace-evidence-detail">
+          <div>
+            <span>真实论文</span>
+            <strong>{evidenceStatus.real_paper_count}</strong>
+          </div>
+          <div>
+            <span>回退论文</span>
+            <strong>{evidenceStatus.fallback_paper_count}</strong>
+          </div>
+          <div>
+            <span>回退比例</span>
+            <strong>{Math.round(evidenceStatus.fallback_ratio * 100)}%</strong>
+          </div>
+          <div>
+            <span>覆盖分支</span>
+            <strong>{evidenceStatus.covered_branch_count}</strong>
+          </div>
         </div>
       ) : null}
     </section>

@@ -1,4 +1,5 @@
 import { SectionHeader } from "../ui/SectionHeader";
+import { cleanDisplayText } from "../../lib/displayText";
 import type { WorkspacePaper } from "../../types/api";
 
 type WorkspaceEvidenceBoardProps = {
@@ -24,7 +25,7 @@ function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
     <div className="content-grid">
       <div>
         <div className="section-eyebrow">当前选中</div>
-        <div className="insight-title">{paper.title}</div>
+        <div className="insight-title">{cleanDisplayText(paper.title, 180)}</div>
       </div>
       <div className="workspace-paper-meta-grid">
         <div className="workspace-paper-meta-item">
@@ -41,7 +42,7 @@ function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
         </div>
         <div className="workspace-paper-meta-item">
           <span>分类</span>
-          <strong>{paper.taxonomy_category || "未分类"}</strong>
+          <strong>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</strong>
         </div>
       </div>
       {paper.url ? (
@@ -85,11 +86,11 @@ export function WorkspaceEvidenceBoard({
                     onClick={() => onSelectPaper(paper.paper_id)}
                   >
                     <td>
-                      <div className="table-title">{paper.title}</div>
+                      <div className="table-title">{cleanDisplayText(paper.title, 180)}</div>
                     </td>
                     <td>{sourceLabel(paper.source)}</td>
                     <td>{paper.publish_date || "-"}</td>
-                    <td>{paper.taxonomy_category || "未分类"}</td>
+                    <td>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</td>
                     <td>{paper.citation_count}</td>
                     <td>
                       {paper.url ? (

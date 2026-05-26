@@ -29,6 +29,12 @@ class InMemoryConversationRepository:
         items = sorted(self._items.values(), key=lambda item: item.updated_at, reverse=True)
         return [deepcopy(item) for item in items]
 
+    def delete(self, conversation_id: str) -> bool:
+        if conversation_id not in self._items:
+            return False
+        del self._items[conversation_id]
+        return True
+
 
 class InMemoryMessageRepository:
     """开发期消息链路的内存实现。"""
@@ -47,6 +53,15 @@ class InMemoryMessageRepository:
         message_ids = self._conversation_index.get(conversation_id, [])
         items = [self._items[message_id] for message_id in message_ids if message_id in self._items]
         return [deepcopy(item) for item in items]
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
+        message_ids = self._conversation_index.pop(conversation_id, [])
+        deleted = 0
+        for message_id in message_ids:
+            if message_id in self._items:
+                del self._items[message_id]
+                deleted += 1
+        return deleted
 
 
 class InMemoryResearchTaskRepository:
@@ -71,6 +86,12 @@ class InMemoryResearchTaskRepository:
         items = sorted(self._items.values(), key=lambda item: item.updated_at, reverse=True)
         return [deepcopy(item) for item in items]
 
+    def delete_by_conversation(self, conversation_id: str) -> list[str]:
+        task_ids = [task_id for task_id, task in self._items.items() if task.conversation_id == conversation_id]
+        for task_id in task_ids:
+            del self._items[task_id]
+        return task_ids
+
 
 class InMemoryWorkspaceRepository:
     def __init__(self) -> None:
@@ -84,6 +105,14 @@ class InMemoryWorkspaceRepository:
     def get_by_task(self, task_id: str) -> ResearchWorkspace | None:
         item = self._items.get(task_id)
         return deepcopy(item) if item else None
+
+    def delete_by_task_ids(self, task_ids: list[str]) -> int:
+        deleted = 0
+        for task_id in task_ids:
+            if task_id in self._items:
+                del self._items[task_id]
+                deleted += 1
+        return deleted
 
 
 class InMemoryKnowledgeRepository:

@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List
 
 from product_agent.domain import GapRecord, PaperRecord, ResearchIdeaRecord, ResearchWorkspace
+from product_agent.services.text_cleaning import clean_internal_context_text
 from product_agent.services.taxonomy_grounding_service import ground_taxonomy
 
 
@@ -38,7 +39,7 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
 
     return ResearchWorkspace(
         task_id=task_id,
-        topic=topic,
+        topic=clean_internal_context_text(topic, max_length=180) or topic,
         summary=_build_workspace_summary(topic=topic, state=state),
         summary_payload=state.get("final_report_summary", {}),
         papers=papers,
@@ -53,6 +54,7 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
 
 
 def _build_workspace_summary(*, topic: str, state: Dict[str, Any]) -> str:
+    topic = clean_internal_context_text(topic, max_length=180) or topic
     summary_payload = state.get("final_report_summary", {}) or {}
     structured_summary = _summary_from_payload(topic=topic, summary_payload=summary_payload)
     if structured_summary:
@@ -76,7 +78,7 @@ def _build_workspace_summary(*, topic: str, state: Dict[str, Any]) -> str:
             break
 
     text = "\n\n".join(selected).strip() or cleaned_report.strip()
-    return text[:400].strip()
+    return clean_internal_context_text(text, max_length=400)
 
 
 def _summary_from_payload(*, topic: str, summary_payload: Dict[str, Any]) -> str:
@@ -125,7 +127,7 @@ def _summary_from_payload(*, topic: str, summary_payload: Dict[str, Any]) -> str
     if recommendation:
         lines.append("建议：" + recommendation)
 
-    return "\n".join(line for line in lines if line).strip()
+    return clean_internal_context_text("\n".join(line for line in lines if line).strip(), max_length=600)
 
 
 def _strip_report_noise(report_text: str) -> str:
@@ -142,7 +144,7 @@ def _strip_report_noise(report_text: str) -> str:
         flags=re.IGNORECASE,
     )
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return clean_internal_context_text(text.strip())
 
 
 def _map_paper(paper: Any) -> PaperRecord:

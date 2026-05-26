@@ -5,6 +5,7 @@ import type {
   WorkspaceSnapshot,
   WorkspaceTaxonomyBranch,
 } from "../../types/api";
+import { cleanDisplayText } from "../../lib/displayText";
 import {
   coverageExplanation,
   coverageLabel,
@@ -138,7 +139,7 @@ export function WorkspaceTaxonomyRail({
                 <div className="section-eyebrow">Candidate branches</div>
                 <div className="taxonomy-detail-title">当前不展示完整 taxonomy 图</div>
                 <div className="taxonomy-detail-copy">
-                  {evidenceStatus?.message ||
+                  {cleanDisplayText(evidenceStatus?.message) ||
                     "当前真实论文证据过薄，这一轮更适合先展示候选研究分支与补证建议。"}
                 </div>
 
@@ -148,7 +149,7 @@ export function WorkspaceTaxonomyRail({
                     <div className="taxonomy-chip-wrap">
                       {evidenceStatus.candidate_branches.map((branchName) => (
                         <span className="taxonomy-chip taxonomy-chip-warning" key={branchName}>
-                          {branchName}
+                          {cleanDisplayText(branchName, 80)}
                         </span>
                       ))}
                     </div>
@@ -189,14 +190,14 @@ export function WorkspaceTaxonomyRail({
               {selectedBranch ? (
                 <div className="taxonomy-detail-card">
                   <div className="section-eyebrow">Current branch</div>
-                  <div className="taxonomy-detail-title">{selectedHeading}</div>
+                  <div className="taxonomy-detail-title">{cleanDisplayText(selectedHeading, 120)}</div>
                   {selectedHeading !== selectedEnglishLabel ? (
                     <div className="taxonomy-detail-english">
-                      {selectedEnglishLabel}
+                      {cleanDisplayText(selectedEnglishLabel, 120)}
                     </div>
                   ) : null}
                   <div className="taxonomy-detail-copy">
-                    {selectedBranch.description || "当前分支暂时没有补充说明。"}
+                    {cleanDisplayText(selectedBranch.description) || "当前分支暂时没有补充说明。"}
                   </div>
 
                   <div className="taxonomy-detail-stats">
@@ -211,6 +212,14 @@ export function WorkspaceTaxonomyRail({
                     <div className="taxonomy-stat">
                       <span>Gap 数</span>
                       <strong>{selectedCoverage?.gap_count ?? 0}</strong>
+                    </div>
+                    <div className="taxonomy-stat">
+                      <span>匹配论文</span>
+                      <strong>{selectedCoverage?.matched_paper_ids?.length ?? selectedBranch.matched_paper_ids?.length ?? 0}</strong>
+                    </div>
+                    <div className="taxonomy-stat">
+                      <span>匹配 Gap</span>
+                      <strong>{selectedCoverage?.matched_gap_ids?.length ?? selectedBranch.matched_gap_ids?.length ?? 0}</strong>
                     </div>
                     <div className="taxonomy-stat">
                       <span>证据等级</span>
@@ -245,7 +254,7 @@ export function WorkspaceTaxonomyRail({
                     <div className="taxonomy-chip-wrap">
                       {selectedBranch.required_concepts.map((concept) => (
                         <span className="taxonomy-chip" key={concept}>
-                          {concept}
+                          {cleanDisplayText(concept, 80)}
                         </span>
                       ))}
                     </div>
@@ -258,11 +267,11 @@ export function WorkspaceTaxonomyRail({
                     <div className="taxonomy-evidence-list">
                       {papers.map((paper) => (
                         <article className="taxonomy-evidence-item" key={paper.paper_id}>
-                          <div className="taxonomy-evidence-title">{paper.title}</div>
+                          <div className="taxonomy-evidence-title">{cleanDisplayText(paper.title, 160)}</div>
                           <div className="taxonomy-evidence-meta">
                             <span>{paper.paper_id}</span>
                             <span>{sourceLabel(paper.source)}</span>
-                            <span>{paper.taxonomy_category || "未分类"}</span>
+                            <span>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</span>
                             <span>{paper.publish_date || "-"}</span>
                           </div>
                         </article>

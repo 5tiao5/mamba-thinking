@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { WorkspaceEvidenceBoard } from "../components/workspace/WorkspaceEvidenceBoard";
 import { WorkspaceInsightsPanel } from "../components/workspace/WorkspaceInsightsPanel";
 import { WorkspaceSummarySection } from "../components/workspace/WorkspaceSummarySection";
 import { WorkspaceTaxonomyRail } from "../components/workspace/WorkspaceTaxonomyRail";
 import { api, toErrorMessage } from "../lib/api";
+import { DEMO_CONVERSATION_ID, DEMO_WORKSPACE_TASK_ID } from "../lib/demoData";
 import type { ResearchTaskDetailItem, WorkspacePaper, WorkspaceSnapshot } from "../types/api";
 
 function taskStatusMessage(task: ResearchTaskDetailItem) {
@@ -22,9 +23,12 @@ function taskStatusMessage(task: ResearchTaskDetailItem) {
 }
 
 export function WorkspacePage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const taskIdFromQuery = searchParams.get("task_id") ?? "";
+  const conversationIdFromQuery = searchParams.get("conversation_id") ?? "";
   const [taskId, setTaskId] = useState(taskIdFromQuery);
+  const [conversationId, setConversationId] = useState(conversationIdFromQuery);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [status, setStatus] = useState("从对话页或首页进入任务后，可以运行分析或读取工作台。");
   const [loading, setLoading] = useState(false);
@@ -123,6 +127,16 @@ export function WorkspacePage() {
       setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
       setStatus("工作台已加载。");
       setSearchParams({ task_id: trimmedId });
+      if (trimmedId === DEMO_WORKSPACE_TASK_ID) {
+        setConversationId(DEMO_CONVERSATION_ID);
+      } else {
+        try {
+          const taskResponse = await api.getTask(trimmedId);
+          setConversationId(taskResponse.data.conversation_id);
+        } catch {
+          setConversationId("");
+        }
+      }
     } catch (error) {
       setWorkspace(null);
       setSelectedPaperId("");
@@ -163,6 +177,39 @@ export function WorkspacePage() {
     }
   }
 
+  async function handleLoadConversationWorkspace() {
+    const targetConversationId = conversationId || conversationIdFromQuery;
+    if (!targetConversationId) {
+      setStatus("当前任务还没有关联到会话，无法读取本研究总览。");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("正在读取本研究总览...");
+    try {
+      const response = await api.getConversationWorkspace(targetConversationId);
+      setWorkspace(response.data);
+      setSelectedCategory("all");
+      setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
+      setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
+      setStatus("本研究总览已加载。");
+      setSearchParams({ conversation_id: targetConversationId, task_id: taskId });
+    } catch (error) {
+      setStatus(`读取本研究总览失败：${toErrorMessage(error)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleCloseWorkspace() {
+    const targetConversationId = conversationId || conversationIdFromQuery;
+    if (targetConversationId) {
+      navigate(`/conversation?conversation_id=${encodeURIComponent(targetConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      return;
+    }
+    navigate("/conversation");
+  }
+
   return (
     <div className="dense-layout">
       <section className="surface content-pad">
@@ -177,6 +224,12 @@ export function WorkspacePage() {
             />
           </label>
           <div className="button-row">
+            <button className="secondary-button" onClick={handleCloseWorkspace} type="button">
+              关闭完整工作台
+            </button>
+            <button className="secondary-button" disabled={loading || !conversationId} onClick={handleLoadConversationWorkspace} type="button">
+              读取本研究总览
+            </button>
             <button className="primary-button" disabled={running} onClick={handleRunTask} type="button">
               {running ? "运行中" : "运行任务"}
             </button>

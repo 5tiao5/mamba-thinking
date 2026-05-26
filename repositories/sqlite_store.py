@@ -101,6 +101,15 @@ class SQLiteConversationRepository:
             ).fetchall()
         return [self._row_to_entity(row) for row in rows]
 
+    def delete(self, conversation_id: str) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
     @staticmethod
     def _row_to_entity(row) -> Conversation:
         return Conversation(
@@ -150,6 +159,15 @@ class SQLiteMessageRepository:
                 (conversation_id,),
             ).fetchall()
         return [self._row_to_entity(row) for row in rows]
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM messages WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            connection.commit()
+        return cursor.rowcount
 
     @staticmethod
     def _row_to_entity(row) -> MessageRecord:
@@ -230,6 +248,20 @@ class SQLiteResearchTaskRepository:
             ).fetchall()
         return [self._row_to_entity(row) for row in rows]
 
+    def delete_by_conversation(self, conversation_id: str) -> list[str]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT task_id FROM research_tasks WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchall()
+            task_ids = [str(row["task_id"]) for row in rows]
+            connection.execute(
+                "DELETE FROM research_tasks WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            connection.commit()
+        return task_ids
+
     @staticmethod
     def _row_to_entity(row) -> ResearchTask:
         return ResearchTask(
@@ -295,6 +327,18 @@ class SQLiteWorkspaceRepository:
         if row is None:
             return None
         return self._row_to_entity(row)
+
+    def delete_by_task_ids(self, task_ids: list[str]) -> int:
+        if not task_ids:
+            return 0
+        placeholders = ",".join("?" for _ in task_ids)
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                f"DELETE FROM workspaces WHERE task_id IN ({placeholders})",
+                tuple(task_ids),
+            )
+            connection.commit()
+        return cursor.rowcount
 
     @classmethod
     def _row_to_entity(cls, row) -> ResearchWorkspace:
