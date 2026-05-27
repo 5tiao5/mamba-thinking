@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { AssistantMessageContent } from "../components/chat/AssistantMessageContent";
 import { StatusPill } from "../components/ui/StatusPill";
 import { api, toErrorMessage } from "../lib/api";
 import { cleanDisplayText } from "../lib/displayText";
@@ -54,22 +55,23 @@ function getDisplayMessageContent(message: MessageItem) {
 export function ConversationPage() {
   const [searchParams] = useSearchParams();
   const conversationIdFromQuery = searchParams.get("conversation_id") ?? "";
-  const [conversationId, setConversationId] = useState(conversationIdFromQuery);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [status, setStatus] = useState("从左侧选择历史会话，或在右侧直接追问。");
   const [loadingMessages, setLoadingMessages] = useState(false);
 
   useEffect(() => {
     if (conversationIdFromQuery) {
-      setConversationId(conversationIdFromQuery);
       void loadMessages(conversationIdFromQuery);
+      return;
     }
+    setMessages([]);
+    setStatus("请先从左侧选择或新建一个研究。");
   }, [conversationIdFromQuery]);
 
-  async function loadMessages(targetId = conversationId) {
+  async function loadMessages(targetId = conversationIdFromQuery) {
     const trimmedId = targetId.trim();
     if (!trimmedId) {
-      setStatus("请先从首页创建或选择一个会话。");
+      setStatus("请先从左侧选择或新建一个研究。");
       return;
     }
 
@@ -91,18 +93,12 @@ export function ConversationPage() {
     <div className="simple-page conversation-simple conversation-results-only">
       <section className="simple-hero simple-hero-compact">
         <div>
-          <div className="section-eyebrow">Conversation</div>
-          <h1>对话结果</h1>
-          <p>这里保留你真正需要阅读的内容。新的追问统一在右侧窗口完成。</p>
+          <div className="section-eyebrow">研究对话</div>
+          <h1>研究对话</h1>
+          <p>这里保留当前研究中的问题、回答和结果入口。新的追问统一在研究窗口完成。</p>
         </div>
         <div className="simple-context-input">
-          <input
-            className="input"
-            onChange={(event) => setConversationId(event.target.value)}
-            placeholder="conversation_id"
-            value={conversationId}
-          />
-          <button className="secondary-button" disabled={loadingMessages} onClick={() => loadMessages()} type="button">
+          <button className="secondary-button" disabled={loadingMessages || !conversationIdFromQuery} onClick={() => loadMessages()} type="button">
             {loadingMessages ? "加载中" : "加载消息"}
           </button>
         </div>
@@ -136,7 +132,11 @@ export function ConversationPage() {
                   <span>{formatTime(message.created_at)}</span>
                 </div>
                 <div className="message-body">
-                  <div>{getDisplayMessageContent(message)}</div>
+                  {message.role === "assistant" ? (
+                    <AssistantMessageContent content={getDisplayMessageContent(message)} />
+                  ) : (
+                    <div>{getDisplayMessageContent(message)}</div>
+                  )}
                   {message.role === "assistant" && getMessageTaskId(message) ? (
                     <div className="message-task-actions">
                       {getMessageTaskStatus(message) ? (

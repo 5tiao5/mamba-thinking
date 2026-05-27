@@ -1,9 +1,10 @@
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type PropsWithChildren } from "react";
+import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
 
 import { api, toErrorMessage } from "../../lib/api";
 import { DEMO_CONVERSATION_ID, DEMO_WORKSPACE_TASK_ID } from "../../lib/demoData";
 import { cleanDisplayText } from "../../lib/displayText";
+import { compactText, formatShortTime, taskStatusLabel, taskStatusTone } from "../../lib/productText";
 import type {
   ConversationSummaryItem,
   CreateKnowledgeDocumentPayload,
@@ -15,31 +16,13 @@ import type {
   ToolItem,
   WorkspaceSnapshot,
 } from "../../types/api";
+import { AssistantMessageContent } from "../chat/AssistantMessageContent";
 import { StatusPill } from "../ui/StatusPill";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 
-function formatShortTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-function taskStatusTone(status?: string): "neutral" | "info" | "success" | "warning" | "danger" {
-  if (status === "completed") return "success";
-  if (status === "running") return "info";
-  if (status === "failed") return "danger";
-  if (status === "created") return "warning";
-  return "neutral";
-}
-
-function compactText(value: string, maxLength = 260) {
-  const text = value.replace(/\s+/g, " ").trim();
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, maxLength)}...`;
+function knowledgeMetadata(document: KnowledgeDocumentItem, key: string) {
+  const value = document.metadata?.[key];
+  return typeof value === "string" ? value : "";
 }
 
 export function AppShell({ children }: PropsWithChildren) {
@@ -73,11 +56,13 @@ export function AppShell({ children }: PropsWithChildren) {
     title: "",
     content: "",
     tags: [],
+    source_url: "",
+    notes: "",
   });
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState("选择左侧研究后，可以生成并查看简略结果。");
-  const [resultPanePercent, setResultPanePercent] = useState(44);
+  const [resultSummaryOpen, setResultSummaryOpen] = useState(false);
 
   const isSettingsPage = location.pathname === "/settings";
   const usesUnifiedResearchWindow = location.pathname === "/" || location.pathname === "/conversation";
@@ -184,6 +169,7 @@ export function AppShell({ children }: PropsWithChildren) {
     let cancelled = false;
     if (!activeTaskId) {
       setWorkspace(null);
+      setResultSummaryOpen(false);
       setWorkspaceStatus(activeConversationId ? "这个研究还没有生成结果，点击下方按钮开始生成。" : "先从左侧新建或选择一个研究。");
       return () => {
         cancelled = true;
@@ -196,11 +182,13 @@ export function AppShell({ children }: PropsWithChildren) {
       .then((response) => {
         if (cancelled) return;
         setWorkspace(response.data);
+        setResultSummaryOpen(false);
         setWorkspaceStatus("");
       })
       .catch(() => {
         if (cancelled) return;
         setWorkspace(null);
+        setResultSummaryOpen(false);
         setWorkspaceStatus("当前研究还没有可展示的结果，运行后会在这里显示。");
       });
 
@@ -341,12 +329,12 @@ export function AppShell({ children }: PropsWithChildren) {
     setToolDialogOpen(true);
     setToolDialogTab("tools");
     setToolsLoading(true);
-    setToolStatus("正在加载工具调用设置...");
+    setToolStatus("正在加载研究工具和能力...");
     try {
       const [toolResponse, skillResponse] = await Promise.all([api.listTools(), api.listSkills()]);
       setTools(toolResponse.data);
       setSkills(skillResponse.data);
-      setToolStatus("工具设置已同步。");
+      setToolStatus("研究工具已同步。");
     } catch (error) {
       setTools([]);
       setSkills([]);
@@ -354,6 +342,12 @@ export function AppShell({ children }: PropsWithChildren) {
     } finally {
       setToolsLoading(false);
     }
+  }
+
+  async function openKnowledgeDialog() {
+    setToolDialogOpen(true);
+    setToolDialogTab("knowledge");
+    await loadKnowledgeDocuments();
   }
 
   async function toggleTool(tool: ToolItem) {
@@ -385,7 +379,7 @@ export function AppShell({ children }: PropsWithChildren) {
         ? await api.searchKnowledge({ q: knowledgeQuery.trim(), by: "keyword", limit: 20 })
         : await api.listKnowledgeDocuments();
       setKnowledgeDocuments(response.data.items);
-      setToolStatus(knowledgeQuery.trim() ? `搜索到 ${response.data.items.length} 条知识。` : "知识库已同步。");
+      setToolStatus(knowledgeQuery.trim() ? `搜索到 ${response.data.items.length} 条资料。` : "资料库已同步。");
     } catch (error) {
       setToolStatus(`知识库加载失败：${toErrorMessage(error)}`);
     } finally {
@@ -406,10 +400,13 @@ export function AppShell({ children }: PropsWithChildren) {
         ...knowledgeDraft,
         title: knowledgeDraft.title.trim(),
         content: knowledgeDraft.content.trim(),
+        tags: knowledgeDraft.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [],
+        source_url: knowledgeDraft.source_url?.trim() || null,
+        notes: knowledgeDraft.notes?.trim() || null,
       });
       setKnowledgeDocuments((current) => [response.data, ...current]);
-      setKnowledgeDraft({ title: "", content: "", tags: [] });
-      setToolStatus("知识已导入，后续可用于检索和追问上下文。");
+      setKnowledgeDraft({ title: "", content: "", tags: [], source_url: "", notes: "" });
+      setToolStatus("资料已导入，后续研究会从资料库检索相关上下文。");
     } catch (error) {
       setToolStatus(`导入失败：${toErrorMessage(error)}`);
     } finally {
@@ -429,26 +426,6 @@ export function AppShell({ children }: PropsWithChildren) {
     } finally {
       setKnowledgeLoading(false);
     }
-  }
-
-  function startPaneResize(event: ReactPointerEvent<HTMLDivElement>) {
-    const container = event.currentTarget.parentElement;
-    if (!container) return;
-    const bounds = container.getBoundingClientRect();
-    event.currentTarget.setPointerCapture(event.pointerId);
-
-    function handlePointerMove(moveEvent: PointerEvent) {
-      const nextPercent = ((moveEvent.clientY - bounds.top) / bounds.height) * 100;
-      setResultPanePercent(Math.min(72, Math.max(24, nextPercent)));
-    }
-
-    function handlePointerUp() {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    }
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
   }
 
   const shouldShowGenerateButton = Boolean(activeConversationId && !workspace && !latestFollowUpTask);
@@ -477,6 +454,18 @@ export function AppShell({ children }: PropsWithChildren) {
           体验示例研究
         </Link>
 
+        <div className="sidebar-nav" aria-label="全局导航">
+          <Link className={location.pathname === "/history" ? "sidebar-nav-link sidebar-nav-active" : "sidebar-nav-link"} to="/history">
+            历史
+          </Link>
+          <button className="sidebar-nav-link" onClick={() => void openKnowledgeDialog()} type="button">
+            资料
+          </button>
+          <Link className={isSettingsPage ? "sidebar-nav-link sidebar-nav-active" : "sidebar-nav-link"} to="/settings">
+            设置
+          </Link>
+        </div>
+
         <div className="sidebar-section-title">研究记录</div>
         <div className="chat-history-list">
           {conversations.length ? (
@@ -501,7 +490,7 @@ export function AppShell({ children }: PropsWithChildren) {
                       <span>{formatShortTime(conversation.updated_at)}</span>
                       {latestTask ? (
                         <StatusPill tone={taskStatusTone(latestTask.status)} compact>
-                          {latestTask.status}
+                          {taskStatusLabel(latestTask.status)}
                         </StatusPill>
                       ) : null}
                     </div>
@@ -538,7 +527,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <section className="research-window">
             <header className="research-window-head">
               <div>
-                <div className="section-eyebrow">Research</div>
+                <div className="section-eyebrow">当前研究</div>
                 <h2>{activeConversation?.title || activeConversation?.topic || "选择一个研究"}</h2>
                 <p>{activeConversation?.topic || "左侧新建研究后，这里会成为唯一的结果生成与追问窗口。"}</p>
               </div>
@@ -561,58 +550,27 @@ export function AppShell({ children }: PropsWithChildren) {
               ) : null}
             </header>
 
-            <div
-              className="research-window-body"
-              style={{ "--result-pane-size": `${resultPanePercent}%` } as CSSProperties}
-            >
-              <section className="research-result-area">
-                {workspace ? (
-                  <>
-                    <div className="result-topic">{cleanDisplayText(workspace.topic, 160)}</div>
-                    <p className="result-brief-summary">{compactText(cleanDisplayText(workspace.summary), 360)}</p>
-                    <div className="result-directions" aria-label="科研方向">
-                      {workspaceDirections.map((direction) => (
-                        <span className="direction-chip" key={direction}>
-                          {direction}
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="research-empty-state">
-                    <strong>{workspaceStatus}</strong>
-                    {shouldShowGenerateButton ? (
-                      <button
-                        className="primary-button"
-                        disabled={Boolean(runningTaskId)}
-                        onClick={generateResearchResult}
-                        type="button"
-                      >
-                        {runningTaskId ? "生成中" : "生成研究结果"}
-                      </button>
-                    ) : null}
-                  </div>
-                )}
-              </section>
-
-              <div
-                className="pane-resizer"
-                onPointerDown={startPaneResize}
-                role="separator"
-                aria-label="调整结果和对话比例"
-                aria-orientation="horizontal"
-                title="拖动调整结果和对话比例"
-              >
-                <span />
-              </div>
-
+            <div className="research-window-body research-window-body-side">
               <section className="research-chat-area">
                 <div className="unified-message-list">
                   {messages.length ? (
                     messages.slice(-8).map((message) => (
                       <div className={`unified-message unified-message-${message.role}`} key={message.message_id}>
-                        <span>{message.role === "user" ? "你" : "智能体"}</span>
-                        <p>{cleanDisplayText(message.content)}</p>
+                        <div className={`message-avatar message-avatar-${message.role}`} aria-hidden="true">
+                          {message.role === "assistant" ? (
+                            "AI"
+                          ) : (
+                            "你"
+                          )}
+                        </div>
+                        <div className="unified-message-bubble">
+                          <span className="message-speaker">{message.role === "user" ? "你" : "智能体"}</span>
+                          {message.role === "assistant" ? (
+                            <AssistantMessageContent content={message.content} />
+                          ) : (
+                            <p>{cleanDisplayText(message.content)}</p>
+                          )}
+                        </div>
                       </div>
                     ))
                   ) : (
@@ -643,18 +601,28 @@ export function AppShell({ children }: PropsWithChildren) {
                     placeholder="对结果不满意就继续追问，例如：缩小到近两年论文，重新总结三个可做方向"
                     value={askContent}
                   />
-                <div className="unified-composer-footer">
+                  <div className="unified-composer-footer">
                     <div className="composer-left-tools">
                       <button
                         className="tool-icon-button"
                         onClick={openToolDialog}
-                        aria-label="工具调用设置"
-                        title="工具调用设置"
+                        aria-label="研究设置"
+                        title="研究设置"
                         type="button"
                       >
-                        ⚙
+                        <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                          <path d="M4 7h5" />
+                          <path d="M15 7h5" />
+                          <path d="M4 17h5" />
+                          <path d="M15 17h5" />
+                          <path d="M4 12h10" />
+                          <path d="M18 12h2" />
+                          <circle cx="12" cy="7" r="3" />
+                          <circle cx="12" cy="17" r="3" />
+                          <circle cx="16" cy="12" r="2" />
+                        </svg>
                       </button>
-                      <div className="workspace-side-status">{askStatus}</div>
+                      <div className="composer-status-text" role="status">{askStatus}</div>
                     </div>
                     <button
                       className="primary-button"
@@ -667,6 +635,97 @@ export function AppShell({ children }: PropsWithChildren) {
                   </div>
                 </div>
               </section>
+
+              <aside className="research-result-area" aria-label="研究结果摘要">
+                {workspace ? (
+                  resultSummaryOpen ? (
+                    <>
+                      <div className="result-summary-head">
+                        <div>
+                          <div className="section-eyebrow">本轮结果摘要</div>
+                          <div className="result-topic">{cleanDisplayText(workspace.topic, 160)}</div>
+                        </div>
+                        <button className="secondary-button" onClick={() => setResultSummaryOpen(false)} type="button">
+                          收起
+                        </button>
+                      </div>
+                      <p className="result-brief-summary">{compactText(cleanDisplayText(workspace.summary), 360)}</p>
+                      <div className="result-directions" aria-label="科研方向">
+                        {workspaceDirections.map((direction) => (
+                          <span className="direction-chip" key={direction}>
+                            {direction}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="result-metric-strip" aria-label="结果概览">
+                        <div>
+                          <span>论文</span>
+                          <strong>{workspace.papers.length}</strong>
+                        </div>
+                        <div>
+                          <span>空白</span>
+                          <strong>{workspace.gaps.length}</strong>
+                        </div>
+                        <div>
+                          <span>建议</span>
+                          <strong>{workspace.ideas.length}</strong>
+                        </div>
+                        <div>
+                          <span>匹配</span>
+                          <strong>{workspace.alignment_score.toFixed(2)}</strong>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="result-compact-copy">
+                        <span>本轮结果</span>
+                        <strong>{cleanDisplayText(workspace.topic, 120)}</strong>
+                      </div>
+                      <div className="result-compact-metrics" aria-label="结果概览">
+                        <span>论文 {workspace.papers.length}</span>
+                        <span>空白 {workspace.gaps.length}</span>
+                        <span>建议 {workspace.ideas.length}</span>
+                        <span>匹配度 {workspace.alignment_score.toFixed(2)}</span>
+                      </div>
+                      <button className="secondary-button" onClick={() => setResultSummaryOpen(true)} type="button">
+                        展开摘要
+                      </button>
+                      {workspaceDirections.length ? (
+                        <div className="result-side-hints">
+                          <span>可继续追问</span>
+                          <div>
+                            {workspaceDirections.slice(0, 5).map((direction) => (
+                              <button
+                                className="result-hint-chip"
+                                key={direction}
+                                onClick={() => setAskContent(`继续展开：${direction}`)}
+                                type="button"
+                              >
+                                {direction}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  )
+                ) : (
+                  <div className="research-empty-state">
+                    <strong>{workspaceStatus}</strong>
+                    {shouldShowGenerateButton ? (
+                      <button
+                        className="primary-button"
+                        disabled={Boolean(runningTaskId)}
+                        onClick={generateResearchResult}
+                        type="button"
+                      >
+                        {runningTaskId ? "生成中" : "生成研究结果"}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </aside>
             </div>
           </section>
         )}
@@ -677,7 +736,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <div className="create-dialog">
             <div className="create-dialog-head">
               <div>
-                <div className="section-eyebrow">New Research</div>
+                <div className="section-eyebrow">新建研究</div>
                 <h2>新建研究</h2>
               </div>
               <button className="ghost-button" onClick={() => setCreateDialogOpen(false)} type="button">
@@ -720,12 +779,12 @@ export function AppShell({ children }: PropsWithChildren) {
       ) : null}
 
       {toolDialogOpen ? (
-        <div className="modal-backdrop modal-backdrop-blur" role="dialog" aria-modal="true" aria-label="工具调用设置">
+        <div className="modal-backdrop modal-backdrop-blur" role="dialog" aria-modal="true" aria-label="研究设置">
           <div className="tool-dialog">
             <div className="create-dialog-head">
               <div>
-                <div className="section-eyebrow">Tools</div>
-                <h2>工具调用设置</h2>
+                <div className="section-eyebrow">研究设置</div>
+                <h2>研究设置</h2>
               </div>
               <button className="ghost-button" onClick={() => setToolDialogOpen(false)} type="button">
                 关闭
@@ -740,7 +799,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 onClick={() => setToolDialogTab("tools")}
                 type="button"
               >
-                工具
+                工具能力
               </button>
               <button
                 className={toolDialogTab === "knowledge" ? "tool-dialog-tab tool-dialog-tab-active" : "tool-dialog-tab"}
@@ -826,9 +885,9 @@ export function AppShell({ children }: PropsWithChildren) {
               <>
               <section className="tool-dialog-section">
                 <div className="tool-dialog-section-head">
-                  <strong>导入知识</strong>
+                  <strong>导入资料</strong>
                   <StatusPill tone={knowledgeLoading ? "neutral" : "info"} compact>
-                    {knowledgeLoading ? "同步中" : "Knowledge"}
+                    {knowledgeLoading ? "同步中" : "资料库"}
                   </StatusPill>
                 </div>
                 <div className="knowledge-form">
@@ -855,15 +914,29 @@ export function AppShell({ children }: PropsWithChildren) {
                     placeholder="标签，用逗号分隔，例如 tool-use,evaluation"
                     value={knowledgeDraft.tags?.join(",") ?? ""}
                   />
+                  <div className="knowledge-form-grid">
+                    <input
+                      className="input"
+                      onChange={(event) => setKnowledgeDraft((current) => ({ ...current, source_url: event.target.value }))}
+                      placeholder="来源链接，可选"
+                      value={knowledgeDraft.source_url ?? ""}
+                    />
+                    <input
+                      className="input"
+                      onChange={(event) => setKnowledgeDraft((current) => ({ ...current, notes: event.target.value }))}
+                      placeholder="备注，可选"
+                      value={knowledgeDraft.notes ?? ""}
+                    />
+                  </div>
                   <button className="primary-button" disabled={knowledgeLoading} onClick={createKnowledgeDocument} type="button">
-                    导入知识
+                    导入资料
                   </button>
                 </div>
               </section>
 
               <section className="tool-dialog-section">
                 <div className="tool-dialog-section-head">
-                  <strong>知识检索</strong>
+                  <strong>资料检索</strong>
                   <StatusPill tone="info" compact>
                     {knowledgeDocuments.length} 条
                   </StatusPill>
@@ -872,7 +945,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   <input
                     className="input"
                     onChange={(event) => setKnowledgeQuery(event.target.value)}
-                    placeholder="搜索关键词；留空则查看全部"
+                    placeholder="搜索关键词；留空查看全部资料"
                     value={knowledgeQuery}
                   />
                   <button className="secondary-button" disabled={knowledgeLoading} onClick={loadKnowledgeDocuments} type="button">
@@ -884,23 +957,34 @@ export function AppShell({ children }: PropsWithChildren) {
                     knowledgeDocuments.map((document) => (
                       <article className="knowledge-doc-card" key={document.document_id}>
                         <div>
-                          <strong>{document.title}</strong>
-                          <p>{document.content}</p>
-                          {document.tags.length ? <small>{document.tags.join(" / ")}</small> : null}
+                          <strong>{cleanDisplayText(document.title, 120)}</strong>
+                          <p>{compactText(cleanDisplayText(document.content), 220)}</p>
+                          <div className="knowledge-doc-meta">
+                            {document.tags.length ? <span>{document.tags.join(" / ")}</span> : null}
+                            {knowledgeMetadata(document, "notes") ? (
+                              <span>{cleanDisplayText(knowledgeMetadata(document, "notes"), 120)}</span>
+                            ) : null}
+                            {knowledgeMetadata(document, "source_url") ? (
+                              <a href={knowledgeMetadata(document, "source_url")} rel="noreferrer" target="_blank">
+                                来源
+                              </a>
+                            ) : null}
+                          </div>
                         </div>
                         <button
+                          aria-label="删除资料"
                           className="history-delete-button"
                           disabled={knowledgeLoading}
                           onClick={() => deleteKnowledgeDocument(document.document_id)}
-                          title="删除知识"
+                          title="删除资料"
                           type="button"
                         >
-                          ×
+                          x
                         </button>
                       </article>
                     ))
                   ) : (
-                    <div className="sidebar-empty">暂无知识文档。可以先导入一条论文摘要或调研笔记。</div>
+                    <div className="sidebar-empty">暂无资料。可以先导入一条论文摘要或调研笔记。</div>
                   )}
                 </div>
               </section>

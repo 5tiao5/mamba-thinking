@@ -54,7 +54,7 @@ export function WorkspaceTaxonomyMap({
   const [mapExpanded, setMapExpanded] = useState(false);
 
   if (!branches.length) {
-    return <div className="empty-state">当前没有可视化 taxonomy 结构。</div>;
+    return <div className="empty-state">当前没有可视化研究方向结构。</div>;
   }
 
   const width = 980;
@@ -89,7 +89,7 @@ export function WorkspaceTaxonomyMap({
         tabIndex={0}
         viewBox={`0 0 ${width} ${height}`}
       >
-        <title>单击放大 taxonomy</title>
+        <title>单击放大研究方向图</title>
         <g>
           <circle className="taxonomy-map-root" cx={centerX} cy={centerY} r="66" />
           <text
@@ -98,7 +98,7 @@ export function WorkspaceTaxonomyMap({
             x={centerX}
             y={centerY - 6}
           >
-            Taxonomy
+            方向图
           </text>
           <text
             className="taxonomy-map-root-subtitle"

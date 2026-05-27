@@ -97,32 +97,31 @@ export function WorkspaceInsightsPanel({
   return (
     <section className="workspace-insights-grid">
       <section className="pane">
-        <SectionHeader eyebrow={`${gaps.length} items`} title="研究空白" />
+        <SectionHeader eyebrow={`${gaps.length} 条`} title="研究空白" />
         <div className="pane-scroll">
           <GapList gaps={gaps} />
         </div>
       </section>
 
       <section className="pane">
-        <SectionHeader eyebrow={`${ideas.length} items`} title="研究建议" />
+        <SectionHeader eyebrow={`${ideas.length} 条`} title="研究建议" />
         <div className="pane-scroll">
           <IdeaList ideas={ideas} />
         </div>
       </section>
 
       <section className="pane workspace-graph-pane">
-        <SectionHeader eyebrow={`${graphEdges.length} edges`} title="整体演进图谱" />
+        <SectionHeader eyebrow={`${graphEdges.length} 条关系`} title="整体演进图谱" />
         <div className="content-pad pane-scroll">
           {insufficientEvidence ? (
             <div className="empty-state workspace-evidence-mode-note">
-              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者用户导入更多资料后，再看
-              graph 才更有意义。
+              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者用户导入更多资料后，再看关系图谱才更有意义。
             </div>
           ) : (
             <>
               <WorkspaceGraphCanvas graphEdges={graphEdges} papers={papers} />
               <details className="workspace-edge-details">
-                <summary>查看边明细（调试 / 核对）</summary>
+                <summary>查看关系明细</summary>
                 {graphEdges.length ? (
                   <div className="data-table-wrap">
                     <table className="data-table">
@@ -156,7 +155,7 @@ export function WorkspaceInsightsPanel({
       </section>
 
       <section className="pane">
-        <SectionHeader eyebrow="trace" title="研究过程" />
+        <SectionHeader eyebrow="过程记录" title="研究过程" />
         {trace ? (
           <div className="content-grid content-pad">
             <div className="trace-row">

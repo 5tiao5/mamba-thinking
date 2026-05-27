@@ -5,6 +5,7 @@ const AUTO_TAG_PATTERN = /\[Auto\]\s*/gi;
 const INTERNAL_PHRASE_PATTERN =
   /(?:Prior research knowledge\s*-?\s*use this to reduce fallback and improve search relevance|prior knowledge)\s*:?/gi;
 const TRUNCATED_TASK_TAG_PATTERN = /\[t(?:ask)?\.{2,}.*?(?=\s|$)/gi;
+const INLINE_TASK_REFERENCE_PATTERN = /\s*[（(]?\s*任务\s*[:：]\s*task_[a-z0-9_-]+\s*[)）]?/gi;
 const FOLLOW_UP_LABEL_PATTERN = /\s+-\s+(?:follow\s*up|focus\s*on)\s*:\s*/gi;
 const INFORMED_BY_SUFFIX_PATTERN = /\s+-\s+informed\s+by\s+.*$/gi;
 
@@ -38,8 +39,11 @@ export function cleanDisplayText(value: unknown, maxLength?: number) {
     .replace(AUTO_TAG_PATTERN, " ")
     .replace(INTERNAL_PHRASE_PATTERN, " ")
     .replace(TRUNCATED_TASK_TAG_PATTERN, " ")
+    .replace(INLINE_TASK_REFERENCE_PATTERN, " ")
     .replace(FOLLOW_UP_LABEL_PATTERN, " - ")
     .replace(INFORMED_BY_SUFFIX_PATTERN, "")
+    .replace(/\btaxonomy\b/gi, "研究方向图")
+    .replace(/\bgaps?\b/gi, "研究空白")
     .replace(/\[\s*\]/g, " ")
     .replace(/\s+/g, " ")
     .trim()

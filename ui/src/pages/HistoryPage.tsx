@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { StatusPill } from "../components/ui/StatusPill";
 import { api, toErrorMessage } from "../lib/api";
+import { formatReadableTime, taskStatusLabel, taskStatusTone } from "../lib/productText";
 import type { ConversationSummaryItem, ResearchTaskSummaryItem } from "../types/api";
 
 type HistoryFilter = "all" | "created" | "running" | "completed" | "failed";
@@ -14,30 +15,6 @@ const savedFilters: Array<{ value: HistoryFilter; label: string }> = [
   { value: "completed", label: "已完成" },
   { value: "failed", label: "失败" },
 ];
-
-function formatTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function statusTone(status: string): "info" | "success" | "danger" | "warning" | "neutral" {
-  if (status === "completed") return "success";
-  if (status === "failed") return "danger";
-  if (status === "running") return "info";
-  if (status === "created") return "warning";
-  return "neutral";
-}
-
-function statusLabel(status: string) {
-  if (status === "completed") return "已完成";
-  if (status === "failed") return "失败";
-  if (status === "running") return "运行中";
-  if (status === "created") return "待运行";
-  return status || "未知";
-}
 
 export function HistoryPage() {
   const [conversations, setConversations] = useState<ConversationSummaryItem[]>([]);
@@ -69,6 +46,16 @@ export function HistoryPage() {
     return mapping;
   }, [sortedTasks]);
 
+  const tasksByConversation = useMemo(() => {
+    const mapping = new Map<string, ResearchTaskSummaryItem[]>();
+    for (const task of sortedTasks) {
+      const current = mapping.get(task.conversation_id) ?? [];
+      current.push(task);
+      mapping.set(task.conversation_id, current);
+    }
+    return mapping;
+  }, [sortedTasks]);
+
   const filteredConversations = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return [...conversations]
@@ -89,9 +76,8 @@ export function HistoryPage() {
         const haystack = [
           conversation.topic,
           conversation.title,
-          conversation.conversation_id,
           latestTask?.topic,
-          latestTask?.task_id,
+          latestTask?.status ? taskStatusLabel(latestTask.status) : "",
         ]
           .filter(Boolean)
           .join(" ")
@@ -126,7 +112,7 @@ export function HistoryPage() {
           <input
             className="input"
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="按主题、任务 ID、会话标题搜索"
+            placeholder="按主题、标题、最近进展搜索"
             value={search}
           />
         </label>
@@ -149,19 +135,19 @@ export function HistoryPage() {
 
       <section className="metrics-strip">
         <div className="metric-cell">
-          <div className="metric-label">会话</div>
+          <div className="metric-label">研究</div>
           <div className="metric-value">{conversations.length}</div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">任务</div>
+          <div className="metric-label">生成次数</div>
           <div className="metric-value">{tasks.length}</div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">完成</div>
+          <div className="metric-label">已有结果</div>
           <div className="metric-value">{tasks.filter((task) => task.status === "completed").length}</div>
         </div>
         <div className="metric-cell">
-          <div className="metric-label">失败</div>
+          <div className="metric-label">需要关注</div>
           <div className="metric-value">{tasks.filter((task) => task.status === "failed").length}</div>
         </div>
       </section>
@@ -174,7 +160,7 @@ export function HistoryPage() {
             </StatusPill>
           }
           title="历史研究"
-          eyebrow="Saved work"
+          eyebrow="研究时间线"
         />
         <div className="content-pad">
           <div className="status-line" style={{ marginBottom: 12 }}>
@@ -184,26 +170,30 @@ export function HistoryPage() {
             <div className="insight-list">
               {filteredConversations.map((conversation) => {
                 const latestTask = latestTaskByConversation.get(conversation.conversation_id);
+                const conversationTasks = tasksByConversation.get(conversation.conversation_id) ?? [];
+                const completedCount = conversationTasks.filter((task) => task.status === "completed").length;
                 return (
-                  <article className="insight-item" key={conversation.conversation_id}>
+                  <article className="insight-item history-record-item" key={conversation.conversation_id}>
                     <div className="item-heading">
                       <div>
-                        <div className="section-eyebrow">{conversation.conversation_id}</div>
+                        <div className="section-eyebrow">最近更新 {formatReadableTime(conversation.updated_at)}</div>
                         <div className="insight-title">{conversation.title || conversation.topic}</div>
                       </div>
-                      <StatusPill tone={statusTone(latestTask?.status ?? "created")} compact>
-                        {statusLabel(latestTask?.status ?? "created")}
+                      <StatusPill tone={taskStatusTone(latestTask?.status ?? "created")} compact>
+                        {taskStatusLabel(latestTask?.status ?? "created")}
                       </StatusPill>
                     </div>
                     <div className="fine-print">主题：{conversation.topic}</div>
                     {latestTask ? (
-                      <div className="fine-print">
-                        最近任务：{latestTask.task_id} / {latestTask.topic}
+                      <div className="history-progress-row">
+                        <span>最近进展：{latestTask.topic}</span>
+                        <span>
+                          累计生成 {conversationTasks.length} 次，已完成 {completedCount} 次
+                        </span>
                       </div>
                     ) : (
-                      <div className="fine-print">还没有研究任务，可以先回到首页创建。</div>
+                      <div className="fine-print">还没有生成结果，可以进入研究后先生成一版。</div>
                     )}
-                    <div className="fine-print">更新时间：{formatTime(conversation.updated_at)}</div>
                     <div className="button-row" style={{ marginTop: 12 }}>
                       <Link
                         className="secondary-button"
@@ -214,9 +204,9 @@ export function HistoryPage() {
                       {latestTask ? (
                         <Link
                           className="ghost-button"
-                          to={`/workspace?task_id=${encodeURIComponent(latestTask.task_id)}`}
+                          to={`/workspace?conversation_id=${encodeURIComponent(conversation.conversation_id)}&task_id=${encodeURIComponent(latestTask.task_id)}`}
                         >
-                          打开工作台
+                          研究总览
                         </Link>
                       ) : null}
                     </div>

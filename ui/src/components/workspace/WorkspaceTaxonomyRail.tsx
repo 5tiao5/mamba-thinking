@@ -103,7 +103,7 @@ export function WorkspaceTaxonomyRail({
               onClick={() => onSelectCategory("all")}
               type="button"
             >
-              <span className="workspace-filter-title">All Papers / 全部论文</span>
+              <span className="workspace-filter-title">全部论文</span>
               <span className="workspace-filter-meta">{paperCount} 篇</span>
             </button>
             {categories.map((entry) => (
@@ -128,16 +128,16 @@ export function WorkspaceTaxonomyRail({
       <section className="pane taxonomy-pane-expanded">
         <div className="section-header">
           <div>
-            <div className="section-eyebrow">{branches.length} branches</div>
-            <h2>研究 Taxonomy</h2>
+            <div className="section-eyebrow">{branches.length} 个方向</div>
+            <h2>研究方向图</h2>
           </div>
         </div>
         <div className="pane-scroll taxonomy-panel">
           {insufficientEvidence ? (
             <div className="taxonomy-layout">
               <div className="taxonomy-detail-card taxonomy-detail-card-warning">
-                <div className="section-eyebrow">Candidate branches</div>
-                <div className="taxonomy-detail-title">当前不展示完整 taxonomy 图</div>
+                <div className="section-eyebrow">候选方向</div>
+                <div className="taxonomy-detail-title">当前不展示完整方向图</div>
                 <div className="taxonomy-detail-copy">
                   {cleanDisplayText(evidenceStatus?.message) ||
                     "当前真实论文证据过薄，这一轮更适合先展示候选研究分支与补证建议。"}
@@ -145,7 +145,7 @@ export function WorkspaceTaxonomyRail({
 
                 {evidenceStatus?.candidate_branches?.length ? (
                   <>
-                    <div className="section-eyebrow">Suggested branch draft</div>
+                    <div className="section-eyebrow">建议方向草稿</div>
                     <div className="taxonomy-chip-wrap">
                       {evidenceStatus.candidate_branches.map((branchName) => (
                         <span className="taxonomy-chip taxonomy-chip-warning" key={branchName}>
@@ -172,8 +172,8 @@ export function WorkspaceTaxonomyRail({
                 </div>
 
                 <div className="taxonomy-helper-copy">
-                  这时候继续强行绘制完整 taxonomy，往往会把薄证据包装成很完整的研究地图。更合理的下一步是：
-                  缩小问题、补充论文，或者先导入已有知识后再刷新总 workspace。
+                  这时候继续强行绘制完整方向图，往往会把薄证据包装成很完整的研究地图。更合理的下一步是：
+                  缩小问题、补充论文，或者先导入已有资料后再刷新研究总览。
                 </div>
               </div>
             </div>
@@ -189,7 +189,7 @@ export function WorkspaceTaxonomyRail({
 
               {selectedBranch ? (
                 <div className="taxonomy-detail-card">
-                  <div className="section-eyebrow">Current branch</div>
+                  <div className="section-eyebrow">当前方向</div>
                   <div className="taxonomy-detail-title">{cleanDisplayText(selectedHeading, 120)}</div>
                   {selectedHeading !== selectedEnglishLabel ? (
                     <div className="taxonomy-detail-english">
@@ -206,11 +206,11 @@ export function WorkspaceTaxonomyRail({
                       <strong>{selectedBranch.paper_count}</strong>
                     </div>
                     <div className="taxonomy-stat">
-                      <span>Coverage</span>
+                      <span>覆盖率</span>
                       <strong>{formatCoverageScore(selectedCoverage?.coverage_score)}</strong>
                     </div>
                     <div className="taxonomy-stat">
-                      <span>Gap 数</span>
+                      <span>空白数</span>
                       <strong>{selectedCoverage?.gap_count ?? 0}</strong>
                     </div>
                     <div className="taxonomy-stat">
@@ -218,7 +218,7 @@ export function WorkspaceTaxonomyRail({
                       <strong>{selectedCoverage?.matched_paper_ids?.length ?? selectedBranch.matched_paper_ids?.length ?? 0}</strong>
                     </div>
                     <div className="taxonomy-stat">
-                      <span>匹配 Gap</span>
+                      <span>匹配空白</span>
                       <strong>{selectedCoverage?.matched_gap_ids?.length ?? selectedBranch.matched_gap_ids?.length ?? 0}</strong>
                     </div>
                     <div className="taxonomy-stat">
@@ -249,7 +249,7 @@ export function WorkspaceTaxonomyRail({
                     )}
                   </div>
 
-                  <div className="section-eyebrow">Required concepts</div>
+                  <div className="section-eyebrow">关键概念</div>
                   {selectedBranch.required_concepts.length ? (
                     <div className="taxonomy-chip-wrap">
                       {selectedBranch.required_concepts.map((concept) => (
@@ -262,7 +262,7 @@ export function WorkspaceTaxonomyRail({
                     <div className="empty-state">当前分支还没有列出必要概念。</div>
                   )}
 
-                  <div className="section-eyebrow">Matched papers</div>
+                  <div className="section-eyebrow">匹配论文</div>
                   {papers.length ? (
                     <div className="taxonomy-evidence-list">
                       {papers.map((paper) => (
@@ -279,15 +279,14 @@ export function WorkspaceTaxonomyRail({
                     </div>
                   ) : (
                     <div className="empty-state">
-                      当前 branch 还没有稳定归属的论文证据。如果这一轮证据偏弱，后端后续更适合切换到
-                      candidate branch 模式，而不是继续强行长完整 taxonomy。
+                      当前方向还没有稳定归属的论文证据。如果这一轮证据偏弱，更适合先展示候选方向，而不是继续强行生成完整方向图。
                     </div>
                   )}
                 </div>
               ) : null}
             </div>
           ) : (
-            <div className="empty-state">当前还没有可视化的 taxonomy 结构。</div>
+            <div className="empty-state">当前还没有可视化的研究方向结构。</div>
           )}
         </div>
       </section>
