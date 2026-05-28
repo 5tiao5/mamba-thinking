@@ -70,7 +70,12 @@ class AppContainer:
         self._register_defaults()
 
         # Services - 注意顺序：先创建不依赖其他服务的，后创建有依赖的
-        self.conversation_service = ConversationService(self.conversation_repository)
+        self.conversation_service = ConversationService(
+            self.conversation_repository,
+            message_repository=self.message_repository,
+            task_repository=self.task_repository,
+            workspace_repository=self.workspace_repository,
+        )
         self.message_service = MessageService(
             repository=self.message_repository,
             conversation_repository=self.conversation_repository,

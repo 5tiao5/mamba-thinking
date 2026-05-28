@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { KnowledgeLibraryPanel } from "../components/knowledge/KnowledgeLibraryPanel";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { StatusPill } from "../components/ui/StatusPill";
 import { ToggleSwitch } from "../components/ui/ToggleSwitch";
@@ -54,20 +55,38 @@ export function SettingsPage() {
 
   return (
     <div className="dense-layout">
-      <section className="surface content-pad">
+      <section className="surface content-pad settings-overview">
         <div className="item-heading">
           <div>
-            <div className="section-eyebrow">能力设置</div>
-            <strong>工具与能力管理</strong>
+            <div className="section-eyebrow">研究设置</div>
+            <strong>研究偏好与资料库</strong>
           </div>
           <StatusPill tone={loading ? "neutral" : "success"}>{loading ? "加载中" : "已同步"}</StatusPill>
         </div>
-        <div className="status-line" style={{ marginTop: 10 }}>
+        <div className="settings-overview-grid">
+          <div>
+            <span>可用工具</span>
+            <strong>{tools.filter((tool) => tool.enabled).length}</strong>
+          </div>
+          <div>
+            <span>已注册能力</span>
+            <strong>{skills.filter((skill) => skill.enabled).length}</strong>
+          </div>
+          <div>
+            <span>当前策略</span>
+            <strong>证据优先</strong>
+          </div>
+        </div>
+        <div className="status-line">
           {status}
         </div>
       </section>
 
-      <section className="settings-grid">
+      <section className="settings-grid settings-grid-primary">
+        <div className="pane">
+          <KnowledgeLibraryPanel />
+        </div>
+
         <div className="pane">
           <SectionHeader title="工具" eyebrow={`${tools.length} 项工具`} />
           <div className="data-table-wrap">
@@ -112,7 +131,9 @@ export function SettingsPage() {
             )}
           </div>
         </div>
+      </section>
 
+      <section className="settings-grid settings-grid-secondary">
         <div className="pane">
           <SectionHeader title="能力" eyebrow={`${skills.length} 项能力`} />
           <div className="data-table-wrap">

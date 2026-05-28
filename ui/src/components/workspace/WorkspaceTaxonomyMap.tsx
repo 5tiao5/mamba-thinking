@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { EvidenceTier, WorkspaceSnapshot, WorkspaceTaxonomyBranch } from "../../types/api";
 import {
   coverageLabel,
@@ -49,8 +51,10 @@ export function WorkspaceTaxonomyMap({
   selectedBranchId,
   onSelectBranch,
 }: WorkspaceTaxonomyMapProps) {
+  const [mapExpanded, setMapExpanded] = useState(false);
+
   if (!branches.length) {
-    return <div className="empty-state">当前没有可视化 taxonomy 结构。</div>;
+    return <div className="empty-state">当前没有可视化研究方向结构。</div>;
   }
 
   const width = 980;
@@ -61,8 +65,31 @@ export function WorkspaceTaxonomyMap({
   const radiusY = 170;
 
   return (
-    <div className="taxonomy-map-card">
-      <svg className="taxonomy-map" viewBox={`0 0 ${width} ${height}`}>
+    <div className={mapExpanded ? "taxonomy-map-card taxonomy-map-card-expanded" : "taxonomy-map-card"}>
+      <div className="taxonomy-map-toolbar">
+        {mapExpanded ? (
+          <button className="graph-reset-button" onClick={() => setMapExpanded(false)} type="button">
+            关闭放大
+          </button>
+        ) : (
+          <button className="graph-reset-button" onClick={() => setMapExpanded(true)} type="button">
+            放大查看
+          </button>
+        )}
+      </div>
+      <svg
+        className="taxonomy-map"
+        onClick={() => setMapExpanded(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            setMapExpanded(true);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        <title>单击放大研究方向图</title>
         <g>
           <circle className="taxonomy-map-root" cx={centerX} cy={centerY} r="66" />
           <text
@@ -71,7 +98,7 @@ export function WorkspaceTaxonomyMap({
             x={centerX}
             y={centerY - 6}
           >
-            Taxonomy
+            方向图
           </text>
           <text
             className="taxonomy-map-root-subtitle"

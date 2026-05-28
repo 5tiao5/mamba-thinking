@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import types
 from pathlib import Path
 
 import uvicorn
@@ -18,6 +19,10 @@ def _ensure_outer_project_root() -> Path:
         sys.path.insert(0, str(outer_root))
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
+    if repo_root.name != "product_agent" and "product_agent" not in sys.modules:
+        package = types.ModuleType("product_agent")
+        package.__path__ = [str(repo_root)]
+        sys.modules["product_agent"] = package
     return repo_root
 
 
@@ -35,13 +40,15 @@ def main() -> None:
     parser.add_argument("--no-reload", action="store_true", help="Disable hot reload.")
     args = parser.parse_args()
 
-    uvicorn.run(
-        "product_agent.api.fastapi_app:app",
-        host=args.host,
-        port=args.port,
-        reload=not args.no_reload,
-        reload_dirs=[str(repo_root)],
-    )
+    uvicorn_kwargs = {
+        "host": args.host,
+        "port": args.port,
+        "reload": not args.no_reload,
+    }
+    if not args.no_reload:
+        uvicorn_kwargs["reload_dirs"] = [str(repo_root)]
+
+    uvicorn.run("product_agent.api.fastapi_app:app", **uvicorn_kwargs)
 
 
 if __name__ == "__main__":

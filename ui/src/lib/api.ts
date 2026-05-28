@@ -1,11 +1,16 @@
 import type {
   ContinueConversationPayload,
   ConversationDetailItem,
+  CreateKnowledgeDocumentPayload,
+  DeleteConversationPayload,
+  KnowledgeDocumentItem,
+  KnowledgeSearchPayload,
   ConversationResponsePayload,
   ConversationSummaryItem,
   MessageItem,
   ResearchTaskDetailItem,
   ResearchTaskSummaryItem,
+  RunTaskPayload,
   SkillItem,
   ToolItem,
   WorkspaceSnapshot,
@@ -22,6 +27,9 @@ import {
 } from "./demoData";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URLS = [API_BASE_URL, "http://127.0.0.1:8001"].filter(
+  (url, index, urls) => urls.indexOf(url) === index
+);
 
 type ApiFailurePayload = {
   success: false;
@@ -32,29 +40,48 @@ type ApiFailurePayload = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
+  let lastError: unknown = null;
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+  for (const baseUrl of API_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+        ...init,
+      });
+
+      if (!response.ok) {
+        lastError = new Error(`HTTP ${response.status}`);
+        if (response.status === 404 || response.status === 405 || response.status >= 500) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      const payload = (await response.json()) as T | ApiFailurePayload;
+      if (
+        payload &&
+        typeof payload === "object" &&
+        "success" in payload &&
+        payload.success === false
+      ) {
+        const error = new Error(payload.error?.message ?? payload.error?.code ?? "Request failed");
+        if (payload.error?.code === "not_found") {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+
+      return payload as T;
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  const payload = (await response.json()) as T | ApiFailurePayload;
-  if (
-    payload &&
-    typeof payload === "object" &&
-    "success" in payload &&
-    payload.success === false
-  ) {
-    throw new Error(payload.error?.message ?? payload.error?.code ?? "Request failed");
-  }
-
-  return payload as T;
+  throw lastError instanceof Error ? lastError : new Error("Request failed");
 }
 
 export function toErrorMessage(error: unknown): string {
@@ -64,19 +91,27 @@ export function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
+type ApiResponse<T> = { success: boolean; data: T };
+
 export const api = {
   health: () => request<{ status: string }>("/health"),
   createConversation: (payload: { topic: string; title?: string }) =>
-    request<{ success: boolean; data: ConversationResponsePayload }>("/conversations", {
+    request<ApiResponse<ConversationResponsePayload>>("/conversations", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
   listConversations: (params?: { limit?: number }) => {
     const query = params?.limit ? `?limit=${params.limit}` : "";
-    return request<{ success: boolean; data: { items: ConversationSummaryItem[] } }>(`/conversations${query}`);
+    return request<ApiResponse<{ items: ConversationSummaryItem[] }>>(`/conversations${query}`);
   },
   getConversation: (conversationId: string) =>
-    request<{ success: boolean; data: ConversationDetailItem }>(`/conversations/${conversationId}`),
+    request<ApiResponse<ConversationDetailItem>>(`/conversations/${conversationId}`),
+  deleteConversation: (conversationId: string) =>
+    request<ApiResponse<DeleteConversationPayload>>(`/conversations/${conversationId}`, {
+      method: "DELETE",
+    }),
+  getConversationWorkspace: (conversationId: string) =>
+    request<ApiResponse<WorkspaceSnapshot>>(`/conversations/${conversationId}/workspace`),
   listMessages: (conversationId: string) => {
     if (conversationId === DEMO_CONVERSATION_ID) {
       return Promise.resolve({
@@ -84,12 +119,12 @@ export const api = {
         data: { conversation_id: conversationId, items: demoMessages },
       });
     }
-    return request<{ success: boolean; data: { conversation_id: string; items: MessageItem[] } }>(
+    return request<ApiResponse<{ conversation_id: string; items: MessageItem[] }>>(
       `/conversations/${conversationId}/messages`
     );
   },
   createMessage: (conversationId: string, payload: { role?: string; content: string; metadata?: Record<string, unknown> }) =>
-    request<{ success: boolean; data: MessageItem }>(`/conversations/${conversationId}/messages`, {
+    request<ApiResponse<MessageItem>>(`/conversations/${conversationId}/messages`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -111,7 +146,7 @@ export const api = {
         },
       });
     }
-    return request<{ success: boolean; data: ContinueConversationPayload }>("/conversations/continue", {
+    return request<ApiResponse<ContinueConversationPayload>>("/conversations/continue", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -123,7 +158,7 @@ export const api = {
     use_shared_knowledge?: boolean;
     enabled_tools?: string[];
   }) =>
-    request<{ success: boolean; data: { task_id: string; conversation_id: string; status: string } }>(
+    request<ApiResponse<{ task_id: string; conversation_id: string; status: string }>>(
       "/research/tasks",
       {
         method: "POST",
@@ -139,12 +174,12 @@ export const api = {
       search.set("limit", String(params.limit));
     }
     const query = search.toString();
-    return request<{ success: boolean; data: { items: ResearchTaskSummaryItem[] } }>(
+    return request<ApiResponse<{ items: ResearchTaskSummaryItem[] }>>(
       `/research/tasks${query ? `?${query}` : ""}`
     );
   },
   getTask: (taskId: string) =>
-    request<{ success: boolean; data: ResearchTaskDetailItem }>(`/research/tasks/${taskId}`),
+    request<ApiResponse<ResearchTaskDetailItem>>(`/research/tasks/${taskId}`),
   runTask: (taskId: string) => {
     if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
       return Promise.resolve({
@@ -156,7 +191,7 @@ export const api = {
         },
       });
     }
-    return request<{ success: boolean; data: { task_id: string; topic: string; alignment_score: number } }>(
+    return request<ApiResponse<RunTaskPayload>>(
       `/research/tasks/${taskId}/run`,
       {
         method: "POST",
@@ -170,11 +205,11 @@ export const api = {
         data: { ...demoWorkspace, task_id: taskId },
       });
     }
-    return request<{ success: boolean; data: WorkspaceSnapshot }>(`/research/tasks/${taskId}/workspace`);
+    return request<ApiResponse<WorkspaceSnapshot>>(`/research/tasks/${taskId}/workspace`);
   },
   listTools: async () => {
     try {
-      return await request<{ success: boolean; data: ToolItem[] }>("/tools");
+      return await request<ApiResponse<ToolItem[]>>("/tools");
     } catch {
       return { success: true, data: demoTools };
     }
@@ -187,16 +222,41 @@ export const api = {
         data: { ...demoTool, enabled: payload.enabled, config: payload.config },
       });
     }
-    return request<{ success: boolean; data: ToolItem }>(`/tools/${toolId}`, {
+    return request<ApiResponse<ToolItem>>(`/tools/${toolId}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
   },
   listSkills: async () => {
     try {
-      return await request<{ success: boolean; data: SkillItem[] }>("/skills");
+      return await request<ApiResponse<SkillItem[]>>("/skills");
     } catch {
       return { success: true, data: demoSkills };
     }
+  },
+  listKnowledgeDocuments: () =>
+    request<ApiResponse<{ items: KnowledgeDocumentItem[] }>>("/knowledge/documents"),
+  createKnowledgeDocument: (payload: CreateKnowledgeDocumentPayload) =>
+    request<ApiResponse<KnowledgeDocumentItem>>("/knowledge/documents", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  deleteKnowledgeDocument: (documentId: string) =>
+    request<ApiResponse<{ document_id: string; deleted: boolean }>>(`/knowledge/documents/${documentId}`, {
+      method: "DELETE",
+    }),
+  searchKnowledge: (params?: { q?: string; by?: "keyword" | "tags"; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.q) {
+      search.set("q", params.q);
+    }
+    if (params?.by) {
+      search.set("by", params.by);
+    }
+    if (params?.limit) {
+      search.set("limit", String(params.limit));
+    }
+    const query = search.toString();
+    return request<ApiResponse<KnowledgeSearchPayload>>(`/knowledge/search${query ? `?${query}` : ""}`);
   },
 };

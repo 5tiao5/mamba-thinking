@@ -36,6 +36,10 @@ class ConversationRepository(Protocol):
         """列出所有会话，默认按最近更新时间倒序返回。"""
         ...
 
+    def delete(self, conversation_id: str) -> bool:
+        """删除会话，返回是否成功删除。"""
+        ...
+
 
 class MessageRepository(Protocol):
     """消息存储接口。"""
@@ -46,6 +50,10 @@ class MessageRepository(Protocol):
 
     def list_by_conversation(self, conversation_id: str) -> list[MessageRecord]:
         """按会话列出消息，默认按创建时间升序返回。"""
+        ...
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
+        """删除某个会话下的所有消息，返回删除数量。"""
         ...
 
 
@@ -68,6 +76,10 @@ class ResearchTaskRepository(Protocol):
         """列出所有研究任务，默认按最近更新时间倒序返回。"""
         ...
 
+    def delete_by_conversation(self, conversation_id: str) -> list[str]:
+        """删除某个会话下的所有研究任务，返回被删除的任务 ID。"""
+        ...
+
 
 class WorkspaceRepository(Protocol):
     """工作台结果存储接口。"""
@@ -78,6 +90,10 @@ class WorkspaceRepository(Protocol):
 
     def get_by_task(self, task_id: str) -> ResearchWorkspace | None:
         """按 task_id 获取工作台快照。"""
+        ...
+
+    def delete_by_task_ids(self, task_ids: list[str]) -> int:
+        """删除指定任务对应的工作台快照，返回删除数量。"""
         ...
 
 

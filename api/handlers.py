@@ -15,6 +15,7 @@ from product_agent.schemas import (
     UpdateToolRequest,
 )
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
+from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 
 from .response import fail, ok
 
@@ -77,6 +78,14 @@ class ProductApiHandlers:
         payload["message_count"] = message_count
         return ok(payload)
 
+    def delete_conversation(self, conversation_id: str):
+        """Delete a conversation and its dependent messages, tasks, and workspaces."""
+        result = self.conversation_service.delete_conversation(conversation_id)
+        if not result.get("deleted"):
+            return fail("conversation_not_found", "Conversation does not exist.")
+        return ok(result)
+
+
     def list_messages(self, conversation_id: str):
         """列出某个会话的消息。"""
         messages = self.message_service.list_messages(conversation_id)
@@ -132,11 +141,12 @@ class ProductApiHandlers:
         knowledge_context = self.knowledge_service.retrieve_for_context(
             knowledge_query, top_k=3, max_chars_per_doc=250,
         )
+        display_knowledge_context = clean_internal_context_items(knowledge_context, max_length=180)
 
         follow_up_task = None
         if request.create_follow_up_task:
             enriched_focus = request.focus
-            knowledge_hints = self._extract_knowledge_hints(knowledge_context)
+            knowledge_hints = self._extract_knowledge_hints(display_knowledge_context)
 
             try:
                 task = self.research_service.create_follow_up_task(
@@ -164,7 +174,7 @@ class ProductApiHandlers:
             message=request.content,
             message_id=message.message_id,
             context_preview=context_preview,
-            knowledge_context=knowledge_context,
+            knowledge_context=display_knowledge_context,
             follow_up_task=follow_up_task,
         )
         return ok(response.model_dump())
@@ -227,6 +237,7 @@ class ProductApiHandlers:
 
         # Invalidate conversation workspace cache so next read picks up new data
         self.workspace_service.invalidate_conversation_cache(task.conversation_id)
+        display_topic = self._display_topic_for_task_workspace(task=task, workspace=workspace)
 
         assistant_message = self.message_service.create_assistant_message(
             conversation_id=task.conversation_id,
@@ -235,7 +246,7 @@ class ProductApiHandlers:
                 "kind": "task_result",
                 "task_id": workspace.task_id,
                 "task_status": "completed",
-                "topic": workspace.topic,
+                "topic": display_topic,
                 "alignment_score": workspace.alignment_score,
                 "paper_count": len(workspace.papers),
                 "gap_count": len(workspace.gaps),
@@ -249,7 +260,7 @@ class ProductApiHandlers:
         return ok(
             {
                 "task_id": workspace.task_id,
-                "topic": workspace.topic,
+                "topic": display_topic,
                 "alignment_score": workspace.alignment_score,
                 "trace_keys": list(workspace.trace.keys()),
                 "assistant_message_id": assistant_message.message_id if assistant_message else None,
@@ -262,19 +273,26 @@ class ProductApiHandlers:
             # Build a concise knowledge summary from workspace
             parts: list[str] = []
             if workspace.summary:
-                parts.append(workspace.summary[:600])
+                summary = clean_internal_context_text(workspace.summary, max_length=600)
+                if summary:
+                    parts.append(summary)
 
             top_papers = workspace.papers[:5]
             if top_papers:
                 parts.append("Key papers:")
                 for p in top_papers:
-                    parts.append(f"- {p.title} ({p.source})")
+                    title = clean_internal_context_text(p.title, max_length=160)
+                    source = clean_internal_context_text(p.source, max_length=80)
+                    if title:
+                        parts.append(f"- {title} ({source})" if source else f"- {title}")
 
             top_gaps = workspace.gaps[:3]
             if top_gaps:
                 parts.append("Research gaps:")
                 for g in top_gaps:
-                    parts.append(f"- [{g.severity}] {g.summary[:120]}")
+                    summary = clean_internal_context_text(g.summary, max_length=120)
+                    if summary:
+                        parts.append(f"- [{g.severity}] {summary}")
 
             # Extract tags from taxonomy branches
             taxonomy = workspace.taxonomy or {}
@@ -419,11 +437,7 @@ class ProductApiHandlers:
         a detailed template that reads like a research assistant finding,
         not a task log.
         """
-        body = self._build_natural_assistant_message(task=task, workspace=workspace).strip()
-        prefix = f"已完成本轮研究任务：{task.topic}"
-        if body.startswith(prefix):
-            return body
-        return f"{prefix}\n{body}"
+        return self._build_natural_assistant_message(task=task, workspace=workspace).strip()
 
     def _build_natural_assistant_message(self, *, task, workspace) -> str:
         """Generate a natural-language research assistant response.
@@ -431,9 +445,6 @@ class ProductApiHandlers:
         Tries LLM first; falls back to a rich template that includes
         specific paper titles, top gaps, and key ideas.
         """
-        llm_text = self._try_llm_assistant_message(task=task, workspace=workspace)
-        if llm_text:
-            return llm_text
         return self._build_template_assistant_message(task=task, workspace=workspace)
 
     def _try_llm_assistant_message(self, *, task, workspace) -> str | None:
@@ -472,65 +483,91 @@ class ProductApiHandlers:
             pass
         return None
 
-    @staticmethod
-    def _build_template_assistant_message(*, task, workspace) -> str:
-        """Template-based natural research summary."""
+    def _build_template_assistant_message(self, *, task, workspace) -> str:
+        """Template-based, user-facing research summary."""
         evidence = workspace.evidence_status or {}
-        insufficient = evidence.get("insufficient", False)
+        insufficient = bool(evidence.get("insufficient", False))
         total_papers = len(workspace.papers)
         real_papers = [p for p in workspace.papers if p.source not in ("seed", "fallback")]
         fallback_count = total_papers - len(real_papers)
+        raw_topic = clean_internal_context_text(workspace.topic or task.topic, max_length=300)
+        topic = self._display_topic_for_task_workspace(task=task, workspace=workspace)
 
-        lines: list[str] = []
+        lines: list[str] = [
+            "\u7814\u7a76\u5206\u6790\u5b8c\u6210",
+            "",
+            f"\u7814\u7a76\u4e3b\u9898\uff1a{topic}",
+            "",
+            "\u672c\u8f6e\u6982\u89c8",
+            f"- \u68c0\u7d22\u8bba\u6587\uff1a{total_papers} \u7bc7",
+            f"- \u7814\u7a76\u7a7a\u767d\uff1a{len(workspace.gaps)} \u6761",
+            f"- \u7814\u7a76\u5efa\u8bae\uff1a{len(workspace.ideas)} \u6761",
+            f"- \u5bf9\u9f50\u5206\u6570\uff1a{workspace.alignment_score:.2f}",
+        ]
 
-        # Opening
         if insufficient:
-            lines.append(f"关于「{task.topic}」的初步探索已完成。")
-            lines.append(
-                f"当前检索到 {total_papers} 篇相关文献"
-                + (f"（其中 {fallback_count} 篇为系统保底论文）" if fallback_count else "")
-                + f"，识别出 {len(workspace.gaps)} 个研究空白和 {len(workspace.ideas)} 条研究建议。"
-            )
-            lines.append("由于证据尚不充分，以下结果更适合作为探索方向而非最终结论。")
-        else:
-            lines.append(f"关于「{task.topic}」的研究分析已完成。")
-            lines.append(
-                f"本轮共检索到 {total_papers} 篇相关论文"
-                + (f"，其中 {len(real_papers)} 篇来自真实学术来源" if fallback_count else "")
-                + f"，识别出 {len(workspace.gaps)} 个研究空白，并提出 {len(workspace.ideas)} 条研究建议。"
-            )
+            lines.append("- \u8bc1\u636e\u72b6\u6001\uff1a\u5f53\u524d\u8bc1\u636e\u504f\u5c11\uff0c\u7ed3\u679c\u66f4\u9002\u5408\u4f5c\u4e3a\u63a2\u7d22\u65b9\u5411")
+        elif fallback_count:
+            lines.append(f"- \u8bc1\u636e\u72b6\u6001\uff1a\u5305\u542b {fallback_count} \u7bc7\u7cfb\u7edf\u56de\u9000\u8bba\u6587\uff0c\u5efa\u8bae\u7ee7\u7eed\u8865\u5145\u771f\u5b9e\u6587\u732e")
 
-        # Representative papers
         top_papers = (real_papers or workspace.papers)[:3]
         if top_papers:
-            lines.append("")
-            lines.append("代表性论文：")
-            for p in top_papers:
-                cite = f" (引用 {p.citation_count})" if p.citation_count > 0 else ""
-                lines.append(f"  - {p.title}{cite}")
+            lines.extend(["", "\u4ee3\u8868\u6027\u8bba\u6587"])
+            for paper in top_papers:
+                title = clean_internal_context_text(paper.title, max_length=180) or paper.paper_id
+                source = clean_internal_context_text(paper.source, max_length=60)
+                cite = f"\uff08\u5f15\u7528 {paper.citation_count}\uff09" if paper.citation_count > 0 else ""
+                source_text = f"\uff0c{source}" if source else ""
+                lines.append(f"- {title}{source_text}{cite}")
 
-        # Top gap
         if workspace.gaps:
-            top_gap = max(workspace.gaps, key=lambda g: 0 if g.severity == "low" else (1 if g.severity == "medium" else 2))
-            lines.append("")
-            lines.append(f"关键研究空白：{top_gap.summary[:200]}")
+            lines.extend(["", "\u5173\u952e\u7814\u7a76\u7a7a\u767d"])
+            for gap in workspace.gaps[:3]:
+                summary = clean_internal_context_text(gap.summary, max_length=180)
+                if summary:
+                    lines.append(f"- {summary}")
 
-        # Top idea
         if workspace.ideas:
-            best_idea = max(workspace.ideas, key=lambda i: i.confidence)
-            lines.append("")
-            lines.append(f"研究建议：{best_idea.title[:200]}")
+            lines.extend(["", "\u53ef\u7ee7\u7eed\u63a8\u8fdb\u7684\u9009\u9898"])
+            for idea in workspace.ideas[:3]:
+                title = clean_internal_context_text(idea.title, max_length=180)
+                if raw_topic and raw_topic != topic:
+                    title = title.replace(raw_topic, topic)
+                title = title.replace(f"{topic};", topic).replace(f"{topic} ;", topic)
+                if title:
+                    lines.append(f"- {title}")
 
-        # Closing
-        lines.append("")
-        if workspace.alignment_score >= 0.5:
-            lines.append(f"研究结果与主题的对齐分数为 {workspace.alignment_score:.2f}，整体相关性较好。")
-        else:
-            lines.append(f"研究结果与主题的对齐分数为 {workspace.alignment_score:.2f}，建议进一步聚焦问题范围。")
-
-        lines.append(f"详细结果可在工作台中查看（任务：{workspace.task_id}）。")
+        lines.extend([
+            "",
+            "\u4e0b\u4e00\u6b65",
+            "- \u5982\u679c\u65b9\u5411\u592a\u5bbd\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee\u5e76\u6307\u5b9a\u5e74\u4efd\u3001\u65b9\u6cd5\u6216\u5e94\u7528\u573a\u666f\u3002",
+            f"- \u5b8c\u6574 taxonomy\u3001\u6f14\u8fdb\u56fe\u548c\u8bc1\u636e\u660e\u7ec6\u53ef\u5728\u5de5\u4f5c\u53f0\u67e5\u770b\uff08\u4efb\u52a1\uff1a{workspace.task_id}\uff09\u3002",
+        ])
 
         return "\n".join(lines)
+
+    def _display_topic_for_task_workspace(self, *, task, workspace) -> str:
+        raw_topic = clean_internal_context_text(workspace.topic or task.topic, max_length=300)
+        topic = clean_internal_context_text(raw_topic, max_length=160) or "research topic"
+        if self._looks_like_internal_topic(topic):
+            conversation = self.conversation_service.get_conversation(task.conversation_id)
+            if conversation is not None:
+                topic = clean_internal_context_text(conversation.topic, max_length=160) or topic
+        return topic
+
+    @staticmethod
+    def _looks_like_internal_topic(topic: str) -> bool:
+        normalized = topic.lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "missing required concepts",
+                "missing taxonomy branch",
+                "优先关注",
+                "关键研究空白",
+                "research gaps",
+            )
+        )
 
     @staticmethod
     def _build_task_failure_message(*, task, error_message: str) -> str:
@@ -552,6 +589,7 @@ class ProductApiHandlers:
         seen = set()
         for item in knowledge_context:
             text = str(item or "").strip()
+            text = clean_internal_context_text(text, max_length=120)
             if not text:
                 continue
             if ":" in text:

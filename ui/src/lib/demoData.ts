@@ -47,6 +47,9 @@ export const demoContinueResponse: ContinueConversationPayload = {
     "assistant: 已建立初始研究范围：工具调用基准、长程任务规划、代码执行反馈、失败恢复策略。",
     "user: 请进一步聚焦 benchmark 和 evaluation papers，找出还没被充分覆盖的研究空白。",
   ],
+  knowledge_context: [
+    "[Knowledge] 既有调研摘要：工具调用评测需要同时关注成功率、恢复能力、成本和延迟。",
+  ],
   follow_up_task: {
     task_id: DEMO_FOLLOW_UP_TASK_ID,
     topic: "AI Agent Tool Use: benchmark evaluation gaps",
@@ -106,6 +109,8 @@ export const demoWorkspace: WorkspaceSnapshot = {
         description: "围绕 API 调用、参数生成和执行反馈的评测设计。",
         required_concepts: ["API selection", "argument generation", "execution feedback"],
         paper_count: 1,
+        evidence_tier: "strong",
+        branch_confidence: 0.92,
       },
       {
         branch_id: "code-agent-evaluation",
@@ -113,6 +118,8 @@ export const demoWorkspace: WorkspaceSnapshot = {
         description: "围绕 issue reproduction、patch generation 和 test feedback 的评测。",
         required_concepts: ["issue reproduction", "patch generation", "test feedback"],
         paper_count: 1,
+        evidence_tier: "strong",
+        branch_confidence: 0.88,
       },
       {
         branch_id: "general-agent-benchmark",
@@ -120,6 +127,8 @@ export const demoWorkspace: WorkspaceSnapshot = {
         description: "覆盖 planning、memory 与 environment interaction 的通用 benchmark。",
         required_concepts: ["planning", "memory", "environment interaction"],
         paper_count: 2,
+        evidence_tier: "moderate",
+        branch_confidence: 0.81,
       },
       {
         branch_id: "missing-dimensions",
@@ -127,6 +136,8 @@ export const demoWorkspace: WorkspaceSnapshot = {
         description: "当前 benchmark 中仍然覆盖不足的关键维度。",
         required_concepts: ["recovery", "cost awareness", "multi-tool dependency", "human handoff"],
         paper_count: 0,
+        evidence_tier: "candidate",
+        branch_confidence: 0.64,
       },
     ],
     tree: [
@@ -142,10 +153,10 @@ export const demoWorkspace: WorkspaceSnapshot = {
       },
     ],
     coverage: {
-      "tool-use-benchmark": { paper_count: 1, gap_count: 0, coverage_score: 1 },
-      "code-agent-evaluation": { paper_count: 1, gap_count: 0, coverage_score: 1 },
-      "general-agent-benchmark": { paper_count: 2, gap_count: 1, coverage_score: 1 },
-      "missing-dimensions": { paper_count: 0, gap_count: 3, coverage_score: 0 },
+      "tool-use-benchmark": { paper_count: 1, gap_count: 0, coverage_score: 1, evidence_tier: "strong" },
+      "code-agent-evaluation": { paper_count: 1, gap_count: 0, coverage_score: 1, evidence_tier: "strong" },
+      "general-agent-benchmark": { paper_count: 2, gap_count: 1, coverage_score: 1, evidence_tier: "moderate" },
+      "missing-dimensions": { paper_count: 0, gap_count: 3, coverage_score: 0, evidence_tier: "candidate" },
     },
     raw: {
       "tool-use benchmark": ["API selection", "argument generation", "execution feedback"],

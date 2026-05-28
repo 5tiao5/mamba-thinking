@@ -1,5 +1,6 @@
 import { SectionHeader } from "../ui/SectionHeader";
 import { StatusPill } from "../ui/StatusPill";
+import { cleanDisplayText } from "../../lib/displayText";
 import type {
   WorkspaceEvidenceStatus,
   WorkspaceGap,
@@ -35,13 +36,13 @@ function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
       {gaps.map((gap, index) => (
         <article className="insight-item" key={`${gap.summary}-${index}`}>
           <div className="item-heading">
-            <div className="insight-title">{gap.summary}</div>
+            <div className="insight-title">{cleanDisplayText(gap.summary)}</div>
             <StatusPill compact tone={severityTone(gap.severity)}>
               {severityLabel(gap.severity)}
             </StatusPill>
           </div>
           {gap.evidence.length ? (
-            <div className="fine-print">{gap.evidence.join(" / ")}</div>
+            <div className="fine-print">{gap.evidence.map((item) => cleanDisplayText(item)).filter(Boolean).join(" / ")}</div>
           ) : null}
         </article>
       ))}
@@ -58,16 +59,16 @@ function IdeaList({ ideas }: { ideas: WorkspaceIdea[] }) {
     <div className="insight-list">
       {ideas.map((idea, index) => (
         <article className="insight-item" key={`${idea.title}-${index}`}>
-          <div className="insight-title">{idea.title || "未命名选题"}</div>
+          <div className="insight-title">{cleanDisplayText(idea.title, 160) || "Untitled idea"}</div>
           <div className="fine-print">
-            {idea.motivation || idea.raw_text || "暂无动机描述"}
+            {cleanDisplayText(idea.motivation || idea.raw_text) || "No motivation yet"}
           </div>
-          {idea.approach ? <div className="muted">方法：{idea.approach}</div> : null}
+          {idea.approach ? <div className="muted">Approach: {cleanDisplayText(idea.approach)}</div> : null}
           {idea.feasibility || idea.contribution ? (
             <div className="fine-print">
-              {idea.feasibility ? `可行性：${idea.feasibility}` : ""}
+              {idea.feasibility ? `Feasibility: ${cleanDisplayText(idea.feasibility)}` : ""}
               {idea.feasibility && idea.contribution ? " / " : ""}
-              {idea.contribution ? `贡献：${idea.contribution}` : ""}
+              {idea.contribution ? `Contribution: ${cleanDisplayText(idea.contribution)}` : ""}
             </div>
           ) : null}
         </article>
@@ -96,32 +97,31 @@ export function WorkspaceInsightsPanel({
   return (
     <section className="workspace-insights-grid">
       <section className="pane">
-        <SectionHeader eyebrow={`${gaps.length} items`} title="研究空白" />
+        <SectionHeader eyebrow={`${gaps.length} 条`} title="研究空白" />
         <div className="pane-scroll">
           <GapList gaps={gaps} />
         </div>
       </section>
 
       <section className="pane">
-        <SectionHeader eyebrow={`${ideas.length} items`} title="研究建议" />
+        <SectionHeader eyebrow={`${ideas.length} 条`} title="研究建议" />
         <div className="pane-scroll">
           <IdeaList ideas={ideas} />
         </div>
       </section>
 
       <section className="pane workspace-graph-pane">
-        <SectionHeader eyebrow={`${graphEdges.length} edges`} title="整体演进图谱" />
+        <SectionHeader eyebrow={`${graphEdges.length} 条关系`} title="整体演进图谱" />
         <div className="content-pad pane-scroll">
           {insufficientEvidence ? (
             <div className="empty-state workspace-evidence-mode-note">
-              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者用户导入更多资料后，再看
-              graph 才更有意义。
+              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者用户导入更多资料后，再看关系图谱才更有意义。
             </div>
           ) : (
             <>
               <WorkspaceGraphCanvas graphEdges={graphEdges} papers={papers} />
               <details className="workspace-edge-details">
-                <summary>查看边明细（调试 / 核对）</summary>
+                <summary>查看关系明细</summary>
                 {graphEdges.length ? (
                   <div className="data-table-wrap">
                     <table className="data-table">
@@ -136,10 +136,10 @@ export function WorkspaceInsightsPanel({
                       <tbody>
                         {graphEdges.map((edge, index) => (
                           <tr key={`${edge.source}-${edge.target}-${index}`}>
-                            <td>{edge.source}</td>
-                            <td>{edge.target}</td>
-                            <td>{edge.relationship}</td>
-                            <td>{edge.reasoning || "-"}</td>
+                            <td>{cleanDisplayText(edge.source, 80)}</td>
+                            <td>{cleanDisplayText(edge.target, 80)}</td>
+                            <td>{cleanDisplayText(edge.relationship, 80)}</td>
+                            <td>{cleanDisplayText(edge.reasoning) || "-"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -155,7 +155,7 @@ export function WorkspaceInsightsPanel({
       </section>
 
       <section className="pane">
-        <SectionHeader eyebrow="trace" title="研究过程" />
+        <SectionHeader eyebrow="过程记录" title="研究过程" />
         {trace ? (
           <div className="content-grid content-pad">
             <div className="trace-row">

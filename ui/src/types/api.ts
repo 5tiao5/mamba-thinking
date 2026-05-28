@@ -53,6 +53,7 @@ export type ContinueConversationPayload = {
   message: string;
   message_id?: string | null;
   context_preview: string[];
+  knowledge_context: string[];
   follow_up_task?: FollowUpTaskItem | null;
 };
 
@@ -99,6 +100,8 @@ export type WorkspaceTaxonomyBranch = {
   evidence_tier: EvidenceTier;
   coverage_score?: number;
   branch_confidence: number;
+  matched_paper_ids?: string[];
+  matched_gap_ids?: string[];
 };
 
 export type WorkspaceTaxonomyTreeNode = {
@@ -170,4 +173,44 @@ export type SkillItem = {
   description: string;
   enabled: boolean;
   required_tools: string[];
+};
+
+export type DeleteConversationPayload = {
+  conversation_id: string;
+  deleted: boolean;
+  deleted_messages: number;
+  deleted_tasks: number;
+  deleted_workspaces: number;
+};
+
+export type RunTaskPayload = {
+  task_id: string;
+  topic: string;
+  alignment_score: number;
+  trace_keys?: string[];
+  assistant_message_id?: string | null;
+};
+
+export type KnowledgeDocumentItem = {
+  document_id: string;
+  title: string;
+  source_task_id?: string | null;
+  content: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+};
+
+export type CreateKnowledgeDocumentPayload = {
+  title: string;
+  content: string;
+  tags?: string[];
+  source_url?: string | null;
+  source_task_id?: string | null;
+  notes?: string | null;
+};
+
+export type KnowledgeSearchPayload = {
+  items: KnowledgeDocumentItem[];
+  query: string;
+  total: number;
 };

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Tuple
+from typing import TYPE_CHECKING, Tuple
 
-from product_agent.research_agent.models import PaperNode
+if TYPE_CHECKING:
+    from product_agent.research_agent.models import PaperNode
 
 
 OVERLAP_THRESHOLD = 0.40

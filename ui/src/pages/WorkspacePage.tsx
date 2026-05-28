@@ -1,30 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { WorkspaceEvidenceBoard } from "../components/workspace/WorkspaceEvidenceBoard";
 import { WorkspaceInsightsPanel } from "../components/workspace/WorkspaceInsightsPanel";
 import { WorkspaceSummarySection } from "../components/workspace/WorkspaceSummarySection";
 import { WorkspaceTaxonomyRail } from "../components/workspace/WorkspaceTaxonomyRail";
 import { api, toErrorMessage } from "../lib/api";
+import { DEMO_CONVERSATION_ID, DEMO_WORKSPACE_TASK_ID } from "../lib/demoData";
+import { taskStatusLabel } from "../lib/productText";
 import type { ResearchTaskDetailItem, WorkspacePaper, WorkspaceSnapshot } from "../types/api";
 
 function taskStatusMessage(task: ResearchTaskDetailItem) {
   if (task.status === "running") {
-    return "任务仍在运行中，工作台结果还没有生成，请稍后再读取一次。";
+    return "结果仍在生成中，请稍后再刷新。";
   }
   if (task.status === "created") {
-    return "任务还没有运行。先点击一次“运行任务”，再读取工作台。";
+    return "这个研究还没有生成结果，点击“生成结果”后会展示完整分析。";
   }
   if (task.status === "failed") {
-    return "任务运行失败了，所以暂时没有 workspace。请重新运行任务，必要时查看后端日志。";
+    return "结果生成失败了，可以重新生成一次。";
   }
-  return `当前任务状态为 ${task.status}，工作台结果暂不可用。`;
+  return `当前状态为${taskStatusLabel(task.status)}，暂时没有可展示结果。`;
 }
 
 export function WorkspacePage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const taskIdFromQuery = searchParams.get("task_id") ?? "";
+  const conversationIdFromQuery = searchParams.get("conversation_id") ?? "";
   const [taskId, setTaskId] = useState(taskIdFromQuery);
+  const [conversationId, setConversationId] = useState(conversationIdFromQuery);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [status, setStatus] = useState("从对话页或首页进入任务后，可以运行分析或读取工作台。");
   const [loading, setLoading] = useState(false);
@@ -123,6 +128,16 @@ export function WorkspacePage() {
       setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
       setStatus("工作台已加载。");
       setSearchParams({ task_id: trimmedId });
+      if (trimmedId === DEMO_WORKSPACE_TASK_ID) {
+        setConversationId(DEMO_CONVERSATION_ID);
+      } else {
+        try {
+          const taskResponse = await api.getTask(trimmedId);
+          setConversationId(taskResponse.data.conversation_id);
+        } catch {
+          setConversationId("");
+        }
+      }
     } catch (error) {
       setWorkspace(null);
       setSelectedPaperId("");
@@ -163,28 +178,75 @@ export function WorkspacePage() {
     }
   }
 
+  async function handleLoadConversationWorkspace() {
+    const targetConversationId = conversationId || conversationIdFromQuery;
+    if (!targetConversationId) {
+      setStatus("当前任务还没有关联到会话，无法读取本研究总览。");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("正在读取本研究总览...");
+    try {
+      const response = await api.getConversationWorkspace(targetConversationId);
+      setWorkspace(response.data);
+      setSelectedCategory("all");
+      setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
+      setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
+      setStatus("本研究总览已加载。");
+      setSearchParams({ conversation_id: targetConversationId, task_id: taskId });
+    } catch (error) {
+      setStatus(`读取本研究总览失败：${toErrorMessage(error)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleCloseWorkspace() {
+    const targetConversationId = conversationId || conversationIdFromQuery;
+    if (targetConversationId) {
+      navigate(`/conversation?conversation_id=${encodeURIComponent(targetConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      return;
+    }
+    navigate("/conversation");
+  }
+
   return (
     <div className="dense-layout">
       <section className="surface content-pad">
         <div className="workspace-toolbar">
-          <label>
-            <span className="field-label">任务引用</span>
-            <input
-              className="input"
-              onChange={(event) => setTaskId(event.target.value)}
-              placeholder="从对话页或首页进入后自动填充"
-              value={taskId}
-            />
-          </label>
+          <div className="workspace-context-summary">
+            <div className="section-eyebrow">研究工作台</div>
+            <strong>{workspace?.topic || "研究工作台"}</strong>
+            <span>{workspace ? "当前展示完整研究结果，可以继续刷新或切换到本研究总览。" : "从左侧研究记录进入后，这里会展示证据、方向和建议。"}</span>
+          </div>
           <div className="button-row">
+            <button className="secondary-button" onClick={handleCloseWorkspace} type="button">
+              关闭完整工作台
+            </button>
+            <button className="secondary-button" disabled={loading || !conversationId} onClick={handleLoadConversationWorkspace} type="button">
+              读取本研究总览
+            </button>
             <button className="primary-button" disabled={running} onClick={handleRunTask} type="button">
-              {running ? "运行中" : "运行任务"}
+              {running ? "生成中" : "生成结果"}
             </button>
             <button className="secondary-button" disabled={loading} onClick={() => handleLoadWorkspace()} type="button">
-              {loading ? "读取中" : "读取工作台"}
+              {loading ? "刷新中" : "刷新结果"}
             </button>
           </div>
         </div>
+        <details className="advanced-task-selector">
+          <summary>手动定位结果</summary>
+          <label>
+            <span className="field-label">结果引用</span>
+            <input
+              className="input"
+              onChange={(event) => setTaskId(event.target.value)}
+              placeholder="从研究记录进入后会自动填充"
+              value={taskId}
+            />
+          </label>
+        </details>
         <div className="status-line" style={{ marginTop: 10 }}>
           {status}
         </div>

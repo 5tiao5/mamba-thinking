@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from product_agent.domain import Conversation
-from product_agent.repositories import ConversationRepository
+from product_agent.repositories import ConversationRepository, MessageRepository, ResearchTaskRepository, WorkspaceRepository
 
 
 class ConversationService:
@@ -20,8 +20,18 @@ class ConversationService:
     - 多轮上下文压缩
     """
 
-    def __init__(self, repository: ConversationRepository) -> None:
+    def __init__(
+        self,
+        repository: ConversationRepository,
+        *,
+        message_repository: MessageRepository | None = None,
+        task_repository: ResearchTaskRepository | None = None,
+        workspace_repository: WorkspaceRepository | None = None,
+    ) -> None:
         self.repository = repository
+        self.message_repository = message_repository
+        self.task_repository = task_repository
+        self.workspace_repository = workspace_repository
 
     def create_conversation(self, *, topic: str, title: str | None = None) -> Conversation:
         """
@@ -73,3 +83,32 @@ class ConversationService:
         if limit is not None:
             return items[:limit]
         return items
+
+    def delete_conversation(self, conversation_id: str) -> dict[str, int | bool]:
+        """
+        删除会话及其直属数据。
+
+        当前存储层没有数据库级 cascade，因此在服务层按依赖顺序清理：
+        workspace -> task -> message -> conversation。
+        """
+        if self.repository.get(conversation_id) is None:
+            return {"deleted": False, "deleted_messages": 0, "deleted_tasks": 0, "deleted_workspaces": 0}
+
+        deleted_workspaces = 0
+        deleted_task_ids: list[str] = []
+        if self.task_repository is not None:
+            deleted_task_ids = self.task_repository.delete_by_conversation(conversation_id)
+        if self.workspace_repository is not None:
+            deleted_workspaces = self.workspace_repository.delete_by_task_ids(deleted_task_ids)
+
+        deleted_messages = 0
+        if self.message_repository is not None:
+            deleted_messages = self.message_repository.delete_by_conversation(conversation_id)
+
+        deleted = self.repository.delete(conversation_id)
+        return {
+            "deleted": deleted,
+            "deleted_messages": deleted_messages,
+            "deleted_tasks": len(deleted_task_ids),
+            "deleted_workspaces": deleted_workspaces,
+        }

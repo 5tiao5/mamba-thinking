@@ -6,6 +6,7 @@ from uuid import uuid4
 from product_agent.domain import ResearchTask, ResearchWorkspace
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
+from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 from product_agent.services.workspace_mapper import workspace_from_agent_state
 
 
@@ -171,21 +172,20 @@ class ResearchService:
         focus: str | None = None,
         knowledge_hints: list[str] | None = None,
     ) -> str:
-        focus_text = (focus or "").strip()
+        base_topic = clean_internal_context_text(base_topic, max_length=140) or base_topic
+        latest_message_content = clean_internal_context_text(latest_message_content, max_length=180)
+        focus_text = clean_internal_context_text(focus or "", max_length=100)
         if focus_text:
-            topic = f"{base_topic} - focus on {focus_text}"
+            topic = f"{base_topic} - {focus_text}"
         else:
             snippet = " ".join(latest_message_content.strip().split())
             if not snippet:
                 topic = base_topic
             else:
-                topic = f"{base_topic} - follow up: {snippet[:80]}"
+                topic = f"{base_topic} - {snippet[:80]}"
 
-        compact_hints = [hint.strip() for hint in (knowledge_hints or []) if hint and hint.strip()]
+        compact_hints = clean_internal_context_items(knowledge_hints or [], max_length=80)
         if not compact_hints:
             return topic
 
-        hint_text = "; ".join(compact_hints[:2])
-        if len(hint_text) > 120:
-            hint_text = f"{hint_text[:117]}..."
-        return f"{topic} - informed by {hint_text}"
+        return topic
