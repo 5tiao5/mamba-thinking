@@ -33,7 +33,6 @@ function branchNodeStyle(
   if (evidenceTier === "moderate") {
     return { fill: "#f0fdf4", stroke: "#16a34a", badge: "#16a34a", dash: false };
   }
-  // strong
   return { fill: "#eff6ff", stroke: "#2563eb", badge: "#2563eb", dash: false };
 }
 
@@ -139,11 +138,7 @@ export function WorkspaceTaxonomyMap({
                 y2={y}
               />
               <circle
-                className={
-                  active
-                    ? "taxonomy-map-node taxonomy-map-node-active"
-                    : "taxonomy-map-node"
-                }
+                className={active ? "taxonomy-map-node taxonomy-map-node-active" : "taxonomy-map-node"}
                 cx={x}
                 cy={y}
                 fill={style.fill}

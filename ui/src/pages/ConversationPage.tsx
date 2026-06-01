@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { AssistantMessageContent } from "../components/chat/AssistantMessageContent";
+import { MessageSourceTrace } from "../components/chat/MessageSourceTrace";
 import { StatusPill } from "../components/ui/StatusPill";
 import { api, toErrorMessage } from "../lib/api";
 import { cleanDisplayText } from "../lib/displayText";
@@ -98,6 +99,14 @@ export function ConversationPage() {
           <p>这里保留当前研究中的问题、回答和结果入口。新的追问统一在研究窗口完成。</p>
         </div>
         <div className="simple-context-input">
+          {conversationIdFromQuery ? (
+            <Link
+              className="secondary-button"
+              to={`/workspace?conversation_id=${encodeURIComponent(conversationIdFromQuery)}&view=conversation`}
+            >
+              打开本研究总览
+            </Link>
+          ) : null}
           <button className="secondary-button" disabled={loadingMessages || !conversationIdFromQuery} onClick={() => loadMessages()} type="button">
             {loadingMessages ? "加载中" : "加载消息"}
           </button>
@@ -133,7 +142,13 @@ export function ConversationPage() {
                 </div>
                 <div className="message-body">
                   {message.role === "assistant" ? (
-                    <AssistantMessageContent content={getDisplayMessageContent(message)} />
+                    <>
+                      <AssistantMessageContent content={getDisplayMessageContent(message)} />
+                      <MessageSourceTrace
+                        inheritedContext={message.metadata?.inherited_context}
+                        sourceTrace={message.metadata?.source_trace}
+                      />
+                    </>
                   ) : (
                     <div>{getDisplayMessageContent(message)}</div>
                   )}
@@ -146,9 +161,9 @@ export function ConversationPage() {
                       ) : null}
                       <Link
                         className="secondary-button"
-                        to={`/workspace?task_id=${encodeURIComponent(getMessageTaskId(message))}`}
+                        to={`/workspace?conversation_id=${encodeURIComponent(conversationIdFromQuery)}&task_id=${encodeURIComponent(getMessageTaskId(message))}&view=task`}
                       >
-                        在工作台中打开
+                        查看本次结果
                       </Link>
                     </div>
                   ) : null}

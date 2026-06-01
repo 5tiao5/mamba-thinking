@@ -9,11 +9,15 @@ from product_agent.schemas import (
     WorkspaceEvidenceStatusView,
     WorkspaceGapView,
     WorkspaceGraphEdgeView,
+    WorkspaceInheritedContextView,
     WorkspaceIdeaView,
+    WorkspaceKnowledgeHitView,
     WorkspacePaperView,
     WorkspaceSnapshotResponse,
+    WorkspaceSourceTraceView,
     WorkspaceTraceView,
 )
+from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 
 
 _CONV_CACHE_MAX_SIZE = 128
@@ -73,6 +77,11 @@ class WorkspaceService:
             summary=workspace.summary,
             summary_payload=workspace.summary_payload or {},
         )
+        source_trace = _build_source_trace_view(
+            summary_payload=workspace.summary_payload or {},
+            trace=trace,
+        )
+        inherited_context = _build_inherited_context_view(trace)
         return WorkspaceSnapshotResponse(
             task_id=workspace.task_id,
             topic=workspace.topic,
@@ -86,6 +95,7 @@ class WorkspaceService:
                     taxonomy_category=paper.taxonomy_category,
                     citation_count=paper.citation_count,
                     url=paper.url,
+                    is_new_this_round=bool(getattr(paper, "is_new_this_round", False)),
                 )
                 for paper in workspace.papers
             ],
@@ -120,6 +130,8 @@ class WorkspaceService:
             ],
             alignment_score=workspace.alignment_score,
             evidence_status=WorkspaceEvidenceStatusView(**evidence_status),
+            source_trace=source_trace,
+            inherited_context=inherited_context,
             trace=WorkspaceTraceView(
                 thought_trace=_normalize_trace_entries(trace.get("thought_trace", [])),
                 action_history=_normalize_trace_entries(trace.get("action_history", [])),
@@ -183,7 +195,7 @@ class WorkspaceService:
         synthetic_workspace.task_id = f"conversation::{conversation_id}"
         synthetic_workspace.topic = topic
         synthetic_workspace.summary = merged_summary
-        synthetic_workspace.summary_payload = {}
+        synthetic_workspace.summary_payload = dict(valid_workspaces[0].summary_payload or {})
         synthetic_workspace.papers = merged_papers
         synthetic_workspace.taxonomy = merged_taxonomy
         synthetic_workspace.graph_edges = merged_graph_edges
@@ -194,6 +206,11 @@ class WorkspaceService:
 
         trace = synthetic_workspace.trace or {}
         evidence_status = _build_evidence_status(synthetic_workspace)
+        source_trace = _build_source_trace_view(
+            summary_payload=synthetic_workspace.summary_payload or {},
+            trace=trace,
+        )
+        inherited_context = _build_inherited_context_view(trace)
         result = WorkspaceSnapshotResponse(
             task_id=synthetic_workspace.task_id,
             topic=synthetic_workspace.topic,
@@ -207,6 +224,7 @@ class WorkspaceService:
                     taxonomy_category=paper.taxonomy_category,
                     citation_count=paper.citation_count,
                     url=paper.url,
+                    is_new_this_round=False,
                 )
                 for paper in synthetic_workspace.papers
             ],
@@ -241,6 +259,8 @@ class WorkspaceService:
             ],
             alignment_score=synthetic_workspace.alignment_score,
             evidence_status=WorkspaceEvidenceStatusView(**evidence_status),
+            source_trace=source_trace,
+            inherited_context=inherited_context,
             trace=WorkspaceTraceView(
                 thought_trace=_normalize_trace_entries(trace.get("thought_trace", [])),
                 action_history=_normalize_trace_entries(trace.get("action_history", [])),
@@ -256,11 +276,65 @@ class WorkspaceService:
 
         return result
 
+    def get_conversation_workspace_hints(
+        self,
+        conversation_id: str,
+        *,
+        max_branches: int = 3,
+        max_gaps: int = 2,
+        max_papers: int = 2,
+    ) -> list[str]:
+        """
+        Extract concise, reusable hints from the aggregated conversation workspace.
+
+        These hints are intended for the next follow-up round so planner/searcher
+        can reuse the conversation's strongest branches, gaps, and representative
+        papers instead of restarting from zero.
+        """
+        snapshot = self.get_conversation_workspace_snapshot(conversation_id)
+        if snapshot is None:
+            return []
+
+        hints: list[str] = []
+        seen: set[str] = set()
+
+        def add_hint(value: str, *, max_length: int = 90) -> None:
+            text = clean_internal_context_text(value, max_length=max_length)
+            if not text:
+                return
+            normalized = text.lower()
+            if normalized in seen:
+                return
+            seen.add(normalized)
+            hints.append(text)
+
+        evidence_status = snapshot.evidence_status
+        for branch_name in list(evidence_status.candidate_branches or [])[:max_branches]:
+            add_hint(branch_name, max_length=80)
+
+        branch_hints_added = len(hints)
+        for branch in snapshot.taxonomy.get("branches", []) or []:
+            if branch_hints_added >= max_branches:
+                break
+            branch_name = str(branch.get("name", "") or "").strip()
+            paper_count = int(branch.get("paper_count", 0) or 0)
+            if branch_name and paper_count > 0:
+                add_hint(branch_name, max_length=80)
+                branch_hints_added = len(hints)
+
+        for gap in snapshot.gaps[:max_gaps]:
+            add_hint(_gap_hint_from_summary(gap.summary), max_length=100)
+
+        for paper in snapshot.papers[:max_papers]:
+            add_hint(paper.title, max_length=100)
+
+        return clean_internal_context_items(hints, max_length=100)
+
 
 def _build_evidence_status(workspace) -> dict:
     papers = list(workspace.papers or [])
     total_papers = len(papers)
-    fallback_papers = [paper for paper in papers if (paper.source or "").lower() == "fallback"]
+    fallback_papers = [paper for paper in papers if (paper.source or "").lower() in {"fallback", "seed"}]
     fallback_paper_count = len(fallback_papers)
     real_paper_count = total_papers - fallback_paper_count
     fallback_ratio = round(fallback_paper_count / total_papers, 3) if total_papers else 0.0
@@ -454,6 +528,23 @@ def _stable_text_id(seed: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
 
 
+def _gap_hint_from_summary(summary: str) -> str:
+    text = clean_internal_context_text(summary, max_length=120)
+    if not text:
+        return ""
+    lower = text.lower()
+    branch_match = re.search(r"[「\"]([^」\"]+)[」\"]", text)
+    if "缺少关键概念" in text and branch_match:
+        return f"{branch_match.group(1)} 关键概念"
+    if "尚未覆盖研究方向" in text and branch_match:
+        return branch_match.group(1)
+    if lower.startswith("missing required concepts in "):
+        return text.replace("缺少关键概念：", " ").replace("缺少关键概念", " ").strip()
+    if lower.startswith("missing taxonomy branch:"):
+        return text.split(":", 1)[-1].strip()
+    return text
+
+
 def _normalize_trace_entries(entries) -> list[dict]:
     normalized: list[dict] = []
     for index, entry in enumerate(entries or []):
@@ -462,6 +553,114 @@ def _normalize_trace_entries(entries) -> list[dict]:
         else:
             normalized.append({"step": index + 1, "content": str(entry)})
     return normalized
+
+
+def _latest_research_context_bundle(trace: dict) -> dict:
+    context_inputs = list((trace or {}).get("context_inputs", []) or [])
+    if context_inputs and isinstance(context_inputs[0], dict) and context_inputs[0].get("source") == "conversation_workspace":
+        for entry in context_inputs:
+            if isinstance(entry, dict) and entry.get("kind") == "research_context_bundle":
+                return dict(entry)
+        return {}
+    for entry in reversed(context_inputs):
+        if isinstance(entry, dict) and entry.get("kind") == "research_context_bundle":
+            return dict(entry)
+    return {}
+
+
+def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> WorkspaceSourceTraceView | None:
+    grounding = summary_payload.get("context_grounding", {}) if isinstance(summary_payload, dict) else {}
+    bundle = _latest_research_context_bundle(trace)
+    retrieval_outcome = grounding.get("retrieval_outcome", {}) if isinstance(grounding, dict) else {}
+
+    knowledge_hits_payload = grounding.get("knowledge_hits", []) if isinstance(grounding, dict) else []
+    normalized_hits = [
+        WorkspaceKnowledgeHitView(
+            title=str(item.get("title", "")).strip(),
+            scope=str(item.get("scope", "")).strip() or "shared",
+            source_type=str(item.get("source_type", "")).strip(),
+            source_task_id=(str(item.get("source_task_id", "")).strip() or None),
+            score=float(item.get("score", 0.0) or 0.0),
+        )
+        for item in knowledge_hits_payload
+        if isinstance(item, dict) and str(item.get("title", "")).strip()
+    ]
+    if not normalized_hits and bundle:
+        normalized_hits = [
+            WorkspaceKnowledgeHitView(title=title)
+            for title in bundle.get("knowledge_titles", []) or []
+            if str(title).strip()
+        ]
+
+    workspace_hints = grounding.get("workspace_hints", []) if isinstance(grounding, dict) else []
+    if not workspace_hints:
+        workspace_hints = bundle.get("workspace_hints", []) or []
+
+    recent_user_turns = grounding.get("recent_user_turns", []) if isinstance(grounding, dict) else []
+    if not recent_user_turns:
+        recent_turns = bundle.get("recent_turns", []) or []
+        recent_user_turns = [str(item).strip() for item in recent_turns if str(item).strip()]
+
+    knowledge_scope = str(grounding.get("knowledge_scope", "")).strip() if isinstance(grounding, dict) else ""
+    if not knowledge_scope:
+        knowledge_scope = str(bundle.get("knowledge_scope", "")).strip() or "shared"
+
+    knowledge_hit_count = int(grounding.get("knowledge_hit_count", 0) or 0) if isinstance(grounding, dict) else 0
+    if not knowledge_hit_count:
+        knowledge_hit_count = int(bundle.get("knowledge_hit_count", 0) or len(normalized_hits))
+
+    workspace_hint_count = int(grounding.get("workspace_hint_count", 0) or 0) if isinstance(grounding, dict) else 0
+    if not workspace_hint_count:
+        workspace_hint_count = len(workspace_hints)
+
+    recent_turn_count = int(grounding.get("recent_turn_count", 0) or 0) if isinstance(grounding, dict) else 0
+    if not recent_turn_count:
+        recent_turn_count = len(recent_user_turns)
+
+    if not normalized_hits and not workspace_hints and not recent_user_turns and not bundle and not grounding:
+        return None
+
+    return WorkspaceSourceTraceView(
+        knowledge_scope=knowledge_scope if knowledge_scope in {"none", "conversation_only", "shared"} else "shared",
+        retrieval_plan=clean_internal_context_text(str(grounding.get("retrieval_plan", "") or ""), max_length=180),
+        retrieval_status=clean_internal_context_text(str(retrieval_outcome.get("status", "") or ""), max_length=80),
+        retrieval_message=clean_internal_context_text(str(retrieval_outcome.get("message", "") or ""), max_length=240),
+        filtered_out_count=int(retrieval_outcome.get("filtered_out_count", 0) or 0),
+        fallback_used=bool(retrieval_outcome.get("fallback_used", False)),
+        refresh_triggered=bool(retrieval_outcome.get("refresh_triggered", False)),
+        novel_paper_count=int(retrieval_outcome.get("novel_paper_count", 0) or 0),
+        reused_paper_count=int(retrieval_outcome.get("reused_paper_count", 0) or 0),
+        knowledge_hit_count=knowledge_hit_count,
+        knowledge_hits=normalized_hits,
+        workspace_hint_count=workspace_hint_count,
+        workspace_hints=[str(item).strip() for item in workspace_hints if str(item).strip()][:5],
+        recent_turn_count=recent_turn_count,
+        recent_user_turns=[str(item).strip() for item in recent_user_turns if str(item).strip()][:3],
+    )
+
+
+def _build_inherited_context_view(trace: dict) -> WorkspaceInheritedContextView | None:
+    bundle = _latest_research_context_bundle(trace)
+    if not bundle:
+        return None
+
+    workspace_summary = clean_internal_context_text(str(bundle.get("workspace_summary", "") or ""), max_length=320)
+    conversation_topic = clean_internal_context_text(str(bundle.get("conversation_topic", "") or ""), max_length=180)
+    workspace_hints = [
+        clean_internal_context_text(str(item), max_length=120)
+        for item in (bundle.get("workspace_hints", []) or [])
+    ]
+    recent_turns = [
+        clean_internal_context_text(str(item), max_length=180)
+        for item in (bundle.get("recent_turns", []) or [])
+    ]
+
+    return WorkspaceInheritedContextView(
+        conversation_topic=conversation_topic,
+        workspace_summary=workspace_summary,
+        workspace_hints=[item for item in workspace_hints if item][:5],
+        recent_turns=[item for item in recent_turns if item][:4],
+    )
 
 
 def _normalize_workspace_summary(*, topic: str, summary: str, summary_payload: dict) -> str:

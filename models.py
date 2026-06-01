@@ -20,6 +20,7 @@ class PaperNode:
     references: List[str] = field(default_factory=list)
     is_gap_candidate: bool = False
     confidence_score: float = 1.0
+    is_new_this_round: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -37,6 +38,7 @@ class PaperNode:
             "references": self.references,
             "is_gap_candidate": self.is_gap_candidate,
             "confidence_score": self.confidence_score,
+            "is_new_this_round": self.is_new_this_round,
         }
 
 
@@ -62,8 +64,23 @@ class EvolutionEdge:
 
 class ResearchState(TypedDict, total=False):
     topic: str
+    conversation_topic: str
+    mode: str
     max_results: int
     search_queries: List[str]
+    knowledge_scope: str
+    query_intent: Dict[str, Any]
+    retrieval_plan: Dict[str, Any]
+    retrieval_outcome: Dict[str, Any]
+    knowledge_context: List[str]
+    knowledge_hits: List[Dict[str, Any]]
+    recent_context: List[Dict[str, Any]]
+    context_inputs: List[Dict[str, Any]]
+    conversation_workspace_context: List[str]
+    conversation_workspace_summary: str
+    previous_round_task_id: str
+    previous_round_paper_ids: List[str]
+    previous_round_query_intent: Dict[str, Any]
     paper_nodes: Dict[str, PaperNode]
     review_texts: List[str]
     expert_taxonomy: Dict[str, Any]
@@ -76,7 +93,7 @@ class ResearchState(TypedDict, total=False):
     final_report: str
     final_report_id: str
     final_report_text: str
-    final_report_summary: str
+    final_report_summary: Dict[str, Any]
     mermaid_graph: str
     controller_step: int
     next_action: str

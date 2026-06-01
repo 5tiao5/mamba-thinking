@@ -1,5 +1,12 @@
-import type { WorkspaceEvidenceStatus } from "../../types/api";
 import { cleanDisplayText } from "../../lib/displayText";
+import {
+  formatRetrievalMessage,
+  formatRetrievalPlan,
+  retrievalStatusLabel,
+  retrievalStatusTone,
+  shouldHighlightRetrievalStatus,
+} from "../../lib/groundingText";
+import type { WorkspaceEvidenceStatus, WorkspaceSourceTrace } from "../../types/api";
 import { StatusPill } from "../ui/StatusPill";
 
 type WorkspaceSummarySectionProps = {
@@ -13,6 +20,7 @@ type WorkspaceSummarySectionProps = {
   recommendation?: string;
   usesFallbackPapers: boolean;
   evidenceStatus?: WorkspaceEvidenceStatus;
+  sourceTrace?: WorkspaceSourceTrace | null;
 };
 
 function formatScore(score: number) {
@@ -41,8 +49,20 @@ export function WorkspaceSummarySection({
   recommendation,
   usesFallbackPapers,
   evidenceStatus,
+  sourceTrace,
 }: WorkspaceSummarySectionProps) {
   const isEvidenceInsufficient = evidenceStatus?.insufficient;
+  const retrievalStatus = retrievalStatusLabel(sourceTrace?.retrieval_status);
+  const retrievalMessage = formatRetrievalMessage(sourceTrace, 180);
+  const retrievalPlan = formatRetrievalPlan(sourceTrace?.retrieval_plan, 140);
+  const showRetrievalBanner =
+    !isEvidenceInsufficient && shouldHighlightRetrievalStatus(sourceTrace?.retrieval_status);
+  const showRetrievalNote = Boolean(retrievalStatus || retrievalMessage || retrievalPlan);
+  const retrievalNoteToneClass = shouldHighlightRetrievalStatus(sourceTrace?.retrieval_status)
+    ? "workspace-note-card-warning"
+    : "workspace-note-card-accent";
+  const retrievalNoteLabel = retrievalStatus || "检索状态";
+  const showHeroNotes = Boolean(priorityNote || recommendation || showRetrievalNote);
 
   return (
     <section className="workspace-hero surface">
@@ -53,7 +73,7 @@ export function WorkspaceSummarySection({
           {summary ? cleanSummaryText(summary) : "运行任务后，这里会汇总本轮分析的核心结论。"}
         </div>
 
-        {priorityNote || recommendation ? (
+        {showHeroNotes ? (
           <div className="workspace-hero-notes">
             {priorityNote ? (
               <div className="workspace-note-card">
@@ -65,6 +85,20 @@ export function WorkspaceSummarySection({
               <div className="workspace-note-card workspace-note-card-accent">
                 <div className="workspace-note-label">建议动作</div>
                 <div>{cleanDisplayText(recommendation)}</div>
+              </div>
+            ) : null}
+            {showRetrievalNote ? (
+              <div className={`workspace-note-card ${retrievalNoteToneClass}`}>
+                <div className="workspace-note-card-header">
+                  <div className="workspace-note-label">本轮检索</div>
+                  {retrievalStatus ? (
+                    <StatusPill compact tone={retrievalStatusTone(sourceTrace?.retrieval_status)}>
+                      {retrievalNoteLabel}
+                    </StatusPill>
+                  ) : null}
+                </div>
+                <div>{retrievalMessage || "本轮检索策略已经和当前问题对齐。"}</div>
+                {retrievalPlan ? <div className="workspace-note-support">{retrievalPlan}</div> : null}
               </div>
             ) : null}
           </div>
@@ -100,6 +134,16 @@ export function WorkspaceSummarySection({
             {evidenceStatus?.candidate_branches?.length
               ? ` 候选方向：${evidenceStatus.candidate_branches.map((item) => cleanDisplayText(item, 80)).filter(Boolean).join(" / ")}。`
               : ""}
+          </span>
+        </div>
+      ) : showRetrievalBanner ? (
+        <div className="workspace-fallback-banner">
+          <StatusPill compact tone={retrievalStatusTone(sourceTrace?.retrieval_status)}>
+            {retrievalNoteLabel}
+          </StatusPill>
+          <span>
+            {retrievalMessage}
+            {retrievalPlan ? ` 当前策略：${retrievalPlan}。` : ""}
           </span>
         </div>
       ) : usesFallbackPapers ? (

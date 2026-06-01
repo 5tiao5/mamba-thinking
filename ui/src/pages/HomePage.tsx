@@ -78,7 +78,7 @@ export function HomePage() {
         enabled_tools: [],
       });
       setTaskId(response.data.task_id);
-      setStatus("研究任务已创建，可以打开工作台运行或查看结果。");
+      setStatus("研究任务已创建，可以查看本研究总览，也可以打开本次结果继续分析。");
     } catch (error) {
       setStatus(`创建任务失败：${toErrorMessage(error)}`);
     } finally {
@@ -106,8 +106,11 @@ export function HomePage() {
           <Link className="secondary-button" to={`/conversation?conversation_id=${encodeURIComponent(DEMO_CONVERSATION_ID)}`}>
             预览对话
           </Link>
-          <Link className="secondary-button" to={`/workspace?task_id=${encodeURIComponent(DEMO_WORKSPACE_TASK_ID)}`}>
-            预览工作台
+          <Link
+            className="secondary-button"
+            to={`/workspace?conversation_id=${encodeURIComponent(DEMO_CONVERSATION_ID)}&task_id=${encodeURIComponent(DEMO_WORKSPACE_TASK_ID)}&view=conversation`}
+          >
+            预览研究总览
           </Link>
         </div>
       </section>
@@ -174,12 +177,23 @@ export function HomePage() {
               <div className={taskId ? "simple-step simple-step-done" : "simple-step"}>
                 <span>3</span>
                 <div>
-                  <strong>打开工作台</strong>
-                  <p>查看论文、taxonomy、gap 和 ideas。</p>
-                  {taskId ? (
-                    <Link className="ghost-button" to={`/workspace?task_id=${encodeURIComponent(taskId)}`}>
-                      打开工作台
-                    </Link>
+                  <strong>查看研究结果</strong>
+                  <p>总览看整个研究主题，本次结果看这一轮的具体增量。</p>
+                  {taskId && conversation ? (
+                    <div className="button-row">
+                      <Link
+                        className="ghost-button"
+                        to={`/workspace?conversation_id=${encodeURIComponent(conversation.conversation_id)}&task_id=${encodeURIComponent(taskId)}&view=conversation`}
+                      >
+                        打开本研究总览
+                      </Link>
+                      <Link
+                        className="ghost-button"
+                        to={`/workspace?conversation_id=${encodeURIComponent(conversation.conversation_id)}&task_id=${encodeURIComponent(taskId)}&view=task`}
+                      >
+                        查看本次结果
+                      </Link>
+                    </div>
                   ) : null}
                 </div>
               </div>

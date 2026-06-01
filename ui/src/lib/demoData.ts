@@ -72,6 +72,7 @@ export const demoWorkspace: WorkspaceSnapshot = {
       taxonomy_category: "tool-use benchmark",
       citation_count: 820,
       url: "https://arxiv.org/abs/2307.16789",
+      is_new_this_round: false,
     },
     {
       paper_id: "paper-swebench",
@@ -81,6 +82,7 @@ export const demoWorkspace: WorkspaceSnapshot = {
       taxonomy_category: "code agent evaluation",
       citation_count: 1040,
       url: "https://arxiv.org/abs/2310.06770",
+      is_new_this_round: false,
     },
     {
       paper_id: "paper-agentbench",
@@ -90,6 +92,7 @@ export const demoWorkspace: WorkspaceSnapshot = {
       taxonomy_category: "general agent benchmark",
       citation_count: 760,
       url: "https://arxiv.org/abs/2308.03688",
+      is_new_this_round: false,
     },
     {
       paper_id: "paper-webarena",
@@ -99,6 +102,7 @@ export const demoWorkspace: WorkspaceSnapshot = {
       taxonomy_category: "web task environment",
       citation_count: 690,
       url: "https://arxiv.org/abs/2307.13854",
+      is_new_this_round: false,
     },
   ],
   taxonomy: {

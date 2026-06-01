@@ -10,6 +10,8 @@ import { DEMO_CONVERSATION_ID, DEMO_WORKSPACE_TASK_ID } from "../lib/demoData";
 import { taskStatusLabel } from "../lib/productText";
 import type { ResearchTaskDetailItem, WorkspacePaper, WorkspaceSnapshot } from "../types/api";
 
+type WorkspaceView = "conversation" | "task";
+
 function taskStatusMessage(task: ResearchTaskDetailItem) {
   if (task.status === "running") {
     return "结果仍在生成中，请稍后再刷新。";
@@ -23,11 +25,30 @@ function taskStatusMessage(task: ResearchTaskDetailItem) {
   return `当前状态为${taskStatusLabel(task.status)}，暂时没有可展示结果。`;
 }
 
+function resolveWorkspaceView(
+  taskId: string,
+  conversationId: string,
+  requestedView: string | null
+): WorkspaceView {
+  if (requestedView === "conversation" && conversationId) {
+    return "conversation";
+  }
+  if (requestedView === "task" && taskId) {
+    return "task";
+  }
+  if (conversationId && !taskId) {
+    return "conversation";
+  }
+  return "task";
+}
+
 export function WorkspacePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const taskIdFromQuery = searchParams.get("task_id") ?? "";
   const conversationIdFromQuery = searchParams.get("conversation_id") ?? "";
+  const requestedView = searchParams.get("view");
+  const activeView = resolveWorkspaceView(taskIdFromQuery, conversationIdFromQuery, requestedView);
   const [taskId, setTaskId] = useState(taskIdFromQuery);
   const [conversationId, setConversationId] = useState(conversationIdFromQuery);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
@@ -38,12 +59,50 @@ export function WorkspacePage() {
   const [selectedPaperId, setSelectedPaperId] = useState("");
   const [selectedBranchId, setSelectedBranchId] = useState("");
 
-  useEffect(() => {
-    if (taskIdFromQuery) {
-      setTaskId(taskIdFromQuery);
-      void handleLoadWorkspace(taskIdFromQuery);
+  function syncWorkspaceRoute(next: {
+    view: WorkspaceView;
+    conversationId?: string;
+    taskId?: string;
+  }) {
+    const params = new URLSearchParams();
+    if (next.conversationId) {
+      params.set("conversation_id", next.conversationId);
     }
-  }, [taskIdFromQuery]);
+    if (next.taskId) {
+      params.set("task_id", next.taskId);
+    }
+    params.set("view", next.view);
+    setSearchParams(params);
+  }
+
+  useEffect(() => {
+    setTaskId(taskIdFromQuery);
+    setConversationId(conversationIdFromQuery);
+
+    if (activeView === "conversation" && conversationIdFromQuery) {
+      void handleLoadConversationWorkspace(conversationIdFromQuery, {
+        syncUrl: false,
+        fallbackTaskId: taskIdFromQuery,
+      });
+      return;
+    }
+
+    if (taskIdFromQuery) {
+      void handleLoadWorkspace(taskIdFromQuery, {
+        syncUrl: false,
+        preferredConversationId: conversationIdFromQuery,
+      });
+      return;
+    }
+
+    if (conversationIdFromQuery) {
+      void handleLoadConversationWorkspace(conversationIdFromQuery, { syncUrl: false });
+      return;
+    }
+
+    setWorkspace(null);
+    setStatus("从对话页或首页进入后，可以运行分析或读取工作台。");
+  }, [activeView, conversationIdFromQuery, taskIdFromQuery]);
 
   const paperCategories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -111,7 +170,16 @@ export function WorkspacePage() {
     return `建议先围绕“${topIdea}”继续细化，并补充真实论文证据。`;
   }, [workspace]);
 
-  async function handleLoadWorkspace(targetId = taskId) {
+  const viewHeadline = activeView === "conversation" ? "本研究总览" : "本次结果";
+  const viewDescription =
+    activeView === "conversation"
+      ? "聚合同一研究主题下所有已完成任务的累计结果，适合看全局脉络。"
+      : "聚焦某一次生成或某一次追问的局部结果，适合回看这轮具体增量。";
+
+  async function handleLoadWorkspace(
+    targetId = taskId,
+    options?: { syncUrl?: boolean; preferredConversationId?: string }
+  ) {
     const trimmedId = targetId.trim();
     if (!trimmedId) {
       setStatus("请先从对话页或首页选择一个研究任务。");
@@ -127,16 +195,24 @@ export function WorkspacePage() {
       setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
       setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
       setStatus("工作台已加载。");
-      setSearchParams({ task_id: trimmedId });
+      let nextConversationId = options?.preferredConversationId || conversationId || conversationIdFromQuery;
       if (trimmedId === DEMO_WORKSPACE_TASK_ID) {
-        setConversationId(DEMO_CONVERSATION_ID);
+        nextConversationId = DEMO_CONVERSATION_ID;
       } else {
         try {
           const taskResponse = await api.getTask(trimmedId);
-          setConversationId(taskResponse.data.conversation_id);
+          nextConversationId = taskResponse.data.conversation_id;
         } catch {
-          setConversationId("");
+          nextConversationId = "";
         }
+      }
+      setConversationId(nextConversationId);
+      if (options?.syncUrl !== false) {
+        syncWorkspaceRoute({
+          view: "task",
+          taskId: trimmedId,
+          conversationId: nextConversationId,
+        });
       }
     } catch (error) {
       setWorkspace(null);
@@ -178,8 +254,10 @@ export function WorkspacePage() {
     }
   }
 
-  async function handleLoadConversationWorkspace() {
-    const targetConversationId = conversationId || conversationIdFromQuery;
+  async function handleLoadConversationWorkspace(
+    targetConversationId = conversationId || conversationIdFromQuery,
+    options?: { syncUrl?: boolean; fallbackTaskId?: string }
+  ) {
     if (!targetConversationId) {
       setStatus("当前任务还没有关联到会话，无法读取本研究总览。");
       return;
@@ -193,8 +271,15 @@ export function WorkspacePage() {
       setSelectedCategory("all");
       setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
       setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
+      setConversationId(targetConversationId);
       setStatus("本研究总览已加载。");
-      setSearchParams({ conversation_id: targetConversationId, task_id: taskId });
+      if (options?.syncUrl !== false) {
+        syncWorkspaceRoute({
+          view: "conversation",
+          conversationId: targetConversationId,
+          taskId: options?.fallbackTaskId || taskId || taskIdFromQuery,
+        });
+      }
     } catch (error) {
       setStatus(`读取本研究总览失败：${toErrorMessage(error)}`);
     } finally {
@@ -205,7 +290,12 @@ export function WorkspacePage() {
   function handleCloseWorkspace() {
     const targetConversationId = conversationId || conversationIdFromQuery;
     if (targetConversationId) {
-      navigate(`/conversation?conversation_id=${encodeURIComponent(targetConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      const params = new URLSearchParams();
+      params.set("conversation_id", targetConversationId);
+      if (taskId) {
+        params.set("task_id", taskId);
+      }
+      navigate(`/conversation?${params.toString()}`);
       return;
     }
     navigate("/conversation");
@@ -218,25 +308,63 @@ export function WorkspacePage() {
           <div className="workspace-context-summary">
             <div className="section-eyebrow">研究工作台</div>
             <strong>{workspace?.topic || "研究工作台"}</strong>
-            <span>{workspace ? "当前展示完整研究结果，可以继续刷新或切换到本研究总览。" : "从左侧研究记录进入后，这里会展示证据、方向和建议。"}</span>
+            <span>{workspace ? `当前查看：${viewHeadline}。${viewDescription}` : "从左侧研究记录进入后，这里会展示证据、方向和建议。"}</span>
           </div>
-          <div className="button-row">
+          <div className="workspace-toolbar-actions">
+            <div className="workspace-view-switch" role="tablist" aria-label="工作台视图切换">
+              <button
+                className={activeView === "conversation" ? "primary-button" : "secondary-button"}
+                disabled={loading || !(conversationId || conversationIdFromQuery)}
+                onClick={() =>
+                  handleLoadConversationWorkspace(conversationId || conversationIdFromQuery, {
+                    fallbackTaskId: taskId || taskIdFromQuery,
+                  })
+                }
+                type="button"
+              >
+                本研究总览
+              </button>
+              <button
+                className={activeView === "task" ? "primary-button" : "secondary-button"}
+                disabled={loading || !(taskId || taskIdFromQuery)}
+                onClick={() =>
+                  handleLoadWorkspace(taskId || taskIdFromQuery, {
+                    preferredConversationId: conversationId || conversationIdFromQuery,
+                  })
+                }
+                type="button"
+              >
+                本次结果
+              </button>
+            </div>
+            <div className="button-row">
             <button className="secondary-button" onClick={handleCloseWorkspace} type="button">
-              关闭完整工作台
-            </button>
-            <button className="secondary-button" disabled={loading || !conversationId} onClick={handleLoadConversationWorkspace} type="button">
-              读取本研究总览
+              返回对话
             </button>
             <button className="primary-button" disabled={running} onClick={handleRunTask} type="button">
               {running ? "生成中" : "生成结果"}
             </button>
-            <button className="secondary-button" disabled={loading} onClick={() => handleLoadWorkspace()} type="button">
+            <button
+              className="secondary-button"
+              disabled={loading}
+              onClick={() =>
+                activeView === "conversation"
+                  ? handleLoadConversationWorkspace(conversationId || conversationIdFromQuery, {
+                      fallbackTaskId: taskId || taskIdFromQuery,
+                    })
+                  : handleLoadWorkspace(taskId || taskIdFromQuery, {
+                      preferredConversationId: conversationId || conversationIdFromQuery,
+                    })
+              }
+              type="button"
+            >
               {loading ? "刷新中" : "刷新结果"}
             </button>
+            </div>
           </div>
         </div>
         <details className="advanced-task-selector">
-          <summary>手动定位结果</summary>
+          <summary>手动定位本次结果</summary>
           <label>
             <span className="field-label">结果引用</span>
             <input
@@ -260,6 +388,7 @@ export function WorkspacePage() {
         paperCount={workspace?.papers.length ?? 0}
         priorityNote={priorityNote}
         recommendation={recommendation}
+        sourceTrace={workspace?.source_trace ?? null}
         summary={workspace?.summary}
         topic={workspace?.topic}
         usesFallbackPapers={usesFallbackPapers}
@@ -283,6 +412,7 @@ export function WorkspacePage() {
           onSelectPaper={setSelectedPaperId}
           papers={filteredPapers}
           selectedPaperId={selectedPaper?.paper_id ?? ""}
+          showRoundMarkers={activeView === "task"}
         />
       </section>
 
@@ -290,8 +420,10 @@ export function WorkspacePage() {
         evidenceStatus={workspace?.evidence_status}
         gaps={workspace?.gaps ?? []}
         graphEdges={workspace?.graph_edges ?? []}
+        inheritedContext={workspace?.inherited_context ?? null}
         ideas={workspace?.ideas ?? []}
         papers={workspace?.papers ?? []}
+        sourceTrace={workspace?.source_trace ?? null}
         trace={workspace?.trace ?? null}
       />
     </div>

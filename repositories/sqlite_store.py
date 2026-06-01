@@ -191,8 +191,8 @@ class SQLiteResearchTaskRepository:
                 """
                 INSERT INTO research_tasks (
                     task_id, conversation_id, topic, status, trigger_message_id,
-                    mode, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    mode, knowledge_scope, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_id,
@@ -201,6 +201,7 @@ class SQLiteResearchTaskRepository:
                     task.status,
                     task.trigger_message_id,
                     task.mode,
+                    task.knowledge_scope,
                     _dump_datetime(task.created_at),
                     _dump_datetime(task.updated_at),
                 ),
@@ -224,7 +225,7 @@ class SQLiteResearchTaskRepository:
                 """
                 UPDATE research_tasks
                 SET conversation_id = ?, topic = ?, status = ?, trigger_message_id = ?,
-                    mode = ?, created_at = ?, updated_at = ?
+                    mode = ?, knowledge_scope = ?, created_at = ?, updated_at = ?
                 WHERE task_id = ?
                 """,
                 (
@@ -233,6 +234,7 @@ class SQLiteResearchTaskRepository:
                     task.status,
                     task.trigger_message_id,
                     task.mode,
+                    task.knowledge_scope,
                     _dump_datetime(task.created_at),
                     _dump_datetime(task.updated_at),
                     task.task_id,
@@ -271,6 +273,11 @@ class SQLiteResearchTaskRepository:
             status=row["status"],
             trigger_message_id=row["trigger_message_id"],
             mode=row["mode"],
+            knowledge_scope=(
+                row["knowledge_scope"]
+                if "knowledge_scope" in row.keys() and row["knowledge_scope"]
+                else "shared"
+            ),
             created_at=_load_datetime(row["created_at"]),
             updated_at=_load_datetime(row["updated_at"]),
         )
@@ -375,6 +382,7 @@ class SQLiteWorkspaceRepository:
             "taxonomy_category": paper.taxonomy_category,
             "citation_count": paper.citation_count,
             "url": paper.url,
+            "is_new_this_round": bool(getattr(paper, "is_new_this_round", False)),
         }
 
     @staticmethod

@@ -37,6 +37,7 @@ SCHEMA_STATEMENTS = (
         status TEXT NOT NULL,
         trigger_message_id TEXT,
         mode TEXT NOT NULL,
+        knowledge_scope TEXT NOT NULL DEFAULT 'shared',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
@@ -99,7 +100,19 @@ class SQLiteDatabase:
         with self.connect() as connection:
             for statement in SCHEMA_STATEMENTS:
                 connection.execute(statement)
+            self._ensure_runtime_schema(connection)
             connection.commit()
+
+    @staticmethod
+    def _ensure_runtime_schema(connection) -> None:
+        task_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(research_tasks)").fetchall()
+        }
+        if "knowledge_scope" not in task_columns:
+            connection.execute(
+                "ALTER TABLE research_tasks ADD COLUMN knowledge_scope TEXT NOT NULL DEFAULT 'shared'"
+            )
 
     @contextmanager
     def connect(self):

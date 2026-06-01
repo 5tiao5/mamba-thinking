@@ -11,6 +11,7 @@ class CreateKnowledgeDocumentRequest(BaseModel):
     tags: List[str] = Field(default_factory=list)
     source_url: Optional[str] = Field(default=None, max_length=500)
     source_task_id: Optional[str] = Field(default=None, max_length=100)
+    conversation_id: Optional[str] = Field(default=None, max_length=100)
     notes: Optional[str] = Field(default=None, max_length=4000)
 
 
@@ -18,6 +19,7 @@ class KnowledgeDocumentView(BaseModel):
     document_id: str
     title: str
     source_task_id: Optional[str] = None
+    conversation_id: Optional[str] = None
     content: str
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -25,3 +27,34 @@ class KnowledgeDocumentView(BaseModel):
 
 class ListKnowledgeDocumentsResponse(BaseModel):
     items: List[KnowledgeDocumentView] = Field(default_factory=list)
+
+
+class SearchPaperCandidatesRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+    limit: int = Field(default=3, ge=1, le=5)
+
+
+class PaperImportCandidateView(BaseModel):
+    candidate_id: str
+    title: str
+    authors: List[str] = Field(default_factory=list)
+    year: Optional[int] = None
+    abstract: str = ""
+    source_url: Optional[str] = None
+    pdf_url: Optional[str] = None
+    doi: Optional[str] = None
+    arxiv_id: Optional[str] = None
+    source: str
+    venue: Optional[str] = None
+    is_exact_match: bool = False
+
+
+class ListPaperImportCandidatesResponse(BaseModel):
+    items: List[PaperImportCandidateView] = Field(default_factory=list)
+
+
+class ImportPaperCandidateRequest(BaseModel):
+    candidate_id: str = Field(min_length=1, max_length=200)
+    conversation_id: Optional[str] = Field(default=None, max_length=100)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    tags: List[str] = Field(default_factory=list)

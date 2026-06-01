@@ -75,20 +75,20 @@ class TaxonomyAuditService:
                     AuditReport(
                         type="taxonomy",
                         severity="warning",
-                        description=f"Branch '{branch.name}' has no matched paper nodes.",
+                        description=f"研究方向“{branch.name}”当前没有匹配到论文证据。",
                         affected_items=[branch.name],
-                        suggestion="Add papers covering this branch.",
+                        suggestion="继续补充覆盖该研究方向的代表性论文或综述。",
                     )
                 )
                 gaps.append(
                     AuditGap(
                         type="taxonomy",
                         severity="error",
-                        description=f"Missing taxonomy branch: {branch.name}.",
+                        description=f"当前证据尚未覆盖研究方向“{branch.name}”。",
                         affected_items=[branch.name],
                         actionable=True,
                         related_papers=[],
-                        suggestion="Search for papers in this category.",
+                        suggestion="优先检索该方向的代表性论文、综述或 benchmark 工作。",
                     )
                 )
             if missing_concepts:
@@ -97,20 +97,20 @@ class TaxonomyAuditService:
                     AuditReport(
                         type="taxonomy",
                         severity="warning",
-                        description=f"Branch '{branch.name}' lacks required concepts: {joined}.",
+                        description=f"研究方向“{branch.name}”还缺少关键概念：{joined}。",
                         affected_items=[branch.name],
-                        suggestion="Find papers covering these concepts.",
+                        suggestion="补充能够覆盖这些关键概念的论文证据。",
                     )
                 )
                 gaps.append(
                     AuditGap(
                         type="taxonomy",
                         severity="warning",
-                        description=f"Missing required concepts in '{branch.name}': {joined}.",
+                        description=f"方向“{branch.name}”缺少关键概念：{joined}。",
                         affected_items=[branch.name],
                         actionable=True,
                         related_papers=matched_papers,
-                        suggestion="Add papers with these concepts.",
+                        suggestion="优先补充讨论这些概念的方法、评测或案例论文。",
                     )
                 )
 
@@ -119,16 +119,16 @@ class TaxonomyAuditService:
                 AuditReport(
                     type="taxonomy",
                     severity="error",
-                    description="No paper nodes are available for taxonomy coverage.",
+                    description="当前没有可用于 taxonomy 覆盖分析的论文节点。",
                     affected_items=[],
-                    suggestion="Ensure papers are loaded.",
+                    suggestion="请先完成论文检索或导入相关知识后再进行分析。",
                 )
             )
             gaps.append(
                 AuditGap(
                     type="taxonomy",
                     severity="error",
-                    description="No paper_nodes available for audit.",
+                    description="当前没有可用于审计的论文证据。",
                     affected_items=[],
                     actionable=False,
                 )

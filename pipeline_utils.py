@@ -112,19 +112,53 @@ _DEFAULT_SEEDS = [
 
 # ── Mode checks ───────────────────────────────────────────────────────────────
 
-def fast_mode() -> bool:
-    return os.environ.get("FAST_MODE") == "1"
+def _state_mode(state: Optional[Dict[str, Any]] = None) -> str:
+    mode = str((state or {}).get("mode", "")).strip().lower()
+    if mode in {"fast", "balanced", "default"}:
+        return mode
+    if os.environ.get("FAST_MODE") == "1":
+        return "fast"
+    if os.environ.get("BALANCED_MODE") == "1":
+        return "balanced"
+    return "default"
 
 
-def balanced_mode() -> bool:
-    return os.environ.get("BALANCED_MODE") == "1"
+def fast_mode(state: Optional[Dict[str, Any]] = None) -> bool:
+    return _state_mode(state) == "fast"
+
+
+def balanced_mode(state: Optional[Dict[str, Any]] = None) -> bool:
+    return _state_mode(state) == "balanced"
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
 
-def initial_state(topic: str, max_results: int = 8) -> ResearchState:
+def initial_state(
+    topic: str,
+    max_results: int = 8,
+    mode: str = "default",
+    conversation_workspace_context: List[str] | None = None,
+    research_context: Dict[str, Any] | None = None,
+) -> ResearchState:
+    context = dict(research_context or {})
+    workspace_context = context.get("conversation_workspace_context", conversation_workspace_context or [])
     return ResearchState(
         topic=topic,
+        conversation_topic=str(context.get("conversation_topic", topic)),
+        mode=mode,
+        knowledge_scope=str(context.get("knowledge_scope", "shared")),
+        query_intent=dict(context.get("query_intent", {}) or {}),
+        retrieval_plan=dict(context.get("retrieval_plan", {}) or {}),
+        retrieval_outcome=dict(context.get("retrieval_outcome", {}) or {}),
+        knowledge_context=list(context.get("knowledge_context", [])),
+        knowledge_hits=list(context.get("knowledge_hits", [])),
+        recent_context=list(context.get("recent_context", [])),
+        context_inputs=list(context.get("context_inputs", [])),
+        conversation_workspace_context=list(workspace_context or []),
+        conversation_workspace_summary=str(context.get("conversation_workspace_summary", "")),
+        previous_round_task_id=str(context.get("previous_round_task_id", "") or ""),
+        previous_round_paper_ids=list(context.get("previous_round_paper_ids", [])),
+        previous_round_query_intent=dict(context.get("previous_round_query_intent", {}) or {}),
         max_results=max_results,
         search_queries=[],
         paper_nodes={},
@@ -137,7 +171,7 @@ def initial_state(topic: str, max_results: int = 8) -> ResearchState:
         generated_ideas=[],
         final_report="",
         final_report_text="",
-        final_report_summary="",
+        final_report_summary={},
         mermaid_graph="",
         controller_step=0,
         next_action="planner",

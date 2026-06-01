@@ -165,6 +165,7 @@ def _map_paper(paper: Any) -> PaperRecord:
         taxonomy_category=str(payload.get("taxonomy_category", "")),
         citation_count=int(payload.get("citation_count", 0) or 0),
         url=str(payload.get("url", "")),
+        is_new_this_round=bool(payload.get("is_new_this_round", False)),
     )
 
 

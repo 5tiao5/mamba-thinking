@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Any, Callable, Dict
 
 from pipeline_utils import initial_state
 
@@ -33,12 +33,21 @@ def run_pipeline(
     topic: str,
     max_results: int = 8,
     *,
+    mode: str = "default",
+    conversation_workspace_context: list[str] | None = None,
+    research_context: dict[str, Any] | None = None,
     show_progress: bool = False,
     state_callback: Callable[[ResearchState], None] | None = None,
 ) -> ResearchState:
     """重构版主流程入口。"""
 
-    state = initial_state(topic, max_results)
+    state = initial_state(
+        topic,
+        max_results,
+        mode=mode,
+        conversation_workspace_context=conversation_workspace_context,
+        research_context=research_context,
+    )
     if state_callback:
         state_callback(state)
     return execute_agent_loop(

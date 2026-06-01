@@ -41,6 +41,7 @@ class ResearchTask:
     status: str = "queued"
     trigger_message_id: Optional[str] = None
     mode: str = "default"
+    knowledge_scope: str = "shared"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -59,6 +60,7 @@ class PaperRecord:
     taxonomy_category: str = ""
     citation_count: int = 0
     url: str = ""
+    is_new_this_round: bool = False
 
 
 @dataclass

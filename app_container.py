@@ -88,26 +88,30 @@ class AppContainer:
                 self.knowledge_repository,
                 vector_store=SQLiteVectorStore(self.database),
                 embedder=HashEmbedder(),
+                task_repository=self.task_repository,
                 async_indexing=True,
             )
         else:
             self.knowledge_service = KnowledgeService(
                 self.knowledge_repository,
                 embedder=HashEmbedder(),
+                task_repository=self.task_repository,
                 async_indexing=True,
             )
 
         # ✅ 再创建 research_service
-        self.research_service = ResearchService(
-            conversation_repository=self.conversation_repository,
-            task_repository=self.task_repository,
-            workspace_repository=self.workspace_repository,
-        )
-
         self.workspace_service = WorkspaceService(
             self.workspace_repository,
             conversation_repository=self.conversation_repository,
             task_repository=self.task_repository,
+        )
+        self.research_service = ResearchService(
+            conversation_repository=self.conversation_repository,
+            task_repository=self.task_repository,
+            workspace_repository=self.workspace_repository,
+            workspace_service=self.workspace_service,
+            message_service=self.message_service,
+            knowledge_service=self.knowledge_service,
         )
         self.tool_service = ToolService(self.tool_registry)
         self.skill_service = SkillService(self.skill_registry)

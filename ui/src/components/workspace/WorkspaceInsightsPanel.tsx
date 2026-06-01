@@ -1,15 +1,44 @@
-import { SectionHeader } from "../ui/SectionHeader";
-import { StatusPill } from "../ui/StatusPill";
+import { useState } from "react";
+
 import { cleanDisplayText } from "../../lib/displayText";
+import {
+  formatRetrievalMessage,
+  formatRetrievalPlan,
+  knowledgeScopeLabel,
+  knowledgeScopeTone,
+  retrievalStatusLabel,
+  retrievalStatusTone,
+  shouldHighlightRetrievalStatus,
+} from "../../lib/groundingText";
 import type {
   WorkspaceEvidenceStatus,
   WorkspaceGap,
   WorkspaceGraphEdge,
   WorkspaceIdea,
+  WorkspaceInheritedContext,
+  WorkspaceKnowledgeHit,
   WorkspacePaper,
   WorkspaceSnapshot,
+  WorkspaceSourceTrace,
 } from "../../types/api";
+import { SectionHeader } from "../ui/SectionHeader";
+import { StatusPill } from "../ui/StatusPill";
 import { WorkspaceGraphCanvas } from "./WorkspaceGraphCanvas";
+import {
+  formatGapCategory,
+  formatGapDetail,
+  formatGapEvidenceItems,
+  formatGapHeadline,
+  formatIdeaApproach,
+  formatIdeaApproachFull,
+  formatIdeaContribution,
+  formatIdeaContributionFull,
+  formatIdeaFeasibility,
+  formatIdeaFeasibilityFull,
+  formatIdeaSummary,
+  formatIdeaSummaryFull,
+  gapCategoryTone,
+} from "./workspaceFormatters";
 
 function severityTone(severity: string): "danger" | "warning" | "neutral" {
   const normalized = severity.toLowerCase();
@@ -26,7 +55,36 @@ function severityLabel(severity: string) {
   return severity || "待判断";
 }
 
-function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
+function uniqueTexts(items: string[], maxItems: number, maxLength = 72) {
+  const seen = new Set<string>();
+  const values: string[] = [];
+
+  for (const item of items) {
+    const cleaned = cleanDisplayText(item, maxLength);
+    if (!cleaned || seen.has(cleaned)) {
+      continue;
+    }
+    seen.add(cleaned);
+    values.push(cleaned);
+    if (values.length >= maxItems) {
+      break;
+    }
+  }
+
+  return values;
+}
+
+function formatKnowledgeHit(hit: WorkspaceKnowledgeHit) {
+  const title = cleanDisplayText(hit.title, 68) || "未命名资料";
+  const parts = [hit.source_type, hit.scope].map((item) => cleanDisplayText(item, 16)).filter(Boolean);
+  return {
+    title,
+    meta: parts.join(" / "),
+    score: Number.isFinite(hit.score) ? hit.score.toFixed(2) : "",
+  };
+}
+
+function GapList({ gaps, papers }: { gaps: WorkspaceGap[]; papers: WorkspacePaper[] }) {
   if (!gaps.length) {
     return <div className="empty-state">暂时没有整理出稳定的研究空白。</div>;
   }
@@ -35,14 +93,24 @@ function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
     <div className="insight-list">
       {gaps.map((gap, index) => (
         <article className="insight-item" key={`${gap.summary}-${index}`}>
+          <div className="insight-meta-row">
+            <span className={`insight-kind insight-kind-${gapCategoryTone(gap)}`}>{formatGapCategory(gap)}</span>
+          </div>
           <div className="item-heading">
-            <div className="insight-title">{cleanDisplayText(gap.summary)}</div>
+            <div className="insight-title">{formatGapHeadline(gap, papers)}</div>
             <StatusPill compact tone={severityTone(gap.severity)}>
               {severityLabel(gap.severity)}
             </StatusPill>
           </div>
-          {gap.evidence.length ? (
-            <div className="fine-print">{gap.evidence.map((item) => cleanDisplayText(item)).filter(Boolean).join(" / ")}</div>
+          <div className="fine-print insight-copy">{formatGapDetail(gap, papers)}</div>
+          {formatGapEvidenceItems(gap, papers).length ? (
+            <div className="insight-chip-wrap">
+              {formatGapEvidenceItems(gap, papers).slice(0, 3).map((item) => (
+                <span className="insight-chip" key={item}>
+                  {item}
+                </span>
+              ))}
+            </div>
           ) : null}
         </article>
       ))}
@@ -50,7 +118,99 @@ function GapList({ gaps }: { gaps: WorkspaceGap[] }) {
   );
 }
 
-function IdeaList({ ideas }: { ideas: WorkspaceIdea[] }) {
+function IdeaCard({ idea, papers }: { idea: WorkspaceIdea; papers: WorkspacePaper[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const title = cleanDisplayText(idea.title, 160) || "未命名建议";
+  const summary = formatIdeaSummary(idea, papers);
+  const approach = formatIdeaApproach(idea, papers);
+  const feasibility = formatIdeaFeasibility(idea, papers);
+  const contribution = formatIdeaContribution(idea, papers);
+
+  const fullSummary = formatIdeaSummaryFull(idea, papers);
+  const fullApproach = formatIdeaApproachFull(idea, papers);
+  const fullFeasibility = formatIdeaFeasibilityFull(idea, papers);
+  const fullContribution = formatIdeaContributionFull(idea, papers);
+
+  return (
+    <article className={`insight-item ${expanded ? "insight-item-expanded" : ""}`}>
+      <div className="insight-meta-row">
+        <span className="insight-kind insight-kind-accent">研究机会</span>
+      </div>
+      <div className="insight-title">{title}</div>
+
+      {!expanded ? (
+        <>
+          <div className="insight-summary-block">
+            <strong>机会摘要</strong>
+            <div className="fine-print insight-copy">{summary}</div>
+          </div>
+
+          {approach ? (
+            <div className="insight-emphasis">
+              <strong>建议做法</strong>
+              <span>{approach}</span>
+            </div>
+          ) : null}
+
+          {(feasibility || contribution) ? (
+            <div className="insight-support-grid">
+              {feasibility ? (
+                <div className="insight-support-card insight-support-card-accent">
+                  <strong>可行性</strong>
+                  <span>{feasibility}</span>
+                </div>
+              ) : null}
+              {contribution ? (
+                <div className="insight-support-card">
+                  <strong>预期贡献</strong>
+                  <span>{contribution}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="insight-details-body">
+          <div className="insight-summary-block">
+            <strong>机会摘要</strong>
+            <div className="fine-print insight-copy insight-copy-full">{fullSummary}</div>
+          </div>
+
+          {fullApproach ? (
+            <div className="insight-emphasis">
+              <strong>建议做法</strong>
+              <span className="insight-copy-full">{fullApproach}</span>
+            </div>
+          ) : null}
+
+          {(fullFeasibility || fullContribution) ? (
+            <div className="insight-support-grid">
+              {fullFeasibility ? (
+                <div className="insight-support-card insight-support-card-accent">
+                  <strong>可行性</strong>
+                  <span className="insight-copy-full">{fullFeasibility}</span>
+                </div>
+              ) : null}
+              {fullContribution ? (
+                <div className="insight-support-card">
+                  <strong>预期贡献</strong>
+                  <span className="insight-copy-full">{fullContribution}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <button className="insight-toggle-button" onClick={() => setExpanded((value) => !value)} type="button">
+        {expanded ? "收起详情" : "展开详情"}
+      </button>
+    </article>
+  );
+}
+
+function IdeaList({ ideas, papers }: { ideas: WorkspaceIdea[]; papers: WorkspacePaper[] }) {
   if (!ideas.length) {
     return <div className="empty-state">暂时没有生成稳定的研究建议。</div>;
   }
@@ -58,21 +218,198 @@ function IdeaList({ ideas }: { ideas: WorkspaceIdea[] }) {
   return (
     <div className="insight-list">
       {ideas.map((idea, index) => (
-        <article className="insight-item" key={`${idea.title}-${index}`}>
-          <div className="insight-title">{cleanDisplayText(idea.title, 160) || "Untitled idea"}</div>
-          <div className="fine-print">
-            {cleanDisplayText(idea.motivation || idea.raw_text) || "No motivation yet"}
-          </div>
-          {idea.approach ? <div className="muted">Approach: {cleanDisplayText(idea.approach)}</div> : null}
-          {idea.feasibility || idea.contribution ? (
-            <div className="fine-print">
-              {idea.feasibility ? `Feasibility: ${cleanDisplayText(idea.feasibility)}` : ""}
-              {idea.feasibility && idea.contribution ? " / " : ""}
-              {idea.contribution ? `Contribution: ${cleanDisplayText(idea.contribution)}` : ""}
-            </div>
-          ) : null}
-        </article>
+        <IdeaCard idea={idea} key={`${idea.title}-${index}`} papers={papers} />
       ))}
+    </div>
+  );
+}
+
+function SourceTracePanel({ sourceTrace }: { sourceTrace?: WorkspaceSourceTrace | null }) {
+  if (!sourceTrace) {
+    return <div className="empty-state">这轮结果还没有记录可展示的依据摘要。</div>;
+  }
+
+  const hits = sourceTrace.knowledge_hits.map(formatKnowledgeHit);
+  const workspaceHints = uniqueTexts(sourceTrace.workspace_hints, 6, 72);
+  const recentTurns = uniqueTexts(sourceTrace.recent_user_turns, 4, 84);
+  const retrievalStatus = retrievalStatusLabel(sourceTrace.retrieval_status);
+  const retrievalPlan = formatRetrievalPlan(sourceTrace.retrieval_plan, 220);
+  const retrievalMessage = formatRetrievalMessage(sourceTrace, 260);
+  const filteredOutCount = sourceTrace.filtered_out_count ?? 0;
+  const fallbackUsed = sourceTrace.fallback_used ?? false;
+  const hasRetrievalSummary = Boolean(
+    retrievalStatus || retrievalPlan || retrievalMessage || filteredOutCount || fallbackUsed
+  );
+
+  return (
+    <div className="content-pad pane-scroll workspace-context-panel">
+      <div className="workspace-context-header">
+        <StatusPill compact tone={knowledgeScopeTone(sourceTrace.knowledge_scope)}>
+          {knowledgeScopeLabel(sourceTrace.knowledge_scope)}
+        </StatusPill>
+        {retrievalStatus ? (
+          <StatusPill compact tone={retrievalStatusTone(sourceTrace.retrieval_status)}>
+            {retrievalStatus}
+          </StatusPill>
+        ) : null}
+        {fallbackUsed ? (
+          <StatusPill compact tone="warning">
+            fallback 仅作背景参考
+          </StatusPill>
+        ) : null}
+      </div>
+
+      <div className="workspace-context-metrics">
+        <div>
+          <span>知识命中</span>
+          <strong>{sourceTrace.knowledge_hit_count}</strong>
+        </div>
+        <div>
+          <span>历史结论</span>
+          <strong>{sourceTrace.workspace_hint_count}</strong>
+        </div>
+        <div>
+          <span>过滤越界</span>
+          <strong>{filteredOutCount}</strong>
+        </div>
+        <div>
+          <span>近期追问</span>
+          <strong>{sourceTrace.recent_turn_count}</strong>
+        </div>
+      </div>
+
+      <div className="workspace-context-stack">
+        {hasRetrievalSummary ? (
+          <div
+            className={`workspace-context-card ${
+              shouldHighlightRetrievalStatus(sourceTrace.retrieval_status)
+                ? "workspace-context-card-warning"
+                : "workspace-context-card-accent"
+            }`}
+          >
+            <strong>检索结果说明</strong>
+            <div className="workspace-context-summary-copy">
+              {retrievalMessage || "这轮检索没有额外的约束说明，但检索策略已按当前意图执行。"}
+            </div>
+            {retrievalPlan ? (
+              <div className="workspace-context-plan-row">
+                <span>检索策略</span>
+                <small>{retrievalPlan}</small>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="workspace-context-card">
+          <strong>命中的知识来源</strong>
+          {hits.length ? (
+            <div className="workspace-context-list">
+              {hits.slice(0, 4).map((hit) => (
+                <div className="workspace-context-list-item" key={`${hit.title}-${hit.meta}-${hit.score}`}>
+                  <span>{hit.title}</span>
+                  <small>
+                    {hit.meta || "资料命中"}
+                    {hit.score ? ` · score ${hit.score}` : ""}
+                  </small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state workspace-inline-empty">本轮没有命中可展示的知识条目。</div>
+          )}
+        </div>
+
+        <div className="workspace-context-card">
+          <strong>沿用的历史线索</strong>
+          {workspaceHints.length ? (
+            <div className="workspace-context-chip-wrap">
+              {workspaceHints.map((hint) => (
+                <span className="insight-chip insight-chip-accent" key={hint}>
+                  {hint}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state workspace-inline-empty">本轮暂未显式继承历史 workspace 结论。</div>
+          )}
+        </div>
+
+        <div className="workspace-context-card">
+          <strong>承接的近期追问</strong>
+          {recentTurns.length ? (
+            <div className="workspace-context-list">
+              {recentTurns.map((turn) => (
+                <div className="workspace-context-list-item" key={turn}>
+                  <span>{turn}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state workspace-inline-empty">这轮没有记录到可展示的近期追问片段。</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InheritedContextPanel({ inheritedContext }: { inheritedContext?: WorkspaceInheritedContext | null }) {
+  if (!inheritedContext) {
+    return <div className="empty-state">这轮结果还没有沉淀出可继承的上下文。</div>;
+  }
+
+  const workspaceHints = uniqueTexts(inheritedContext.workspace_hints, 6, 72);
+  const recentTurns = uniqueTexts(inheritedContext.recent_turns, 4, 84);
+  const topic = cleanDisplayText(inheritedContext.conversation_topic, 96);
+  const summary = cleanDisplayText(inheritedContext.workspace_summary, 220);
+
+  return (
+    <div className="content-pad pane-scroll workspace-context-panel">
+      <div className="workspace-context-stack">
+        <div className="workspace-context-card workspace-context-card-accent">
+          <strong>当前研究主题</strong>
+          <div className="workspace-context-summary-copy">
+            {topic || "当前主题尚未同步到这里。"}
+          </div>
+        </div>
+
+        <div className="workspace-context-card">
+          <strong>继承的工作区摘要</strong>
+          <div className="workspace-context-summary-copy">
+            {summary || "当前还没有沉淀出稳定摘要，可在更多轮次后继续观察。"}
+          </div>
+        </div>
+
+        <div className="workspace-context-card">
+          <strong>沿用的关键结论</strong>
+          {workspaceHints.length ? (
+            <div className="workspace-context-chip-wrap">
+              {workspaceHints.map((hint) => (
+                <span className="insight-chip" key={hint}>
+                  {hint}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state workspace-inline-empty">目前还没有抽取出稳定的继承结论。</div>
+          )}
+        </div>
+
+        <div className="workspace-context-card">
+          <strong>最近对话片段</strong>
+          {recentTurns.length ? (
+            <div className="workspace-context-list">
+              {recentTurns.map((turn) => (
+                <div className="workspace-context-list-item" key={turn}>
+                  <span>{turn}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state workspace-inline-empty">最近追问还没有被压缩成可展示片段。</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -84,6 +421,8 @@ export function WorkspaceInsightsPanel({
   papers,
   evidenceStatus,
   trace,
+  sourceTrace,
+  inheritedContext,
 }: {
   gaps: WorkspaceGap[];
   ideas: WorkspaceIdea[];
@@ -91,6 +430,8 @@ export function WorkspaceInsightsPanel({
   papers: WorkspacePaper[];
   evidenceStatus?: WorkspaceEvidenceStatus;
   trace: WorkspaceSnapshot["trace"];
+  sourceTrace?: WorkspaceSourceTrace | null;
+  inheritedContext?: WorkspaceInheritedContext | null;
 }) {
   const insufficientEvidence = evidenceStatus?.insufficient ?? false;
 
@@ -99,14 +440,14 @@ export function WorkspaceInsightsPanel({
       <section className="pane">
         <SectionHeader eyebrow={`${gaps.length} 条`} title="研究空白" />
         <div className="pane-scroll">
-          <GapList gaps={gaps} />
+          <GapList gaps={gaps} papers={papers} />
         </div>
       </section>
 
       <section className="pane">
         <SectionHeader eyebrow={`${ideas.length} 条`} title="研究建议" />
         <div className="pane-scroll">
-          <IdeaList ideas={ideas} />
+          <IdeaList ideas={ideas} papers={papers} />
         </div>
       </section>
 
@@ -115,7 +456,7 @@ export function WorkspaceInsightsPanel({
         <div className="content-pad pane-scroll">
           {insufficientEvidence ? (
             <div className="empty-state workspace-evidence-mode-note">
-              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者用户导入更多资料后，再看关系图谱才更有意义。
+              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者导入更多资料后，再看关系图谱会更有意义。
             </div>
           ) : (
             <>
@@ -146,12 +487,28 @@ export function WorkspaceInsightsPanel({
                     </table>
                   </div>
                 ) : (
-                  <div className="empty-state">暂无关系线索。</div>
+                  <div className="empty-state">暂无线索关系可展示。</div>
                 )}
               </details>
             </>
           )}
         </div>
+      </section>
+
+      <section className="pane">
+        <SectionHeader
+          eyebrow={sourceTrace ? `${sourceTrace.knowledge_hit_count} 条知识命中` : "Grounding"}
+          title="本轮依据"
+        />
+        <SourceTracePanel sourceTrace={sourceTrace} />
+      </section>
+
+      <section className="pane">
+        <SectionHeader
+          eyebrow={inheritedContext?.conversation_topic ? "连续研究" : "History"}
+          title="继承上下文"
+        />
+        <InheritedContextPanel inheritedContext={inheritedContext} />
       </section>
 
       <section className="pane">
@@ -170,14 +527,9 @@ export function WorkspaceInsightsPanel({
               <div className="trace-label">上下文</div>
               <div>{trace.context_inputs.length} 组</div>
             </div>
-            <div className="empty-state">
-              系统已保留本轮分析过程，可用于继续追问、复盘和后续整理。
-            </div>
           </div>
         ) : (
-          <div className="content-pad">
-            <div className="empty-state">暂无研究过程记录。</div>
-          </div>
+          <div className="empty-state">暂时没有研究过程记录。</div>
         )}
       </section>
     </section>

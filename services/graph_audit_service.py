@@ -63,20 +63,20 @@ class GraphAuditService:
                     AuditReport(
                         type="graph",
                         severity="error",
-                        description=f"Edge {edge.source} -> {edge.target} references missing paper node(s).",
+                        description=f"关系边 {edge.source} -> {edge.target} 指向了缺失的论文节点。",
                         affected_items=[edge.source, edge.target],
-                        suggestion="Remove or fix dangling edges.",
+                        suggestion="请检查节点是否存在，或移除这条悬空关系边。",
                     )
                 )
                 gaps.append(
                     AuditGap(
                         type="graph",
                         severity="error",
-                        description=f"Dangling edge: {edge.source} -> {edge.target}.",
+                        description=f"发现悬空关系边：{edge.source} -> {edge.target}。",
                         affected_items=[edge.source, edge.target],
                         actionable=True,
                         related_papers=[edge.source, edge.target],
-                        suggestion="Ensure all referenced papers exist.",
+                        suggestion="确认相关论文是否缺失，必要时补齐或删除该关系。",
                     )
                 )
                 continue
@@ -89,20 +89,20 @@ class GraphAuditService:
                     AuditReport(
                         type="graph",
                         severity="warning",
-                        description=f"Edge {edge.source} -> {edge.target} crosses taxonomy categories with keyword overlap {overlap:.2f}.",
+                        description=f"关系边 {edge.source} -> {edge.target} 跨越不同分类，且关键词重合度仅为 {overlap:.2f}。",
                         affected_items=[edge.source, edge.target],
-                        suggestion="Review edge validity.",
+                        suggestion="请复核这条跨方向关系是否真的成立。",
                     )
                 )
                 gaps.append(
                     AuditGap(
                         type="graph",
                         severity="warning",
-                        description=f"Weak cross-category edge: {edge.source} -> {edge.target} overlap={overlap:.2f}.",
+                        description=f"跨方向关系证据偏弱：{edge.source} -> {edge.target}（重合度 {overlap:.2f}）。",
                         affected_items=[edge.source, edge.target],
                         actionable=True,
                         related_papers=[edge.source, edge.target],
-                        suggestion="Strengthen overlap or reconsider relationship.",
+                        suggestion="补充更直接的证据，或重新判断这条关系是否需要保留。",
                     )
                 )
 
@@ -118,20 +118,20 @@ class GraphAuditService:
                         AuditReport(
                             type="graph",
                             severity="warning",
-                            description=f"Edge {edge.source} -> {edge.target} is marked as improvement but lacks clear evidence.",
+                            description=f"关系边 {edge.source} -> {edge.target} 被标记为“改进”，但当前缺少清晰证据支撑。",
                             affected_items=[edge.source, edge.target],
-                            suggestion="Verify improvement claims.",
+                            suggestion="请核对目标论文是否真的在方法、实验或结果上改进了前作。",
                         )
                     )
                     gaps.append(
                         AuditGap(
                             type="graph",
                             severity="warning",
-                            description=f"Unsupported improvement claim: {edge.source} -> {edge.target}.",
+                            description=f"“{edge.source}”到“{edge.target}”的改进关系缺少证据支持。",
                             affected_items=[edge.source, edge.target],
                             actionable=True,
                             related_papers=[edge.source, edge.target],
-                            suggestion="Add evidence or adjust relationship.",
+                            suggestion="补充摘要、实验或对比结果中的证据，或调整关系类型。",
                         )
                     )
 
@@ -145,20 +145,20 @@ class GraphAuditService:
                         AuditReport(
                             type="graph",
                             severity="warning",
-                            description=f"Paper {paper.paper_id} references {ref_id}, but no graph edge exists.",
+                            description=f"论文 {paper.paper_id} 引用了 {ref_id}，但演进图中缺少对应关系边。",
                             affected_items=[paper.paper_id, ref_id],
-                            suggestion="Add missing reference edge.",
+                            suggestion="可以补上这条引用关系边，增强演进图完整性。",
                         )
                     )
                     gaps.append(
                         AuditGap(
                             type="graph",
                             severity="warning",
-                            description=f"Missing reference edge: {ref_id} -> {paper.paper_id}.",
+                            description=f"引用关系缺失：{ref_id} -> {paper.paper_id}。",
                             affected_items=[ref_id, paper.paper_id],
                             actionable=True,
                             related_papers=[ref_id, paper.paper_id],
-                            suggestion="Create edge for citation.",
+                            suggestion="根据引用信息补上这条关系边。",
                         )
                     )
 
@@ -170,20 +170,20 @@ class GraphAuditService:
                     AuditReport(
                         type="graph",
                         severity="warning",
-                        description=f"Paper {paper.paper_id} has low confidence_score={confidence_score:.2f}.",
+                        description=f"论文 {paper.paper_id} 的可信度较低（confidence={confidence_score:.2f}）。",
                         affected_items=[paper.paper_id],
-                        suggestion="Review paper quality.",
+                        suggestion="建议复核这篇论文的质量与相关性。",
                     )
                 )
                 gaps.append(
                     AuditGap(
                         type="graph",
                         severity="warning",
-                        description=f"Low-confidence paper node: {paper.paper_id}.",
+                        description=f"低置信论文节点：{paper.paper_id}。",
                         affected_items=[paper.paper_id],
                         actionable=True,
                         related_papers=[paper.paper_id],
-                        suggestion="Improve data or remove low-quality paper.",
+                        suggestion="补充更强证据，或考虑移除这篇低质量论文。",
                     )
                 )
 

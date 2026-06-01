@@ -6,6 +6,7 @@ type WorkspaceEvidenceBoardProps = {
   papers: WorkspacePaper[];
   selectedPaperId: string;
   onSelectPaper: (paperId: string) => void;
+  showRoundMarkers?: boolean;
 };
 
 function sourceLabel(source: string) {
@@ -16,7 +17,15 @@ function sourceLabel(source: string) {
   return source || "未知";
 }
 
-function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
+function noveltyLabel(paper: WorkspacePaper) {
+  return paper.is_new_this_round ? "本轮新增" : "沿用证据";
+}
+
+function noveltyToneClass(paper: WorkspacePaper) {
+  return paper.is_new_this_round ? "message-source-trace-chip-info" : "";
+}
+
+function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; showRoundMarkers?: boolean }) {
   if (!paper) {
     return <div className="empty-state">选择一篇论文后，这里会显示来源、年份、分类和外链。</div>;
   }
@@ -25,7 +34,12 @@ function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
     <div className="content-grid">
       <div>
         <div className="section-eyebrow">当前选中</div>
-        <div className="insight-title">{cleanDisplayText(paper.title, 180)}</div>
+        <div className="workspace-paper-title-row">
+          <div className="insight-title">{cleanDisplayText(paper.title, 180)}</div>
+          {showRoundMarkers ? (
+            <span className={`message-source-trace-chip ${noveltyToneClass(paper)}`}>{noveltyLabel(paper)}</span>
+          ) : null}
+        </div>
       </div>
       <div className="workspace-paper-meta-grid">
         <div className="workspace-paper-meta-item">
@@ -44,6 +58,12 @@ function PaperInspector({ paper }: { paper?: WorkspacePaper }) {
           <span>分类</span>
           <strong>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</strong>
         </div>
+        {showRoundMarkers ? (
+          <div className="workspace-paper-meta-item">
+            <span>轮次</span>
+            <strong>{noveltyLabel(paper)}</strong>
+          </div>
+        ) : null}
       </div>
       {paper.url ? (
         <a className="secondary-button" href={paper.url} rel="noreferrer" target="_blank">
@@ -58,13 +78,19 @@ export function WorkspaceEvidenceBoard({
   papers,
   selectedPaperId,
   onSelectPaper,
+  showRoundMarkers = false,
 }: WorkspaceEvidenceBoardProps) {
   const selectedPaper = papers.find((paper) => paper.paper_id === selectedPaperId) ?? papers[0];
+  const novelPaperCount = papers.filter((paper) => paper.is_new_this_round).length;
+  const eyebrow =
+    showRoundMarkers && papers.length
+      ? `${papers.length} 篇可见 · 新增 ${novelPaperCount} 篇`
+      : `${papers.length} 篇可见`;
 
   return (
     <section className="workspace-main-column">
       <section className="pane">
-        <SectionHeader eyebrow={`${papers.length} 篇可见`} title="论文线索" />
+        <SectionHeader eyebrow={eyebrow} title="论文线索" />
         <div className="data-table-wrap pane-scroll">
           {papers.length ? (
             <table className="data-table">
@@ -84,10 +110,15 @@ export function WorkspaceEvidenceBoard({
                     className={selectedPaper?.paper_id === paper.paper_id ? "selected-row" : ""}
                     key={paper.paper_id}
                     onClick={() => onSelectPaper(paper.paper_id)}
-                  >
-                    <td>
-                      <div className="table-title">{cleanDisplayText(paper.title, 180)}</div>
-                    </td>
+                    >
+                      <td>
+                        <div className="workspace-paper-title-row">
+                          <div className="table-title">{cleanDisplayText(paper.title, 180)}</div>
+                          {showRoundMarkers ? (
+                            <span className={`message-source-trace-chip ${noveltyToneClass(paper)}`}>{noveltyLabel(paper)}</span>
+                          ) : null}
+                        </div>
+                      </td>
                     <td>{sourceLabel(paper.source)}</td>
                     <td>{paper.publish_date || "-"}</td>
                     <td>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</td>
@@ -116,7 +147,7 @@ export function WorkspaceEvidenceBoard({
       <section className="pane">
         <SectionHeader eyebrow="证据摘要" title="论文详情" />
         <div className="content-pad">
-          <PaperInspector paper={selectedPaper} />
+          <PaperInspector paper={selectedPaper} showRoundMarkers={showRoundMarkers} />
         </div>
       </section>
     </section>

@@ -12,6 +12,10 @@ from product_agent.schemas import (
     CreateMessageRequest,
     CreateResearchTaskRequest,
     FollowUpTaskPreview,
+    ImportPaperCandidateRequest,
+    ListPaperImportCandidatesResponse,
+    PaperImportCandidateView,
+    SearchPaperCandidatesRequest,
     UpdateToolRequest,
 )
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
@@ -124,11 +128,15 @@ class ProductApiHandlers:
         if conversation is None:
             return fail("conversation_not_found", "Conversation does not exist.")
 
+        knowledge_scope = request.resolve_knowledge_scope()
         message = self.message_service.create_message(
             conversation_id=request.conversation_id,
             role="user",
             content=request.content,
-            metadata={"focus": request.focus or ""},
+            metadata={
+                "focus": request.focus or "",
+                "knowledge_scope": knowledge_scope,
+            },
         )
         if message is None:
             return fail("conversation_not_found", "Conversation does not exist.")
@@ -138,10 +146,19 @@ class ProductApiHandlers:
 
         # Retrieve related knowledge from knowledge base
         knowledge_query = f"{conversation.topic} {request.content} {request.focus or ''}"
-        knowledge_context = self.knowledge_service.retrieve_for_context(
-            knowledge_query, top_k=3, max_chars_per_doc=250,
+        knowledge_hits = self.knowledge_service.retrieve_hits_for_context(
+            knowledge_query,
+            top_k=3,
+            max_chars_per_doc=250,
+            knowledge_scope=knowledge_scope,
+            conversation_id=request.conversation_id,
         )
+        knowledge_context = [
+            self.knowledge_service.format_hit_for_context(hit)
+            for hit in knowledge_hits
+        ]
         display_knowledge_context = clean_internal_context_items(knowledge_context, max_length=180)
+        workspace_context = self.workspace_service.get_conversation_workspace_hints(request.conversation_id)
 
         follow_up_task = None
         if request.create_follow_up_task:
@@ -155,7 +172,9 @@ class ProductApiHandlers:
                     latest_message_content=request.content,
                     focus=enriched_focus,
                     knowledge_hints=knowledge_hints,
+                    workspace_hints=workspace_context,
                     mode=request.mode,
+                    knowledge_scope=knowledge_scope,
                     trigger_message_id=message.message_id,
                 )
             except InvalidTaskModeError as error:
@@ -174,18 +193,23 @@ class ProductApiHandlers:
             message=request.content,
             message_id=message.message_id,
             context_preview=context_preview,
+            knowledge_scope_applied=knowledge_scope,
             knowledge_context=display_knowledge_context,
+            knowledge_hits=[self._knowledge_hit_payload(hit) for hit in knowledge_hits],
+            workspace_context=workspace_context,
             follow_up_task=follow_up_task,
         )
         return ok(response.model_dump())
 
     def create_research_task(self, request: CreateResearchTaskRequest):
         """创建研究任务，但不立即运行。"""
+        knowledge_scope = request.resolve_knowledge_scope()
         try:
             task = self.research_service.create_task(
                 conversation_id=request.conversation_id,
                 topic=request.topic,
                 mode=request.mode,
+                knowledge_scope=knowledge_scope,
             )
         except ConversationNotFoundError:
             return fail("conversation_not_found", "Conversation does not exist.")
@@ -197,6 +221,7 @@ class ProductApiHandlers:
                 "task_id": task.task_id,
                 "conversation_id": task.conversation_id,
                 "status": task.status,
+                "knowledge_scope": task.knowledge_scope,
             }
         )
 
@@ -238,6 +263,9 @@ class ProductApiHandlers:
         # Invalidate conversation workspace cache so next read picks up new data
         self.workspace_service.invalidate_conversation_cache(task.conversation_id)
         display_topic = self._display_topic_for_task_workspace(task=task, workspace=workspace)
+        workspace_snapshot = self.workspace_service.get_workspace_snapshot(workspace.task_id)
+        source_trace_payload = self._workspace_source_trace_payload(workspace_snapshot)
+        inherited_context_payload = self._workspace_inherited_context_payload(workspace_snapshot)
 
         assistant_message = self.message_service.create_assistant_message(
             conversation_id=task.conversation_id,
@@ -251,6 +279,9 @@ class ProductApiHandlers:
                 "paper_count": len(workspace.papers),
                 "gap_count": len(workspace.gaps),
                 "idea_count": len(workspace.ideas),
+                "knowledge_scope": task.knowledge_scope,
+                "source_trace": source_trace_payload,
+                "inherited_context": inherited_context_payload,
             },
         )
 
@@ -264,6 +295,8 @@ class ProductApiHandlers:
                 "alignment_score": workspace.alignment_score,
                 "trace_keys": list(workspace.trace.keys()),
                 "assistant_message_id": assistant_message.message_id if assistant_message else None,
+                "source_trace": source_trace_payload,
+                "inherited_context": inherited_context_payload,
             }
         )
 
@@ -308,6 +341,7 @@ class ProductApiHandlers:
                     title=f"[Auto] {workspace.topic[:100]}",
                     content=content,
                     source_task_id=task.task_id,
+                    conversation_id=task.conversation_id,
                     tags=tags if tags else None,
                     index_immediately=True,  # async indexing won't block task completion
                 )
@@ -350,14 +384,45 @@ class ProductApiHandlers:
         return ok({"items": [self._knowledge_payload(item) for item in documents]})
 
     def create_knowledge_document(self, request: CreateKnowledgeDocumentRequest):
+        if request.conversation_id:
+            conversation = self.conversation_service.get_conversation(request.conversation_id)
+            if conversation is None:
+                return fail("conversation_not_found", "Conversation does not exist.")
         document = self.knowledge_service.import_document(
             title=request.title,
             content=request.content,
             tags=request.tags,
             source_url=request.source_url,
             source_task_id=request.source_task_id,
+            conversation_id=request.conversation_id,
             notes=request.notes,
         )
+        return ok(self._knowledge_payload(document))
+
+    def search_paper_candidates(self, request: SearchPaperCandidatesRequest):
+        candidates = self.knowledge_service.search_paper_candidates(
+            request.query,
+            limit=request.limit,
+        )
+        response = ListPaperImportCandidatesResponse(
+            items=[self._paper_candidate_payload(item) for item in candidates]
+        )
+        return ok(response.model_dump())
+
+    def import_paper_candidate(self, request: ImportPaperCandidateRequest):
+        if request.conversation_id:
+            conversation = self.conversation_service.get_conversation(request.conversation_id)
+            if conversation is None:
+                return fail("conversation_not_found", "Conversation does not exist.")
+        try:
+            document = self.knowledge_service.import_paper_candidate(
+                request.candidate_id,
+                conversation_id=request.conversation_id,
+                notes=request.notes,
+                tags=request.tags,
+            )
+        except KeyError:
+            return fail("paper_candidate_not_found", "Paper candidate does not exist or has expired.")
         return ok(self._knowledge_payload(document))
 
     def delete_knowledge_document(self, document_id: str):
@@ -414,6 +479,7 @@ class ProductApiHandlers:
             "topic": task.topic,
             "status": task.status,
             "mode": task.mode,
+            "knowledge_scope": task.knowledge_scope,
             "trigger_message_id": task.trigger_message_id,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
@@ -425,10 +491,56 @@ class ProductApiHandlers:
             "document_id": document.document_id,
             "title": document.title,
             "source_task_id": document.source_task_id,
+            "conversation_id": document.metadata.get("conversation_id"),
             "content": document.content,
             "tags": list(document.tags),
             "metadata": dict(document.metadata),
         }
+
+    @staticmethod
+    def _knowledge_hit_payload(hit) -> dict:
+        return {
+            "document_id": hit.document_id,
+            "title": hit.title,
+            "snippet": hit.snippet,
+            "score": hit.score,
+            "scope": hit.scope,
+            "source_task_id": hit.source_task_id,
+            "source_type": hit.source_type,
+        }
+
+    @staticmethod
+    def _paper_candidate_payload(candidate) -> PaperImportCandidateView:
+        return PaperImportCandidateView(
+            candidate_id=candidate.candidate_id,
+            title=candidate.title,
+            authors=list(candidate.authors),
+            year=candidate.year,
+            abstract=candidate.abstract,
+            source_url=candidate.source_url,
+            pdf_url=candidate.pdf_url,
+            doi=candidate.doi,
+            arxiv_id=candidate.arxiv_id,
+            source=candidate.source,
+            venue=candidate.venue,
+            is_exact_match=candidate.is_exact_match,
+        )
+
+    @staticmethod
+    def _workspace_source_trace_payload(snapshot) -> dict[str, Any]:
+        if snapshot is None or getattr(snapshot, "source_trace", None) is None:
+            return {}
+        if hasattr(snapshot.source_trace, "model_dump"):
+            return snapshot.source_trace.model_dump()
+        return dict(snapshot.source_trace)
+
+    @staticmethod
+    def _workspace_inherited_context_payload(snapshot) -> dict[str, Any]:
+        if snapshot is None or getattr(snapshot, "inherited_context", None) is None:
+            return {}
+        if hasattr(snapshot.inherited_context, "model_dump"):
+            return snapshot.inherited_context.model_dump()
+        return dict(snapshot.inherited_context)
 
     def _build_task_result_message(self, *, task, workspace) -> str:
         """Build a natural research summary from workspace data.
@@ -494,21 +606,26 @@ class ProductApiHandlers:
         topic = self._display_topic_for_task_workspace(task=task, workspace=workspace)
 
         lines: list[str] = [
-            "\u7814\u7a76\u5206\u6790\u5b8c\u6210",
+            f"\u5df2\u5b8c\u6210\u672c\u8f6e\u7814\u7a76\u4efb\u52a1\uff1a{topic}",
             "",
-            f"\u7814\u7a76\u4e3b\u9898\uff1a{topic}",
-            "",
-            "\u672c\u8f6e\u6982\u89c8",
-            f"- \u68c0\u7d22\u8bba\u6587\uff1a{total_papers} \u7bc7",
-            f"- \u7814\u7a76\u7a7a\u767d\uff1a{len(workspace.gaps)} \u6761",
-            f"- \u7814\u7a76\u5efa\u8bae\uff1a{len(workspace.ideas)} \u6761",
-            f"- \u5bf9\u9f50\u5206\u6570\uff1a{workspace.alignment_score:.2f}",
+            (
+                f"\u6211\u5148\u56f4\u7ed5\u300c{topic}\u300d\u68b3\u7406\u4e86 {total_papers} \u7bc7\u8bba\u6587\uff0c"
+                f"\u8bc6\u522b\u51fa {len(workspace.gaps)} \u6761\u7814\u7a76\u7a7a\u767d\uff0c"
+                f"\u6574\u7406\u51fa {len(workspace.ideas)} \u6761\u53ef\u7ee7\u7eed\u63a8\u8fdb\u7684\u65b9\u5411\uff0c"
+                f"\u5f53\u524d\u5bf9\u9f50\u5206\u6570\u662f {workspace.alignment_score:.3f}\u3002"
+            ),
         ]
 
         if insufficient:
-            lines.append("- \u8bc1\u636e\u72b6\u6001\uff1a\u5f53\u524d\u8bc1\u636e\u504f\u5c11\uff0c\u7ed3\u679c\u66f4\u9002\u5408\u4f5c\u4e3a\u63a2\u7d22\u65b9\u5411")
+            lines.append(
+                "\u5f53\u524d\u771f\u5b9e\u8bc1\u636e\u504f\u5c11\uff0c\u8fd9\u8f6e\u7ed3\u679c\u66f4\u9002\u5408\u7528\u6765\u5e2e\u4f60\u6536\u7f29\u7814\u7a76\u65b9\u5411\uff0c"
+                "\u540e\u7eed\u6700\u597d\u7ee7\u7eed\u8865\u5145\u8bba\u6587\u6216\u5bfc\u5165\u4f60\u81ea\u5df1\u627e\u5230\u7684\u8d44\u6599\u3002"
+            )
         elif fallback_count:
-            lines.append(f"- \u8bc1\u636e\u72b6\u6001\uff1a\u5305\u542b {fallback_count} \u7bc7\u7cfb\u7edf\u56de\u9000\u8bba\u6587\uff0c\u5efa\u8bae\u7ee7\u7eed\u8865\u5145\u771f\u5b9e\u6587\u732e")
+            lines.append(
+                f"\u8fd9\u4e00\u8f6e\u91cc\u6709 {fallback_count} \u7bc7\u662f\u7cfb\u7edf\u56de\u9000\u8bba\u6587\uff0c"
+                "\u8bf4\u660e\u5916\u90e8\u68c0\u7d22\u8bc1\u636e\u8fd8\u4e0d\u591f\u7a33\uff0c\u6240\u4ee5\u540e\u7eed\u4ecd\u5efa\u8bae\u7ee7\u7eed\u8865\u5145\u771f\u5b9e\u6587\u732e\u3002"
+            )
 
         top_papers = (real_papers or workspace.papers)[:3]
         if top_papers:
@@ -521,7 +638,7 @@ class ProductApiHandlers:
                 lines.append(f"- {title}{source_text}{cite}")
 
         if workspace.gaps:
-            lines.extend(["", "\u5173\u952e\u7814\u7a76\u7a7a\u767d"])
+            lines.extend(["", "\u4f18\u5148\u5173\u6ce8"])
             for gap in workspace.gaps[:3]:
                 summary = clean_internal_context_text(gap.summary, max_length=180)
                 if summary:
@@ -540,7 +657,8 @@ class ProductApiHandlers:
         lines.extend([
             "",
             "\u4e0b\u4e00\u6b65",
-            "- \u5982\u679c\u65b9\u5411\u592a\u5bbd\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee\u5e76\u6307\u5b9a\u5e74\u4efd\u3001\u65b9\u6cd5\u6216\u5e94\u7528\u573a\u666f\u3002",
+            "- \u5982\u679c\u65b9\u5411\u8fd8\u662f\u504f\u5bbd\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee\u5e76\u7f29\u5c0f\u5230\u5e74\u4efd\u3001\u65b9\u6cd5\u6216\u5177\u4f53\u5e94\u7528\u573a\u666f\u3002",
+            "- \u5982\u679c\u4f60\u5df2\u7ecf\u6709\u81ea\u5df1\u627e\u5230\u7684\u8bba\u6587\u6216\u7b14\u8bb0\uff0c\u4e5f\u53ef\u4ee5\u5bfc\u5165\u8d44\u6599\u6765\u7ee7\u7eed\u8865\u5f3a\u8fd9\u8f6e\u7814\u7a76\u3002",
             f"- \u5b8c\u6574 taxonomy\u3001\u6f14\u8fdb\u56fe\u548c\u8bc1\u636e\u660e\u7ec6\u53ef\u5728\u5de5\u4f5c\u53f0\u67e5\u770b\uff08\u4efb\u52a1\uff1a{workspace.task_id}\uff09\u3002",
         ])
 
