@@ -1320,6 +1320,7 @@ body {
   place-items: start center;
   background: rgba(12, 21, 34, 0.28);
   padding: 92px 20px 20px;
+  overflow-y: auto;
 }
 
 .modal-backdrop-blur {
@@ -1353,9 +1354,10 @@ body {
 
 .tool-dialog {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 14px;
-  width: min(720px, 100%);
-  max-height: min(720px, calc(100vh - 120px));
+  width: min(860px, 100%);
+  max-height: calc(100vh - 48px);
   border: 1px solid rgba(220, 230, 242, 0.9);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
@@ -1366,10 +1368,13 @@ body {
 
 .tool-dialog-body {
   display: grid;
+  align-content: start;
   gap: 14px;
   min-height: 0;
   overflow: auto;
-  padding-right: 2px;
+  padding-right: 6px;
+  padding-bottom: 6px;
+  overscroll-behavior: contain;
 }
 
 .tool-dialog-tabs {
@@ -1546,6 +1551,7 @@ body {
   display: block;
   color: #142033;
   font-size: 0.86rem;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-doc-card p {
@@ -1557,11 +1563,13 @@ body {
   line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-doc-card small {
   color: #718096;
   font-size: 0.72rem;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-candidate-card {
@@ -1572,6 +1580,11 @@ body {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.knowledge-candidate-actions .primary-button,
+.knowledge-candidate-actions .secondary-button {
+  width: 100%;
 }
 
 .knowledge-doc-meta {
@@ -1594,6 +1607,7 @@ body {
   padding: 0 8px;
   font-size: 0.72rem;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-doc-meta a {
@@ -1627,6 +1641,7 @@ body {
 .knowledge-library-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.86fr) minmax(0, 1.14fr);
+  align-items: start;
   gap: 12px;
   min-width: 0;
 }
@@ -1637,6 +1652,10 @@ body {
   align-content: start;
   gap: 10px;
   min-width: 0;
+}
+
+.knowledge-import-panel {
+  align-self: start;
 }
 
 .subsection-title {
@@ -2078,6 +2097,27 @@ body {
   }
 }
 
+@media (max-width: 900px) {
+  .modal-backdrop {
+    padding: 16px;
+    place-items: center;
+  }
+
+  .tool-dialog {
+    width: min(100%, 820px);
+    max-height: calc(100vh - 32px);
+    padding: 14px;
+  }
+
+  .knowledge-candidate-card {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-candidate-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 620px) {
   .top-context-bar {
     padding: 10px 16px;
@@ -2093,8 +2133,9 @@ body {
 
   .knowledge-form-grid,
   .knowledge-search-row,
+  .settings-overview-grid,
   .knowledge-candidate-card,
-  .settings-overview-grid {
+  .knowledge-candidate-actions {
     grid-template-columns: 1fr;
   }
 

@@ -15,6 +15,7 @@ from product_agent.services.workspace_mapper import workspace_from_agent_state
 if TYPE_CHECKING:
     from product_agent.services.knowledge_service import KnowledgeHit, KnowledgeService
     from product_agent.services.message_service import MessageService
+    from product_agent.services.working_memory_service import WorkingMemoryService
 
 
 @dataclass
@@ -27,6 +28,11 @@ class ResearchContextBundle:
     knowledge_context: list[str]
     conversation_workspace_context: list[str]
     conversation_workspace_summary: str
+    working_memory_summary: str
+    working_memory_current_focus: str
+    working_memory_findings: list[str]
+    working_memory_open_questions: list[str]
+    working_memory_constraints: list[str]
     previous_round_task_id: str
     previous_round_paper_ids: list[str]
     previous_round_query_intent: dict[str, Any]
@@ -42,6 +48,11 @@ class ResearchContextBundle:
             "knowledge_context": list(self.knowledge_context),
             "conversation_workspace_context": list(self.conversation_workspace_context),
             "conversation_workspace_summary": self.conversation_workspace_summary,
+            "working_memory_summary": self.working_memory_summary,
+            "working_memory_current_focus": self.working_memory_current_focus,
+            "working_memory_findings": list(self.working_memory_findings),
+            "working_memory_open_questions": list(self.working_memory_open_questions),
+            "working_memory_constraints": list(self.working_memory_constraints),
             "previous_round_task_id": self.previous_round_task_id,
             "previous_round_paper_ids": list(self.previous_round_paper_ids),
             "previous_round_query_intent": dict(self.previous_round_query_intent),
@@ -69,6 +80,7 @@ class ResearchService:
         workspace_service=None,
         message_service: MessageService | None = None,
         knowledge_service: KnowledgeService | None = None,
+        working_memory_service: WorkingMemoryService | None = None,
     ) -> None:
         self.conversation_repository = conversation_repository
         self.task_repository = task_repository
@@ -76,6 +88,7 @@ class ResearchService:
         self.workspace_service = workspace_service
         self.message_service = message_service
         self.knowledge_service = knowledge_service
+        self.working_memory_service = working_memory_service
 
     def create_task(
         self,
@@ -210,6 +223,13 @@ class ResearchService:
                 state=state,
             )
             saved_workspace = self.workspace_repository.save(workspace)
+            if self.working_memory_service is not None:
+                self.working_memory_service.refresh_from_workspace(
+                    task=task,
+                    workspace=saved_workspace,
+                    query_intent=research_context.query_intent,
+                    conversation_topic=research_context.conversation_topic,
+                )
             task.status = "completed"
             task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
@@ -255,6 +275,27 @@ class ResearchService:
         ) or task.topic
         workspace_hints = self._conversation_workspace_hints(task.conversation_id)
         workspace_summary = self._conversation_workspace_summary(task.conversation_id)
+        working_memory = self._conversation_working_memory(task.conversation_id)
+        working_memory_summary = clean_internal_context_text(
+            getattr(working_memory, "summary", "") if working_memory else "",
+            max_length=280,
+        )
+        working_memory_current_focus = clean_internal_context_text(
+            getattr(working_memory, "current_focus", "") if working_memory else "",
+            max_length=180,
+        )
+        working_memory_findings = clean_internal_context_items(
+            list(getattr(working_memory, "stable_findings", []) or []),
+            max_length=120,
+        )
+        working_memory_open_questions = clean_internal_context_items(
+            list(getattr(working_memory, "open_questions", []) or []),
+            max_length=140,
+        )
+        working_memory_constraints = clean_internal_context_items(
+            list(getattr(working_memory, "active_constraints", []) or []),
+            max_length=120,
+        )
         recent_context = self._recent_message_context(task.conversation_id)
         previous_round = self._previous_round_context_for_task(task)
         raw_user_request = self._raw_user_request_for_task(task, recent_context=recent_context)
@@ -264,6 +305,11 @@ class ResearchService:
             conversation_topic=conversation_topic,
             knowledge_scope=task.knowledge_scope,
             workspace_hints=workspace_hints,
+            knowledge_hints=[
+                *working_memory_findings[:2],
+                *working_memory_open_questions[:1],
+                *working_memory_constraints[:2],
+            ],
             recent_context=recent_context,
         )
         knowledge_hits, knowledge_context = self._knowledge_context_for_task(
@@ -272,6 +318,9 @@ class ResearchService:
             recent_context=recent_context,
             workspace_hints=workspace_hints,
             query_intent=initial_query_intent,
+            working_memory_summary=working_memory_summary,
+            working_memory_findings=working_memory_findings,
+            working_memory_open_questions=working_memory_open_questions,
         )
         query_intent = derive_query_intent(
             raw_user_request=raw_user_request,
@@ -279,11 +328,17 @@ class ResearchService:
             conversation_topic=conversation_topic,
             knowledge_scope=task.knowledge_scope,
             workspace_hints=workspace_hints,
-            knowledge_hints=[
-                str(hit.get("title", "") or hit.get("snippet", "")).strip()
-                for hit in knowledge_hits
-                if str(hit.get("title", "") or hit.get("snippet", "")).strip()
-            ],
+            knowledge_hints=(
+                [
+                    *working_memory_findings[:2],
+                    *working_memory_open_questions[:1],
+                ]
+                + [
+                    str(hit.get("title", "") or hit.get("snippet", "")).strip()
+                    for hit in knowledge_hits
+                    if str(hit.get("title", "") or hit.get("snippet", "")).strip()
+                ]
+            ),
             recent_context=recent_context,
         )
         context_inputs = [
@@ -297,12 +352,27 @@ class ResearchService:
                 "knowledge_titles": [str(hit.get("title", "")).strip() for hit in knowledge_hits[:3]],
                 "workspace_hints": list(workspace_hints[:3]),
                 "workspace_summary": workspace_summary,
+                "working_memory_summary": working_memory_summary,
+                "working_memory_current_focus": working_memory_current_focus,
+                "working_memory_findings": list(working_memory_findings[:3]),
+                "working_memory_open_questions": list(working_memory_open_questions[:2]),
+                "working_memory_constraints": list(working_memory_constraints[:3]),
                 "previous_round_task_id": previous_round["task_id"],
                 "previous_round_paper_count": len(previous_round["paper_ids"]),
                 "recent_turns": [
                     f"{entry.get('role', 'unknown')}: {entry.get('content', '')}"
                     for entry in recent_context[-3:]
                 ],
+            },
+            {
+                "kind": "working_memory",
+                "summary": working_memory_summary,
+                "current_focus": working_memory_current_focus,
+                "stable_findings": list(working_memory_findings[:4]),
+                "open_questions": list(working_memory_open_questions[:3]),
+                "active_constraints": list(working_memory_constraints[:4]),
+                "source_task_id": getattr(working_memory, "source_task_id", None) if working_memory else None,
+                "supporting_task_ids": list(getattr(working_memory, "supporting_task_ids", []) or [])[:6] if working_memory else [],
             },
             query_intent.to_context_input(),
         ]
@@ -315,6 +385,11 @@ class ResearchService:
             knowledge_context=knowledge_context,
             conversation_workspace_context=workspace_hints,
             conversation_workspace_summary=workspace_summary,
+            working_memory_summary=working_memory_summary,
+            working_memory_current_focus=working_memory_current_focus,
+            working_memory_findings=working_memory_findings,
+            working_memory_open_questions=working_memory_open_questions,
+            working_memory_constraints=working_memory_constraints,
             previous_round_task_id=previous_round["task_id"],
             previous_round_paper_ids=previous_round["paper_ids"],
             previous_round_query_intent=previous_round["query_intent"],
@@ -354,6 +429,9 @@ class ResearchService:
         recent_context: list[dict[str, Any]],
         workspace_hints: list[str],
         query_intent: QueryIntent,
+        working_memory_summary: str,
+        working_memory_findings: list[str],
+        working_memory_open_questions: list[str],
     ) -> tuple[list[dict[str, Any]], list[str]]:
         if self.knowledge_service is None or task.knowledge_scope == "none":
             return [], []
@@ -364,6 +442,9 @@ class ResearchService:
             recent_context=recent_context,
             workspace_hints=workspace_hints,
             query_intent=query_intent,
+            working_memory_summary=working_memory_summary,
+            working_memory_findings=working_memory_findings,
+            working_memory_open_questions=working_memory_open_questions,
         )
         hits = self.knowledge_service.retrieve_hits_for_context(
             query,
@@ -383,6 +464,9 @@ class ResearchService:
         recent_context: list[dict[str, Any]],
         workspace_hints: list[str],
         query_intent: QueryIntent,
+        working_memory_summary: str,
+        working_memory_findings: list[str],
+        working_memory_open_questions: list[str],
     ) -> str:
         parts: list[str] = []
         seen: set[str] = set()
@@ -406,6 +490,11 @@ class ResearchService:
             add_part(term, max_length=80)
         for hint in workspace_hints[:2]:
             add_part(hint, max_length=100)
+        add_part(working_memory_summary, max_length=140)
+        for finding in working_memory_findings[:2]:
+            add_part(finding, max_length=120)
+        for question in working_memory_open_questions[:1]:
+            add_part(question, max_length=120)
         for entry in recent_context:
             if entry.get("role") != "user":
                 continue
@@ -444,6 +533,9 @@ class ResearchService:
             "scope": hit.scope,
             "source_task_id": hit.source_task_id,
             "source_type": hit.source_type,
+            "evidence_level": hit.evidence_level,
+            "matched_chunk_count": int(hit.matched_chunk_count),
+            "supporting_snippets": list(hit.supporting_snippets),
         }
 
     def _previous_round_context_for_task(self, task: ResearchTask) -> dict[str, Any]:
@@ -494,3 +586,11 @@ class ResearchService:
         if snapshot is None:
             return ""
         return clean_internal_context_text(getattr(snapshot, "summary", ""), max_length=280)
+
+    def _conversation_working_memory(self, conversation_id: str):
+        if self.working_memory_service is None:
+            return None
+        try:
+            return self.working_memory_service.get_conversation_memory(conversation_id)
+        except Exception:
+            return None

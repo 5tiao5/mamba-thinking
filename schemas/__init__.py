@@ -35,6 +35,7 @@ from .research import (
     WorkspaceSnapshotResponse,
     WorkspaceSourceTraceView,
     WorkspaceTraceView,
+    WorkspaceWorkingMemoryView,
 )
 from .tooling import SkillView, ToolView, UpdateToolRequest
 
@@ -72,6 +73,7 @@ __all__ = [
     "WorkspaceKnowledgeHitView",
     "WorkspaceSourceTraceView",
     "WorkspaceInheritedContextView",
+    "WorkspaceWorkingMemoryView",
     "WorkspaceTraceView",
     "WorkspaceSnapshotResponse",
     "ToolView",

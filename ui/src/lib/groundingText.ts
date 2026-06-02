@@ -46,7 +46,7 @@ export function retrievalStatusLabel(status?: string) {
     case "fresh_evidence_added":
       return "已补入新增论文";
     case "refresh_reused_only":
-      return "已尝试扩展证据";
+      return "已尝试刷新证据";
     case "fallback_only":
       return "仅背景参考";
     case "normal":
@@ -145,8 +145,8 @@ export function formatRetrievalMessage(
         : "系统已过滤越界结果，并优先保留更贴近当前问题的论文。";
     case "fresh_evidence_added":
       return novelPaperCount > 0
-        ? `系统已按扩展后的问题重新检索，并补入 ${novelPaperCount} 篇本轮新增论文${reusedPaperCount > 0 ? `，同时保留 ${reusedPaperCount} 篇仍然高相关的旧证据` : ""}。`
-        : "系统已按扩展后的问题重新检索，并补入了新的高相关论文。";
+        ? `系统已按当前追问重新检索，并补入 ${novelPaperCount} 篇本轮新增论文${reusedPaperCount > 0 ? `，同时保留 ${reusedPaperCount} 篇仍然高相关的旧证据` : ""}。`
+        : "系统已按当前追问重新检索，并补入了新的高相关论文。";
     case "refresh_reused_only":
       return "系统已经按新的范围重新检索过了，但高相关结果仍与上一轮重合，暂时没有更合适的新论文。";
     case "fallback_only":

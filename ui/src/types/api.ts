@@ -158,10 +158,14 @@ export type WorkspaceEvidenceStatus = {
 
 export type WorkspaceKnowledgeHit = {
   title: string;
+  snippet: string;
   scope: string;
   source_type: string;
   source_task_id?: string | null;
   score: number;
+  evidence_level: string;
+  matched_chunk_count: number;
+  supporting_snippets: string[];
 };
 
 export type WorkspaceSourceTrace = {
@@ -189,6 +193,17 @@ export type WorkspaceInheritedContext = {
   recent_turns: string[];
 };
 
+export type WorkspaceWorkingMemory = {
+  current_focus: string;
+  summary: string;
+  stable_findings: string[];
+  open_questions: string[];
+  active_constraints: string[];
+  supporting_task_ids: string[];
+  source_task_id?: string | null;
+  updated_at: string;
+};
+
 export type WorkspaceSnapshot = {
   task_id: string;
   topic: string;
@@ -202,6 +217,7 @@ export type WorkspaceSnapshot = {
   evidence_status: WorkspaceEvidenceStatus;
   source_trace?: WorkspaceSourceTrace | null;
   inherited_context?: WorkspaceInheritedContext | null;
+  working_memory?: WorkspaceWorkingMemory | null;
   trace: {
     thought_trace: Array<Record<string, unknown>>;
     action_history: Array<Record<string, unknown>>;

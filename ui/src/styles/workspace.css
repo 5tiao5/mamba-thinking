@@ -843,6 +843,27 @@
   line-height: 1.45;
 }
 
+.workspace-hit-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-hit-title-expanded {
+  white-space: normal;
+}
+
+.workspace-context-list-item p {
+  margin: 0;
+  color: #42566f;
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.workspace-hit-snippet-expanded {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .workspace-context-list-item small {
   color: #64748b;
   font-size: 0.72rem;
@@ -880,6 +901,102 @@
   color: #42566f;
   font-size: 0.75rem;
   line-height: 1.5;
+}
+
+.workspace-hit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspace-hit-meta-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.workspace-inline-toggle {
+  cursor: pointer;
+  justify-self: start;
+  border: 1px solid #d6e5f7;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #2256c8;
+  padding: 5px 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.workspace-inline-toggle:hover {
+  border-color: #2f6fed;
+  background: #eef5ff;
+}
+
+.workspace-supporting-snippets {
+  display: grid;
+  gap: 6px;
+}
+
+.workspace-supporting-snippet {
+  border-left: 3px solid #bfd3f8;
+  border-radius: 0 8px 8px 0;
+  background: #f8fbff;
+  padding: 8px 10px;
+  color: #42566f;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.workspace-memory-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workspace-memory-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e3edf9;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 12px;
+}
+
+.workspace-memory-card-accent {
+  border-color: #bfd3f8;
+  background: linear-gradient(180deg, #f7fbff 0%, #eef5ff 100%);
+}
+
+.workspace-memory-card strong {
+  color: #2f6fed;
+  font-size: 0.74rem;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.workspace-memory-metrics strong {
+  font-size: 0.96rem;
+}
+
+.workspace-memory-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-memory-list-item {
+  border: 1px solid #e7eef8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+  color: #24354e;
+  font-size: 0.78rem;
+  line-height: 1.55;
 }
 
 .workspace-inline-empty {

@@ -148,6 +148,10 @@ def _build_context_grounding(state: ResearchState) -> dict[str, Any]:
         str(state.get("conversation_workspace_summary", "") or ""),
         max_length=240,
     )
+    working_memory_summary = clean_internal_context_text(
+        str(state.get("working_memory_summary", "") or ""),
+        max_length=240,
+    )
     retrieval_plan_summary = summarize_retrieval_plan(retrieval_plan)
 
     return {
@@ -158,15 +162,43 @@ def _build_context_grounding(state: ResearchState) -> dict[str, Any]:
         "knowledge_hits": [
             {
                 "title": str(hit.get("title", "")).strip(),
+                "snippet": clean_internal_context_text(str(hit.get("snippet", "") or ""), max_length=1200),
                 "scope": str(hit.get("scope", "")).strip(),
                 "source_type": str(hit.get("source_type", "")).strip(),
                 "score": float(hit.get("score", 0.0) or 0.0),
+                "evidence_level": str(hit.get("evidence_level", "")).strip() or "candidate",
+                "matched_chunk_count": int(hit.get("matched_chunk_count", 0) or 0),
+                "supporting_snippets": [
+                    clean_internal_context_text(str(snippet), max_length=1200)
+                    for snippet in list(hit.get("supporting_snippets", []) or [])[:3]
+                    if clean_internal_context_text(str(snippet), max_length=1200)
+                ],
             }
             for hit in knowledge_hits[:3]
         ],
         "workspace_hint_count": len(workspace_hints),
         "workspace_hints": [str(hint).strip() for hint in workspace_hints[:3] if str(hint).strip()],
         "workspace_summary": workspace_summary,
+        "working_memory_summary": working_memory_summary,
+        "working_memory_current_focus": clean_internal_context_text(
+            str(state.get("working_memory_current_focus", "") or ""),
+            max_length=180,
+        ),
+        "working_memory_findings": [
+            clean_internal_context_text(str(item), max_length=140)
+            for item in list(state.get("working_memory_findings", []) or [])[:3]
+            if clean_internal_context_text(str(item), max_length=140)
+        ],
+        "working_memory_open_questions": [
+            clean_internal_context_text(str(item), max_length=160)
+            for item in list(state.get("working_memory_open_questions", []) or [])[:2]
+            if clean_internal_context_text(str(item), max_length=160)
+        ],
+        "working_memory_constraints": [
+            clean_internal_context_text(str(item), max_length=120)
+            for item in list(state.get("working_memory_constraints", []) or [])[:3]
+            if clean_internal_context_text(str(item), max_length=120)
+        ],
         "recent_turn_count": len(recent_context),
         "recent_user_turns": [
             clean_internal_context_text(str(entry.get("content", "")), max_length=160)
@@ -189,6 +221,9 @@ def _context_grounding_note(context_grounding: dict[str, Any]) -> str:
         parts.append(f"reused {knowledge_hit_count} knowledge hits from scope `{knowledge_scope}`")
     if workspace_hint_count:
         parts.append(f"inherited {workspace_hint_count} workspace hints")
+    working_memory_summary = str(context_grounding.get("working_memory_summary", "") or "").strip()
+    if working_memory_summary:
+        parts.append("used explicit working memory")
     if recent_turn_count:
         parts.append(f"referenced {recent_turn_count} recent dialogue turns")
     if retrieval_plan:
@@ -203,6 +238,8 @@ def _context_grounding_note(context_grounding: dict[str, Any]) -> str:
     workspace_summary = str(context_grounding.get("workspace_summary", "") or "").strip()
     if workspace_summary:
         note += f" Prior workspace summary: {workspace_summary}"
+    if working_memory_summary:
+        note += f" Working memory summary: {working_memory_summary}"
     return note
 
 

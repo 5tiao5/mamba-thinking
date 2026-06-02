@@ -90,6 +90,7 @@ def _summary_from_payload(*, topic: str, summary_payload: Dict[str, Any]) -> str
     counts = summary_payload.get("counts", {}) or {}
     recommendation = str(summary_payload.get("recommendation", "") or "").strip()
     top_gaps = summary_payload.get("top_gaps", []) or []
+    is_expansion_followup = _is_expansion_followup_summary(topic=topic, summary_payload=summary_payload)
 
     lines: List[str] = []
     if headline:
@@ -112,7 +113,11 @@ def _summary_from_payload(*, topic: str, summary_payload: Dict[str, Any]) -> str
     if metrics:
         lines.append("本轮分析共得到 " + "，".join(metrics) + "。")
 
-    if top_gaps:
+    if is_expansion_followup:
+        focus = _expansion_focus_from_topic(topic)
+        if focus:
+            lines.append(f"当前展开方向：{focus}。")
+    elif top_gaps:
         gap_summaries = []
         for gap in top_gaps[:2]:
             if isinstance(gap, dict):
@@ -128,6 +133,22 @@ def _summary_from_payload(*, topic: str, summary_payload: Dict[str, Any]) -> str
         lines.append("建议：" + recommendation)
 
     return clean_internal_context_text("\n".join(line for line in lines if line).strip(), max_length=600)
+
+
+def _is_expansion_followup_summary(*, topic: str, summary_payload: Dict[str, Any]) -> bool:
+    if "继续展开" in str(topic):
+        return True
+    grounding = summary_payload.get("context_grounding", {}) if isinstance(summary_payload, dict) else {}
+    retrieval_plan = str(grounding.get("retrieval_plan", "") or "") if isinstance(grounding, dict) else ""
+    return "goal=extend_context" in retrieval_plan
+
+
+def _expansion_focus_from_topic(topic: str) -> str:
+    text = clean_internal_context_text(str(topic or ""), max_length=180)
+    for marker in ("继续展开：", "继续展开:", "展开：", "展开:"):
+        if marker in text:
+            return text.split(marker, 1)[1].strip(" -")
+    return ""
 
 
 def _strip_report_noise(report_text: str) -> str:

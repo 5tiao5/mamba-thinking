@@ -59,6 +59,21 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS conversation_working_memory (
+        conversation_id TEXT PRIMARY KEY,
+        current_focus TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        stable_findings_json TEXT NOT NULL,
+        open_questions_json TEXT NOT NULL,
+        active_constraints_json TEXT NOT NULL,
+        supporting_task_ids_json TEXT NOT NULL,
+        source_task_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS knowledge_documents (
         document_id TEXT PRIMARY KEY,
         title TEXT NOT NULL,

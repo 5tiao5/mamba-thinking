@@ -425,6 +425,8 @@ export function WorkspacePage() {
         papers={workspace?.papers ?? []}
         sourceTrace={workspace?.source_trace ?? null}
         trace={workspace?.trace ?? null}
+        workingMemory={workspace?.working_memory ?? null}
+        showWorkingMemory={activeView === "conversation"}
       />
     </div>
   );

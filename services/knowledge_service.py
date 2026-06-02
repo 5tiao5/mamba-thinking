@@ -61,6 +61,9 @@ class KnowledgeHit:
     scope: str
     source_task_id: Optional[str] = None
     source_type: str = ""
+    evidence_level: str = "candidate"
+    matched_chunk_count: int = 0
+    supporting_snippets: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -872,27 +875,57 @@ class KnowledgeService:
         if normalized_scope == "none":
             return []
 
-        search_limit = max(top_k * (6 if normalized_scope == "conversation_only" else 2), top_k)
-        scored_docs = self._score_documents_by_keyword(query, min_score=0.5)
-        filtered_docs = self._filter_scored_documents_for_scope(
-            scored_docs[:search_limit],
+        search_limit = max(top_k * (8 if normalized_scope == "conversation_only" else 4), top_k)
+        hybrid_results = self.retrieve(
+            query,
+            top_k=search_limit,
+            hybrid=self.enable_hybrid_search,
+            use_reranker=False,
+        )
+        hits = self._hits_from_search_results(
+            hybrid_results,
+            top_k=top_k,
+            max_chars_per_doc=max_chars_per_doc,
             knowledge_scope=normalized_scope,
             conversation_id=conversation_id,
         )
 
-        hits: list[KnowledgeHit] = []
-        for score, doc in filtered_docs[:top_k]:
+        if len(hits) >= top_k:
+            return hits[:top_k]
+
+        existing_doc_ids = {hit.document_id for hit in hits}
+        scored_docs = self._score_documents_by_keyword(query, min_score=0.5)
+        filtered_docs = self._filter_scored_documents_for_scope(
+            scored_docs[: max(search_limit * 2, top_k)],
+            knowledge_scope=normalized_scope,
+            conversation_id=conversation_id,
+        )
+
+        for score, doc in filtered_docs:
+            if doc.document_id in existing_doc_ids:
+                continue
+            normalized_keyword_score = min(float(score) / 8.0, 1.0)
             hits.append(
                 KnowledgeHit(
                     document_id=doc.document_id,
                     title=doc.title.strip(),
                     snippet=self._build_document_excerpt(doc, max_chars=max_chars_per_doc),
-                    score=round(float(score), 3),
+                    score=round(normalized_keyword_score, 3),
                     scope=self._document_scope(doc, conversation_id=conversation_id),
                     source_task_id=doc.source_task_id,
                     source_type=str(doc.metadata.get("source_type", "")),
+                    evidence_level=self._knowledge_evidence_level(
+                        document=doc,
+                        aggregate_score=normalized_keyword_score,
+                        matched_chunk_count=1,
+                    ),
+                    matched_chunk_count=1,
+                    supporting_snippets=[self._build_document_excerpt(doc, max_chars=max(max_chars_per_doc, 1200))],
                 )
             )
+            existing_doc_ids.add(doc.document_id)
+            if len(hits) >= top_k:
+                break
         return hits
 
     def retrieve_for_context(
@@ -1101,6 +1134,137 @@ class KnowledgeService:
         scored.sort(key=lambda item: item[0], reverse=True)
         return scored
 
+    def _hits_from_search_results(
+        self,
+        results: List[SearchResult],
+        *,
+        top_k: int,
+        max_chars_per_doc: int,
+        knowledge_scope: str,
+        conversation_id: str | None,
+    ) -> list[KnowledgeHit]:
+        doc_cache: dict[str, KnowledgeDocument | None] = {}
+        grouped_results: dict[str, list[SearchResult]] = {}
+
+        for result in results:
+            document_id = str(getattr(result.chunk, "document_id", "") or "").strip()
+            if not document_id:
+                continue
+
+            if document_id not in doc_cache:
+                doc_cache[document_id] = self.repository.get(document_id)
+            document = doc_cache[document_id]
+            if document is None:
+                continue
+
+            if knowledge_scope == "conversation_only" and not self._document_matches_conversation(
+                document,
+                conversation_id=conversation_id,
+            ):
+                continue
+
+            grouped_results.setdefault(document.document_id, []).append(result)
+
+        aggregated_hits: list[KnowledgeHit] = []
+        for document_id, doc_results in grouped_results.items():
+            document = doc_cache.get(document_id)
+            if document is None:
+                continue
+
+            top_results = sorted(doc_results, key=lambda item: item.score, reverse=True)[:3]
+            supporting_snippets = self._unique_supporting_snippets(
+                [
+                    self._build_chunk_excerpt(
+                        getattr(item.chunk, "content", "") or "",
+                        max_chars=max(max_chars_per_doc, 1200),
+                    )
+                    for item in top_results
+                ]
+            )
+            primary_snippet = (
+                supporting_snippets[0]
+                if supporting_snippets
+                else self._build_document_excerpt(document, max_chars=max_chars_per_doc)
+            )
+            aggregate_score = self._aggregate_document_relevance(top_results)
+            aggregated_hits.append(
+                KnowledgeHit(
+                    document_id=document.document_id,
+                    title=document.title.strip(),
+                    snippet=primary_snippet,
+                    score=round(aggregate_score, 3),
+                    scope=self._document_scope(document, conversation_id=conversation_id),
+                    source_task_id=document.source_task_id,
+                    source_type=str(document.metadata.get("source_type", "")),
+                    evidence_level=self._knowledge_evidence_level(
+                        document=document,
+                        aggregate_score=aggregate_score,
+                        matched_chunk_count=len(supporting_snippets) or len(top_results),
+                    ),
+                    matched_chunk_count=len(supporting_snippets) or len(top_results),
+                    supporting_snippets=supporting_snippets,
+                )
+            )
+
+        ordered_hits = sorted(aggregated_hits, key=lambda hit: hit.score, reverse=True)
+        return ordered_hits[:top_k]
+
+    @staticmethod
+    def _aggregate_document_relevance(results: List[SearchResult]) -> float:
+        if not results:
+            return 0.0
+        top_score = max(float(item.score) for item in results)
+        if len(results) == 1:
+            return min(top_score, 1.0)
+        remaining = [float(item.score) for item in results if float(item.score) != top_score]
+        avg_remaining = sum(remaining) / len(remaining) if remaining else top_score
+        aggregate = top_score * 0.75 + avg_remaining * 0.25 + min(0.05 * (len(results) - 1), 0.1)
+        return min(aggregate, 1.0)
+
+    def _knowledge_evidence_level(
+        self,
+        *,
+        document: KnowledgeDocument,
+        aggregate_score: float,
+        matched_chunk_count: int,
+    ) -> str:
+        source_type = str(document.metadata.get("source_type", "") or "").strip().lower()
+        confidence = max(0.0, min(float(aggregate_score), 1.0))
+
+        if source_type in {"paper_import", "workspace_summary"}:
+            confidence += 0.12
+        elif source_type == "user_import":
+            confidence += 0.06
+
+        if matched_chunk_count >= 2:
+            confidence += 0.08
+        if matched_chunk_count >= 3:
+            confidence += 0.04
+
+        confidence = min(confidence, 1.0)
+        if confidence >= 0.82:
+            return "strong"
+        if confidence >= 0.62:
+            return "moderate"
+        return "candidate"
+
+    @staticmethod
+    def _unique_supporting_snippets(snippets: List[str], *, limit: int = 3) -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        for snippet in snippets:
+            normalized = " ".join((snippet or "").split()).strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(normalized)
+            if len(values) >= limit:
+                break
+        return values
+
     def _filter_scored_documents_for_scope(
         self,
         scored_docs: list[tuple[float, KnowledgeDocument]],
@@ -1150,6 +1314,16 @@ class KnowledgeService:
         content = " ".join((document.content or "").split())
         excerpt = content[:max_chars]
         if len(content) > max_chars:
+            excerpt += "..."
+        return excerpt
+
+    @staticmethod
+    def _build_chunk_excerpt(content: str, *, max_chars: int) -> str:
+        normalized = " ".join((content or "").split())
+        if not normalized:
+            return ""
+        excerpt = normalized[:max_chars]
+        if len(normalized) > max_chars:
             excerpt += "..."
         return excerpt
 

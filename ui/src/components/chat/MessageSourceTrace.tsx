@@ -37,6 +37,11 @@ export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSou
     2,
     36
   );
+  const knowledgeSnippets = uniqueTexts(
+    (sourceTrace?.knowledge_hits ?? []).map((item) => item.snippet),
+    1,
+    120
+  );
   const workspaceHints = uniqueTexts(
     [...(sourceTrace?.workspace_hints ?? []), ...(inheritedContext?.workspace_hints ?? [])],
     2,
@@ -72,6 +77,7 @@ export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSou
       knowledgeScope === "none");
   const hasContext =
     knowledgeTitles.length > 0 ||
+    knowledgeSnippets.length > 0 ||
     workspaceHints.length > 0 ||
     recentTurns.length > 0 ||
     Boolean(retrievalPlan) ||
@@ -133,6 +139,13 @@ export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSou
         <div className="message-source-trace-copy">
           <strong>参考资料</strong>
           <span>{knowledgeTitles.join(" / ")}</span>
+        </div>
+      ) : null}
+
+      {knowledgeSnippets.length ? (
+        <div className="message-source-trace-copy">
+          <strong>命中片段</strong>
+          <span>{knowledgeSnippets[0]}</span>
         </div>
       ) : null}
 

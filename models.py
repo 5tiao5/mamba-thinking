@@ -78,6 +78,11 @@ class ResearchState(TypedDict, total=False):
     context_inputs: List[Dict[str, Any]]
     conversation_workspace_context: List[str]
     conversation_workspace_summary: str
+    working_memory_summary: str
+    working_memory_current_focus: str
+    working_memory_findings: List[str]
+    working_memory_open_questions: List[str]
+    working_memory_constraints: List[str]
     previous_round_task_id: str
     previous_round_paper_ids: List[str]
     previous_round_query_intent: Dict[str, Any]

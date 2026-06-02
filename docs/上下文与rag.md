@@ -99,11 +99,12 @@
 
 - `KnowledgeService` 骨架已在
 - SQLite 已支持 `knowledge_documents`
-- 但主链路接入还不深
+- 主链路已支持知识范围选择和知识命中注入
+- workspace 已能展示知识命中、证据等级和 supporting snippets
 
 也就是说：
 
-**知识层的“仓库和服务”有了，但用户目前还感知不到完整 RAG 能力。**
+**知识层已经接入主链路，但导入、来源查看和质量回归还需要继续产品化。**
 
 ---
 
@@ -120,20 +121,22 @@
 
 - 保存知识摘要
 - 关键词检索
-- 向量检索骨架
+- 向量检索
 - 检索入口 `retrieve(...)`
+- 结构化检索入口 `retrieve_hits_for_context(...)`
+- chunk 命中、文档聚合、证据等级、supporting snippets
 - SQLite 中保存 `knowledge_documents`
 
-### 3.2 还没有完全接上的能力
+### 3.2 仍需继续产品化的能力
 
-- `continue_conversation` 没有真正读取知识库增强回复
-- `create_task` / `run_task` 前没有先做知识召回
-- 前端没有知识导入入口
-- assistant 回答还没有显示“我参考了哪些历史知识”
+- PDF / DOI / arXiv / 标题自动导入仍需增强
+- 命中知识来源还不能直接打开全文
+- assistant 回答中的来源引用仍需更稳定
+- 需要保留 bad case 数据集做回归
 
 所以现在更准确的说法不是“没做 RAG”，而是：
 
-**RAG 基础设施草稿已存在，但主产品链路尚未接实。**
+**RAG 已经进入主产品链路，下一步是把它打磨成用户能理解、能信任、能回归验证的产品能力。**
 
 ---
 
@@ -231,14 +234,16 @@
 - follow-up task 创建
 - assistant 结果回写
 - SQLite 持久化
-- `KnowledgeService` 基础骨架
+- `KnowledgeService` 检索
+- 主链路知识范围控制
+- workspace 知识命中与证据等级展示
 
-### 还没完成
+### 还需继续产品化
 
-- 用户可感知的 RAG
-- 知识导入 UI
-- 基于知识库的搜索增强
-- 基于知识库的连续问答增强
+- 资料全文查看
+- 自动导入论文 PDF / DOI / arXiv / 标题
+- assistant 回复中的稳定来源引用
+- bad case 数据集与回归评估
 
 ---
 
@@ -246,10 +251,11 @@
 
 最适合后端组继续做的事情：
 
-1. 在 `continue_conversation` 前加入知识召回
-2. 在 `run_task` 前加入知识检索增强
-3. 增加知识导入接口
-4. 让 assistant 回复标出使用了哪些知识来源
+1. 强化 `retrieve_hits_for_context(...)` 的命中质量和过滤策略
+2. 增加论文 PDF / DOI / arXiv / 标题自动导入能力
+3. 增加资料全文查看或 document detail 接口
+4. 让 assistant 回复和 workspace 更稳定地标出使用了哪些知识来源
+5. 整理 RAG bad case 回归集
 
 建议新增或补强：
 
@@ -264,12 +270,12 @@
 
 当前系统已经有：
 
-**会话历史 + follow-up task + knowledge service 骨架 + SQLite 持久化**
+**会话历史 + follow-up task + working memory + 主链路 RAG + SQLite 持久化**
 
-但还没有真正做到：
+但还需要继续做到：
 
-**“基于历史知识继续思考并回答”的产品级 RAG。**
+**“用户能看懂来源、能导入资料、能验证优化效果”的产品级 RAG。**
 
 下一阶段的正确方向不是重新发明一套架构，而是：
 
-**把知识层真正接进 Conversation -> Task -> Workspace 这条主链。**
+**把知识层从可用能力打磨成可信、可解释、可回归的科研产品能力。**

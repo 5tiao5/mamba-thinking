@@ -16,6 +16,7 @@ from product_agent.schemas import (
     WorkspaceSnapshotResponse,
     WorkspaceSourceTraceView,
     WorkspaceTraceView,
+    WorkspaceWorkingMemoryView,
 )
 from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 
@@ -37,10 +38,12 @@ class WorkspaceService:
         repository: WorkspaceRepository,
         conversation_repository: ConversationRepository | None = None,
         task_repository: ResearchTaskRepository | None = None,
+        working_memory_service=None,
     ) -> None:
         self.repository = repository
         self.conversation_repository = conversation_repository
         self.task_repository = task_repository
+        self.working_memory_service = working_memory_service
         # conversation 总 workspace 缓存：conv_id -> (latest_task_ts, snapshot)
         self._conv_ws_cache: OrderedDict[str, tuple[str, WorkspaceSnapshotResponse]] = OrderedDict()
 
@@ -82,6 +85,7 @@ class WorkspaceService:
             trace=trace,
         )
         inherited_context = _build_inherited_context_view(trace)
+        working_memory = self._workspace_working_memory(task_id=task_id)
         return WorkspaceSnapshotResponse(
             task_id=workspace.task_id,
             topic=workspace.topic,
@@ -132,6 +136,7 @@ class WorkspaceService:
             evidence_status=WorkspaceEvidenceStatusView(**evidence_status),
             source_trace=source_trace,
             inherited_context=inherited_context,
+            working_memory=working_memory,
             trace=WorkspaceTraceView(
                 thought_trace=_normalize_trace_entries(trace.get("thought_trace", [])),
                 action_history=_normalize_trace_entries(trace.get("action_history", [])),
@@ -180,7 +185,6 @@ class WorkspaceService:
         if not valid_workspaces:
             return None
 
-        merged_summary = _merge_workspace_summaries(topic=topic, workspaces=valid_workspaces)
         merged_papers = _merge_workspace_papers(valid_workspaces)
         merged_graph_edges = _merge_workspace_graph_edges(valid_workspaces)
         merged_gaps = _merge_workspace_gaps(valid_workspaces)
@@ -190,12 +194,27 @@ class WorkspaceService:
         merged_alignment = round(
             sum(workspace.alignment_score for workspace in valid_workspaces) / len(valid_workspaces), 3
         )
+        merged_summary_payload = _build_conversation_summary_payload(
+            topic=topic,
+            workspaces=valid_workspaces,
+            papers=merged_papers,
+            gaps=merged_gaps,
+            ideas=merged_ideas,
+            alignment_score=merged_alignment,
+        )
+        merged_summary = _merge_workspace_summaries(
+            topic=topic,
+            workspaces=valid_workspaces,
+            paper_count=len(merged_papers),
+            gap_count=len(merged_gaps),
+            idea_count=len(merged_ideas),
+        )
 
         synthetic_workspace = type("ConversationWorkspaceProjection", (), {})()
         synthetic_workspace.task_id = f"conversation::{conversation_id}"
         synthetic_workspace.topic = topic
         synthetic_workspace.summary = merged_summary
-        synthetic_workspace.summary_payload = dict(valid_workspaces[0].summary_payload or {})
+        synthetic_workspace.summary_payload = merged_summary_payload
         synthetic_workspace.papers = merged_papers
         synthetic_workspace.taxonomy = merged_taxonomy
         synthetic_workspace.graph_edges = merged_graph_edges
@@ -211,6 +230,7 @@ class WorkspaceService:
             trace=trace,
         )
         inherited_context = _build_inherited_context_view(trace)
+        working_memory = self._conversation_working_memory_view(conversation_id)
         result = WorkspaceSnapshotResponse(
             task_id=synthetic_workspace.task_id,
             topic=synthetic_workspace.topic,
@@ -261,6 +281,7 @@ class WorkspaceService:
             evidence_status=WorkspaceEvidenceStatusView(**evidence_status),
             source_trace=source_trace,
             inherited_context=inherited_context,
+            working_memory=working_memory,
             trace=WorkspaceTraceView(
                 thought_trace=_normalize_trace_entries(trace.get("thought_trace", [])),
                 action_history=_normalize_trace_entries(trace.get("action_history", [])),
@@ -309,6 +330,14 @@ class WorkspaceService:
             hints.append(text)
 
         evidence_status = snapshot.evidence_status
+        if snapshot.working_memory is not None:
+            if snapshot.working_memory.current_focus:
+                add_hint(snapshot.working_memory.current_focus, max_length=100)
+            for finding in snapshot.working_memory.stable_findings[:max_branches]:
+                add_hint(finding, max_length=100)
+            for question in snapshot.working_memory.open_questions[:max_gaps]:
+                add_hint(question, max_length=110)
+
         for branch_name in list(evidence_status.candidate_branches or [])[:max_branches]:
             add_hint(branch_name, max_length=80)
 
@@ -329,6 +358,34 @@ class WorkspaceService:
             add_hint(paper.title, max_length=100)
 
         return clean_internal_context_items(hints, max_length=100)
+
+    def _workspace_working_memory(self, *, task_id: str) -> WorkspaceWorkingMemoryView | None:
+        if self.task_repository is None:
+            return None
+        task = self.task_repository.get(task_id)
+        if task is None:
+            return None
+        return self._conversation_working_memory_view(task.conversation_id)
+
+    def _conversation_working_memory_view(self, conversation_id: str) -> WorkspaceWorkingMemoryView | None:
+        if self.working_memory_service is None:
+            return None
+        try:
+            memory = self.working_memory_service.get_conversation_memory(conversation_id)
+        except Exception:
+            return None
+        if memory is None:
+            return None
+        return WorkspaceWorkingMemoryView(
+            current_focus=clean_internal_context_text(memory.current_focus, max_length=180),
+            summary=clean_internal_context_text(memory.summary, max_length=320),
+            stable_findings=clean_internal_context_items(list(memory.stable_findings), max_length=140),
+            open_questions=clean_internal_context_items(list(memory.open_questions), max_length=180),
+            active_constraints=clean_internal_context_items(list(memory.active_constraints), max_length=140),
+            supporting_task_ids=[str(task_id).strip() for task_id in memory.supporting_task_ids if str(task_id).strip()][:8],
+            source_task_id=(str(memory.source_task_id).strip() or None) if memory.source_task_id else None,
+            updated_at=memory.updated_at.isoformat(),
+        )
 
 
 def _build_evidence_status(workspace) -> dict:
@@ -393,20 +450,66 @@ def _build_evidence_status(workspace) -> dict:
     }
 
 
-def _merge_workspace_summaries(*, topic: str, workspaces: list) -> str:
-    latest_summary = next((workspace.summary for workspace in workspaces if workspace.summary), "")
-    paper_count = len(_merge_workspace_papers(workspaces))
-    gap_count = len(_merge_workspace_gaps(workspaces))
-    idea_count = len(_merge_workspace_ideas(workspaces))
+def _merge_workspace_summaries(
+    *,
+    topic: str,
+    workspaces: list,
+    paper_count: int | None = None,
+    gap_count: int | None = None,
+    idea_count: int | None = None,
+) -> str:
+    paper_count = len(_merge_workspace_papers(workspaces)) if paper_count is None else paper_count
+    gap_count = len(_merge_workspace_gaps(workspaces)) if gap_count is None else gap_count
+    idea_count = len(_merge_workspace_ideas(workspaces)) if idea_count is None else idea_count
     task_count = len(workspaces)
 
     lines = [
         f"{topic} 的会话级研究工作台",
         f"当前累计 {task_count} 轮有效研究，汇总论文 {paper_count} 篇、研究空白 {gap_count} 条、研究建议 {idea_count} 条。",
     ]
-    if latest_summary:
-        lines.append(f"最近一轮摘要：{_strip_report_noise(latest_summary)[:220]}")
     return "\n".join(lines)
+
+
+def _build_conversation_summary_payload(
+    *,
+    topic: str,
+    workspaces: list,
+    papers: list,
+    gaps: list,
+    ideas: list,
+    alignment_score: float,
+) -> dict:
+    latest_payload = next((dict(workspace.summary_payload or {}) for workspace in workspaces if workspace.summary_payload), {})
+    top_gaps = [
+        {"summary": clean_internal_context_text(getattr(gap, "summary", ""), max_length=160)}
+        for gap in gaps[:3]
+        if clean_internal_context_text(getattr(gap, "summary", ""), max_length=160)
+    ]
+    top_ideas = [
+        {"title": clean_internal_context_text(getattr(idea, "title", ""), max_length=140)}
+        for idea in ideas[:3]
+        if clean_internal_context_text(getattr(idea, "title", ""), max_length=140)
+    ]
+    payload = dict(latest_payload)
+    payload.update(
+        {
+            "headline": f"{topic} 已累计整合 {len(workspaces)} 轮研究结果。",
+            "score": alignment_score,
+            "counts": {
+                "papers": len(papers),
+                "gaps": len(gaps),
+                "ideas": len(ideas),
+            },
+            "top_gaps": top_gaps,
+            "top_ideas": top_ideas,
+            "recommendation": (
+                f"建议优先基于当前累计的 {len(papers)} 篇论文线索继续筛选高置信证据，"
+                "再围绕稳定空白细化下一轮追问。"
+            ),
+            "aggregation_mode": "conversation_workspace",
+        }
+    )
+    return payload
 
 
 def _merge_workspace_papers(workspaces: list) -> list:
@@ -577,10 +680,18 @@ def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> Workspace
     normalized_hits = [
         WorkspaceKnowledgeHitView(
             title=str(item.get("title", "")).strip(),
+            snippet=clean_internal_context_text(str(item.get("snippet", "") or ""), max_length=1200),
             scope=str(item.get("scope", "")).strip() or "shared",
             source_type=str(item.get("source_type", "")).strip(),
             source_task_id=(str(item.get("source_task_id", "")).strip() or None),
             score=float(item.get("score", 0.0) or 0.0),
+            evidence_level=str(item.get("evidence_level", "")).strip() or "candidate",
+            matched_chunk_count=int(item.get("matched_chunk_count", 0) or 0),
+            supporting_snippets=[
+                clean_internal_context_text(str(snippet), max_length=1200)
+                for snippet in list(item.get("supporting_snippets", []) or [])[:3]
+                if clean_internal_context_text(str(snippet), max_length=1200)
+            ],
         )
         for item in knowledge_hits_payload
         if isinstance(item, dict) and str(item.get("title", "")).strip()

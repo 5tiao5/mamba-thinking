@@ -20,6 +20,7 @@ import type {
   WorkspacePaper,
   WorkspaceSnapshot,
   WorkspaceSourceTrace,
+  WorkspaceWorkingMemory,
 } from "../../types/api";
 import { SectionHeader } from "../ui/SectionHeader";
 import { StatusPill } from "../ui/StatusPill";
@@ -74,13 +75,72 @@ function uniqueTexts(items: string[], maxItems: number, maxLength = 72) {
   return values;
 }
 
+function uniqueFullTexts(items: string[], maxItems: number) {
+  const seen = new Set<string>();
+  const values: string[] = [];
+
+  for (const item of items) {
+    const cleaned = cleanDisplayText(item);
+    if (!cleaned || seen.has(cleaned)) {
+      continue;
+    }
+    seen.add(cleaned);
+    values.push(cleaned);
+    if (values.length >= maxItems) {
+      break;
+    }
+  }
+
+  return values;
+}
+
+function evidenceLevelLabel(level: string) {
+  const normalized = (level || "").toLowerCase();
+  if (normalized === "strong") return "强证据";
+  if (normalized === "moderate") return "中等证据";
+  if (normalized === "weak") return "弱证据";
+  return "候选证据";
+}
+
+function evidenceLevelTone(level: string): "success" | "info" | "warning" | "neutral" {
+  const normalized = (level || "").toLowerCase();
+  if (normalized === "strong") return "success";
+  if (normalized === "moderate") return "info";
+  if (normalized === "weak" || normalized === "candidate") return "warning";
+  return "neutral";
+}
+
+function formatWorkingMemoryDate(value?: string) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return parsed.toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function formatKnowledgeHit(hit: WorkspaceKnowledgeHit) {
-  const title = cleanDisplayText(hit.title, 68) || "未命名资料";
-  const parts = [hit.source_type, hit.scope].map((item) => cleanDisplayText(item, 16)).filter(Boolean);
+  const titleFull = cleanDisplayText(hit.title) || "未命名资料";
+  const snippetFull = cleanDisplayText(hit.snippet);
+  const parts = [hit.source_type, hit.scope].map((item) => cleanDisplayText(item, 20)).filter(Boolean);
   return {
-    title,
+    title: cleanDisplayText(hit.title, 72) || titleFull,
+    titleFull,
+    snippet: cleanDisplayText(hit.snippet, 180),
+    snippetFull,
     meta: parts.join(" / "),
     score: Number.isFinite(hit.score) ? hit.score.toFixed(2) : "",
+    evidenceLevel: hit.evidence_level || "candidate",
+    matchedChunkCount: hit.matched_chunk_count ?? 0,
+    supportingSnippets: uniqueTexts(hit.supporting_snippets ?? [], 6, 180),
+    supportingSnippetsFull: uniqueFullTexts(hit.supporting_snippets ?? [], 6),
   };
 }
 
@@ -153,7 +213,7 @@ function IdeaCard({ idea, papers }: { idea: WorkspaceIdea; papers: WorkspacePape
             </div>
           ) : null}
 
-          {(feasibility || contribution) ? (
+          {feasibility || contribution ? (
             <div className="insight-support-grid">
               {feasibility ? (
                 <div className="insight-support-card insight-support-card-accent">
@@ -184,7 +244,7 @@ function IdeaCard({ idea, papers }: { idea: WorkspaceIdea; papers: WorkspacePape
             </div>
           ) : null}
 
-          {(fullFeasibility || fullContribution) ? (
+          {fullFeasibility || fullContribution ? (
             <div className="insight-support-grid">
               {fullFeasibility ? (
                 <div className="insight-support-card insight-support-card-accent">
@@ -220,6 +280,169 @@ function IdeaList({ ideas, papers }: { ideas: WorkspaceIdea[]; papers: Workspace
       {ideas.map((idea, index) => (
         <IdeaCard idea={idea} key={`${idea.title}-${index}`} papers={papers} />
       ))}
+    </div>
+  );
+}
+
+function KnowledgeHitCard({ hit }: { hit: ReturnType<typeof formatKnowledgeHit> }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasSupportingSnippets = hit.supportingSnippetsFull.length > 0;
+  const title = expanded ? hit.titleFull : hit.title;
+  const snippet = expanded ? hit.snippetFull : hit.snippet;
+  const supportingSnippets = expanded ? hit.supportingSnippetsFull : hit.supportingSnippets;
+
+  return (
+    <div className="workspace-context-list-item">
+      <div className="workspace-hit-header">
+        <span className={`workspace-hit-title ${expanded ? "workspace-hit-title-expanded" : ""}`} title={hit.titleFull}>
+          {title}
+        </span>
+        <div className="workspace-hit-meta-pills">
+          <StatusPill compact tone={evidenceLevelTone(hit.evidenceLevel)}>
+            {evidenceLevelLabel(hit.evidenceLevel)}
+          </StatusPill>
+          {hit.matchedChunkCount > 0 ? (
+            <StatusPill compact tone="neutral">
+              {hit.matchedChunkCount} 个片段
+            </StatusPill>
+          ) : null}
+        </div>
+      </div>
+
+      {snippet ? <p className={expanded ? "workspace-hit-snippet-expanded" : undefined}>{snippet}</p> : null}
+
+      <small>
+        {hit.meta || "资料命中"}
+        {hit.score ? ` · score ${hit.score}` : ""}
+      </small>
+
+      {hasSupportingSnippets ? (
+        <>
+          <button
+            className="workspace-inline-toggle"
+            onClick={() => setExpanded((value) => !value)}
+            type="button"
+          >
+            {expanded ? "收起完整片段" : `展开完整片段 (${hit.supportingSnippetsFull.length})`}
+          </button>
+
+          {expanded ? (
+            <div className="workspace-supporting-snippets">
+              {supportingSnippets.map((snippet, index) => (
+                <div className="workspace-supporting-snippet" key={`${snippet}-${index}`}>
+                  {snippet}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkingMemoryPanel({ workingMemory }: { workingMemory?: WorkspaceWorkingMemory | null }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!workingMemory) {
+    return <div className="empty-state">当前还没有形成稳定的会话级工作记忆。</div>;
+  }
+
+  const stableFindings = uniqueTexts(workingMemory.stable_findings, 8, 120);
+  const openQuestions = uniqueTexts(workingMemory.open_questions, 8, 140);
+  const activeConstraints = uniqueTexts(workingMemory.active_constraints, 8, 120);
+  const focus = cleanDisplayText(workingMemory.current_focus, 180);
+  const summary = cleanDisplayText(workingMemory.summary, 320);
+  const updatedAt = formatWorkingMemoryDate(workingMemory.updated_at);
+
+  return (
+    <div className="content-pad pane-scroll workspace-context-panel">
+      <div className="workspace-memory-overview">
+        <div className="workspace-memory-card workspace-memory-card-accent">
+          <strong>当前研究焦点</strong>
+          <div className="workspace-context-summary-copy">
+            {focus || "当前还没有收敛出明确焦点。"}
+          </div>
+        </div>
+        <div className="workspace-memory-card">
+          <strong>工作记忆摘要</strong>
+          <div className="workspace-context-summary-copy">
+            {summary || "系统还在整理本研究的稳定结论和待解问题。"}
+          </div>
+        </div>
+      </div>
+
+      <div className="workspace-context-metrics workspace-memory-metrics">
+        <div>
+          <span>稳定结论</span>
+          <strong>{stableFindings.length}</strong>
+        </div>
+        <div>
+          <span>待解问题</span>
+          <strong>{openQuestions.length}</strong>
+        </div>
+        <div>
+          <span>活跃约束</span>
+          <strong>{activeConstraints.length}</strong>
+        </div>
+        <div>
+          <span>最近更新</span>
+          <strong>{updatedAt || "-"}</strong>
+        </div>
+      </div>
+
+      <button className="insight-toggle-button" onClick={() => setExpanded((value) => !value)} type="button">
+        {expanded ? "收起工作记忆详情" : "展开工作记忆详情"}
+      </button>
+
+      {expanded ? (
+        <div className="workspace-context-stack">
+          <div className="workspace-context-card">
+            <strong>稳定结论</strong>
+            {stableFindings.length ? (
+              <div className="workspace-memory-list">
+                {stableFindings.map((item) => (
+                  <div className="workspace-memory-list-item" key={item}>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state workspace-inline-empty">当前还没有沉淀出稳定结论。</div>
+            )}
+          </div>
+
+          <div className="workspace-context-card">
+            <strong>待解问题</strong>
+            {openQuestions.length ? (
+              <div className="workspace-memory-list">
+                {openQuestions.map((item) => (
+                  <div className="workspace-memory-list-item" key={item}>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state workspace-inline-empty">当前没有挂起的关键问题。</div>
+            )}
+          </div>
+
+          <div className="workspace-context-card">
+            <strong>当前约束</strong>
+            {activeConstraints.length ? (
+              <div className="workspace-context-chip-wrap">
+                {activeConstraints.map((item) => (
+                  <span className="insight-chip insight-chip-accent" key={item}>
+                    {item}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state workspace-inline-empty">当前没有显式记录的研究约束。</div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -305,13 +528,7 @@ function SourceTracePanel({ sourceTrace }: { sourceTrace?: WorkspaceSourceTrace 
           {hits.length ? (
             <div className="workspace-context-list">
               {hits.slice(0, 4).map((hit) => (
-                <div className="workspace-context-list-item" key={`${hit.title}-${hit.meta}-${hit.score}`}>
-                  <span>{hit.title}</span>
-                  <small>
-                    {hit.meta || "资料命中"}
-                    {hit.score ? ` · score ${hit.score}` : ""}
-                  </small>
-                </div>
+                <KnowledgeHitCard hit={hit} key={`${hit.title}-${hit.meta}-${hit.score}-${hit.evidenceLevel}`} />
               ))}
             </div>
           ) : (
@@ -423,6 +640,8 @@ export function WorkspaceInsightsPanel({
   trace,
   sourceTrace,
   inheritedContext,
+  workingMemory,
+  showWorkingMemory = false,
 }: {
   gaps: WorkspaceGap[];
   ideas: WorkspaceIdea[];
@@ -432,6 +651,8 @@ export function WorkspaceInsightsPanel({
   trace: WorkspaceSnapshot["trace"];
   sourceTrace?: WorkspaceSourceTrace | null;
   inheritedContext?: WorkspaceInheritedContext | null;
+  workingMemory?: WorkspaceWorkingMemory | null;
+  showWorkingMemory?: boolean;
 }) {
   const insufficientEvidence = evidenceStatus?.insufficient ?? false;
 
@@ -495,19 +716,20 @@ export function WorkspaceInsightsPanel({
         </div>
       </section>
 
+      {showWorkingMemory ? (
+        <section className="pane">
+          <SectionHeader eyebrow="会话级记忆" title="工作记忆" />
+          <WorkingMemoryPanel workingMemory={workingMemory} />
+        </section>
+      ) : null}
+
       <section className="pane">
-        <SectionHeader
-          eyebrow={sourceTrace ? `${sourceTrace.knowledge_hit_count} 条知识命中` : "Grounding"}
-          title="本轮依据"
-        />
+        <SectionHeader eyebrow={sourceTrace ? `${sourceTrace.knowledge_hit_count} 条知识命中` : "Grounding"} title="本轮依据" />
         <SourceTracePanel sourceTrace={sourceTrace} />
       </section>
 
       <section className="pane">
-        <SectionHeader
-          eyebrow={inheritedContext?.conversation_topic ? "连续研究" : "History"}
-          title="继承上下文"
-        />
+        <SectionHeader eyebrow={inheritedContext?.conversation_topic ? "连续研究" : "History"} title="继承上下文" />
         <InheritedContextPanel inheritedContext={inheritedContext} />
       </section>
 
@@ -524,7 +746,7 @@ export function WorkspaceInsightsPanel({
               <div>{trace.action_history.length} 条</div>
             </div>
             <div className="trace-row">
-              <div className="trace-label">上下文</div>
+              <div className="trace-label">上下文输入</div>
               <div>{trace.context_inputs.length} 组</div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 from .entities import (
     Conversation,
+    ConversationWorkingMemory,
     GapRecord,
     KnowledgeDocument,
     MessageRecord,
@@ -14,6 +15,7 @@ from .entities import (
 
 __all__ = [
     "Conversation",
+    "ConversationWorkingMemory",
     "MessageRecord",
     "ResearchTask",
     "ResearchWorkspace",

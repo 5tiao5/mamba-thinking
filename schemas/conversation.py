@@ -69,6 +69,9 @@ class KnowledgeHitView(BaseModel):
     scope: str = "shared"
     source_task_id: Optional[str] = None
     source_type: str = ""
+    evidence_level: str = "candidate"
+    matched_chunk_count: int = 0
+    supporting_snippets: list[str] = Field(default_factory=list)
 
 
 class ContinueConversationResponse(BaseModel):

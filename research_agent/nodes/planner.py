@@ -17,12 +17,18 @@ def planner_node(state: ResearchState) -> ResearchState:
     intent = _query_intent(state)
     topic = _planner_topic(state, intent)
     workspace_queries = _workspace_context_queries(topic, state.get("conversation_workspace_context", []) or [])
+    working_memory_queries = _working_memory_queries(
+        topic,
+        summary=str(state.get("working_memory_summary", "") or ""),
+        findings=state.get("working_memory_findings", []) or [],
+        open_questions=state.get("working_memory_open_questions", []) or [],
+    )
     knowledge_queries = _knowledge_context_queries(topic, state.get("knowledge_hits", []) or [])
     recent_queries = _recent_context_queries(topic, state.get("recent_context", []) or [])
     retrieval_plan = build_retrieval_plan(
         topic=topic,
         query_intent=intent,
-        workspace_queries=workspace_queries,
+        workspace_queries=dedupe([*workspace_queries, *working_memory_queries]),
         knowledge_queries=knowledge_queries,
         recent_queries=recent_queries,
         mode=str(state.get("mode", "default") or "default"),
@@ -32,6 +38,10 @@ def planner_node(state: ResearchState) -> ResearchState:
         retrieval_plan=retrieval_plan.to_dict(),
         knowledge_hits=state.get("knowledge_hits", []) or [],
         workspace_hints=state.get("conversation_workspace_context", []) or [],
+        working_memory_summary=str(state.get("working_memory_summary", "") or ""),
+        working_memory_findings=state.get("working_memory_findings", []) or [],
+        working_memory_open_questions=state.get("working_memory_open_questions", []) or [],
+        working_memory_constraints=state.get("working_memory_constraints", []) or [],
         recent_context=state.get("recent_context", []) or [],
     )
     updated = dict(state)
@@ -209,6 +219,25 @@ def _planner_context_block(state: ResearchState, retrieval_plan: dict[str, Any])
     if workspace_summary:
         lines.append(f"- Workspace summary: {workspace_summary[:220]}")
 
+    working_memory_summary = str(state.get("working_memory_summary", "") or "").strip()
+    if working_memory_summary:
+        lines.append(f"- Working memory summary: {working_memory_summary[:220]}")
+
+    for finding in (state.get("working_memory_findings", []) or [])[:3]:
+        clean_finding = " ".join(str(finding).split()).strip()
+        if clean_finding:
+            lines.append(f"- Working memory finding: {clean_finding}")
+
+    for question in (state.get("working_memory_open_questions", []) or [])[:2]:
+        clean_question = " ".join(str(question).split()).strip()
+        if clean_question:
+            lines.append(f"- Open question: {clean_question}")
+
+    for constraint in (state.get("working_memory_constraints", []) or [])[:3]:
+        clean_constraint = " ".join(str(constraint).split()).strip()
+        if clean_constraint:
+            lines.append(f"- Active constraint: {clean_constraint}")
+
     for hint in (state.get("conversation_workspace_context", []) or [])[:3]:
         clean_hint = " ".join(str(hint).split()).strip()
         if clean_hint:
@@ -271,12 +300,39 @@ def _recent_context_queries(topic: str, recent_context: list[dict[str, Any]]) ->
     return dedupe(queries)
 
 
+def _working_memory_queries(
+    topic: str,
+    *,
+    summary: str,
+    findings: list[str],
+    open_questions: list[str],
+) -> list[str]:
+    clean_topic = " ".join(str(topic).split()).strip()
+    queries: list[str] = []
+    clean_summary = " ".join(str(summary).split()).strip()
+    if clean_summary:
+        queries.append(f"{clean_topic} {clean_summary[:120]}")
+    for finding in findings[:2]:
+        clean_finding = " ".join(str(finding).split()).strip()
+        if clean_finding:
+            queries.append(f"{clean_topic} {clean_finding[:120]}")
+    for question in open_questions[:1]:
+        clean_question = " ".join(str(question).split()).strip()
+        if clean_question:
+            queries.append(f"{clean_topic} {clean_question[:120]}")
+    return dedupe(queries)
+
+
 def _context_grounding_note(
     *,
     query_intent: dict[str, Any],
     retrieval_plan: dict[str, Any],
     knowledge_hits: list[dict[str, Any]],
     workspace_hints: list[str],
+    working_memory_summary: str,
+    working_memory_findings: list[str],
+    working_memory_open_questions: list[str],
+    working_memory_constraints: list[str],
     recent_context: list[dict[str, Any]],
 ) -> str:
     user_turns = sum(1 for entry in recent_context if str(entry.get("role", "")).lower() == "user")
@@ -295,6 +351,14 @@ def _context_grounding_note(
         parts.append(f"{len(knowledge_hits)} knowledge hits")
     if workspace_hints:
         parts.append(f"{len(workspace_hints)} workspace hints")
+    if working_memory_summary:
+        parts.append("explicit working memory")
+    if working_memory_findings:
+        parts.append(f"{len(working_memory_findings)} stable findings")
+    if working_memory_open_questions:
+        parts.append(f"{len(working_memory_open_questions)} open questions")
+    if working_memory_constraints:
+        parts.append(f"{len(working_memory_constraints)} active constraints")
     if user_turns:
         parts.append(f"{user_turns} recent user turns")
     if not parts:

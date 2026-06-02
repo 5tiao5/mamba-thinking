@@ -507,6 +507,9 @@ class ProductApiHandlers:
             "scope": hit.scope,
             "source_task_id": hit.source_task_id,
             "source_type": hit.source_type,
+            "evidence_level": hit.evidence_level,
+            "matched_chunk_count": int(hit.matched_chunk_count),
+            "supporting_snippets": list(hit.supporting_snippets),
         }
 
     @staticmethod

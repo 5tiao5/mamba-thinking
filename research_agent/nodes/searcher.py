@@ -398,15 +398,6 @@ def _build_retrieval_outcome(
             "Hard retrieval constraints were preserved, but no real papers satisfied them. "
             "Fallback papers are kept as background references only."
         )
-    elif hard_constraints and real_paper_count < 3:
-        status = "partial_constrained_results"
-        message = (
-            f"Only {real_paper_count} real papers satisfied the hard constraints. "
-            "The system keeps the constrained result set instead of padding with off-constraint papers."
-        )
-    elif fallback_used:
-        status = "fallback_only"
-        message = "Search tools returned no usable evidence. Fallback papers are shown as background references."
     elif refresh_triggered and novel_paper_count > 0:
         status = "fresh_evidence_added"
         message = (
@@ -419,6 +410,15 @@ def _build_retrieval_outcome(
             "This round did re-run retrieval for the updated request, but the highest-relevance evidence still overlaps "
             "with the previous round and no stronger new papers were found."
         )
+    elif hard_constraints and real_paper_count < 3:
+        status = "partial_constrained_results"
+        message = (
+            f"Only {real_paper_count} real papers satisfied the hard constraints. "
+            "The system keeps the constrained result set instead of padding with off-constraint papers."
+        )
+    elif fallback_used:
+        status = "fallback_only"
+        message = "Search tools returned no usable evidence. Fallback papers are shown as background references."
     elif filtered_out_count > 0:
         status = "constraint_preserved"
         message = (
@@ -454,13 +454,36 @@ def _previous_round_paper_ids(state: ResearchState) -> set[str]:
 def _should_refresh_for_new_evidence(state: ResearchState, retrieval_plan: dict[str, Any]) -> bool:
     if not _previous_round_paper_ids(state):
         return False
-    user_goal = str(retrieval_plan.get("user_goal", "") or state.get("query_intent", {}).get("user_goal", "")).strip()
+    query_intent = state.get("query_intent", {}) if isinstance(state.get("query_intent"), dict) else {}
+    user_goal = str(retrieval_plan.get("user_goal", "") or query_intent.get("user_goal", "")).strip()
     if user_goal == "extend_context":
         return True
+
     current_year_range = _extract_year_range(retrieval_plan.get("filters", {}))
     previous_intent = state.get("previous_round_query_intent", {}) if isinstance(state.get("previous_round_query_intent"), dict) else {}
     previous_year_range = _extract_year_range_from_intent(previous_intent)
+    if current_year_range != (None, None) and current_year_range != previous_year_range:
+        return True
+
+    current_scope = _paper_scope_signature(query_intent)
+    previous_scope = _paper_scope_signature(previous_intent)
+    if current_scope and current_scope != previous_scope:
+        return True
+
+    if user_goal in {"narrow_literature_scope", "benchmark_evaluation", "survey"}:
+        return _has_hard_constraints(retrieval_plan) or bool(current_scope)
+
     return _is_broader_year_range(current_year_range, previous_year_range)
+
+
+def _paper_scope_signature(intent: dict[str, Any]) -> tuple[str, ...]:
+    raw_scope = intent.get("paper_scope", []) if isinstance(intent, dict) else []
+    values = [
+        " ".join(str(item).split()).strip().casefold()
+        for item in list(raw_scope or [])
+        if " ".join(str(item).split()).strip()
+    ]
+    return tuple(sorted(set(values)))
 
 
 def _prefer_novel_evidence(

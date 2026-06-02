@@ -89,10 +89,14 @@ class WorkspaceTraceView(BaseModel):
 
 class WorkspaceKnowledgeHitView(BaseModel):
     title: str = ""
+    snippet: str = ""
     scope: str = "shared"
     source_type: str = ""
     source_task_id: Optional[str] = None
     score: float = 0.0
+    evidence_level: str = "candidate"
+    matched_chunk_count: int = 0
+    supporting_snippets: List[str] = Field(default_factory=list)
 
 
 class WorkspaceSourceTraceView(BaseModel):
@@ -120,6 +124,17 @@ class WorkspaceInheritedContextView(BaseModel):
     recent_turns: List[str] = Field(default_factory=list)
 
 
+class WorkspaceWorkingMemoryView(BaseModel):
+    current_focus: str = ""
+    summary: str = ""
+    stable_findings: List[str] = Field(default_factory=list)
+    open_questions: List[str] = Field(default_factory=list)
+    active_constraints: List[str] = Field(default_factory=list)
+    supporting_task_ids: List[str] = Field(default_factory=list)
+    source_task_id: Optional[str] = None
+    updated_at: str = ""
+
+
 class WorkspaceEvidenceStatusView(BaseModel):
     insufficient: bool = False
     total_papers: int = 0
@@ -144,4 +159,5 @@ class WorkspaceSnapshotResponse(BaseModel):
     evidence_status: WorkspaceEvidenceStatusView = Field(default_factory=WorkspaceEvidenceStatusView)
     source_trace: Optional[WorkspaceSourceTraceView] = None
     inherited_context: Optional[WorkspaceInheritedContextView] = None
+    working_memory: Optional[WorkspaceWorkingMemoryView] = None
     trace: Optional[WorkspaceTraceView] = None

@@ -30,12 +30,36 @@ function formatScore(score: number) {
   return score.toFixed(3);
 }
 
-function cleanSummaryText(summary: string) {
-  return cleanDisplayText(summary)
+function isExpansionTrace(sourceTrace?: WorkspaceSourceTrace | null) {
+  return sourceTrace?.retrieval_plan?.includes("goal=extend_context") ?? false;
+}
+
+function expansionFocusFromTopic(topic?: string) {
+  const text = cleanDisplayText(topic ?? "", 180);
+  for (const marker of ["继续展开：", "继续展开:", "展开：", "展开:"]) {
+    if (text.includes(marker)) {
+      return text.split(marker, 2)[1]?.trim() ?? "";
+    }
+  }
+  return "";
+}
+
+function cleanSummaryText(summary: string, options?: { suppressCoverageGap?: boolean }) {
+  let text = cleanDisplayText(summary)
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/\*\*/g, "")
     .replace(/^\s*[-*]\s+/gm, "• ")
     .trim();
+
+  if (options?.suppressCoverageGap) {
+    text = text
+      .split(/\n+/)
+      .filter((line) => !(line.includes("优先关注") && line.includes("尚未覆盖研究方向")))
+      .join("\n")
+      .trim();
+  }
+
+  return text;
 }
 
 export function WorkspaceSummarySection({
@@ -62,7 +86,16 @@ export function WorkspaceSummarySection({
     ? "workspace-note-card-warning"
     : "workspace-note-card-accent";
   const retrievalNoteLabel = retrievalStatus || "检索状态";
-  const showHeroNotes = Boolean(priorityNote || recommendation || showRetrievalNote);
+  const expansionTrace = isExpansionTrace(sourceTrace);
+  const expansionFocus = expansionFocusFromTopic(topic);
+  const effectivePriorityNote =
+    expansionTrace && expansionFocus
+      ? `当前正在展开方向“${expansionFocus}”，本轮结果用于补充这个方向的论文证据和后续研究线索。`
+      : priorityNote;
+  const displaySummary = summary
+    ? cleanSummaryText(summary, { suppressCoverageGap: expansionTrace })
+    : "运行任务后，这里会汇总本轮分析的核心结论。";
+  const showHeroNotes = Boolean(effectivePriorityNote || recommendation || showRetrievalNote);
 
   return (
     <section className="workspace-hero surface">
@@ -70,15 +103,15 @@ export function WorkspaceSummarySection({
         <div className="section-eyebrow">研究概览</div>
         <h1 className="workspace-hero-title">{cleanDisplayText(topic, 160) || "研究主题"}</h1>
         <div className="workspace-hero-summary">
-          {summary ? cleanSummaryText(summary) : "运行任务后，这里会汇总本轮分析的核心结论。"}
+          {displaySummary}
         </div>
 
         {showHeroNotes ? (
           <div className="workspace-hero-notes">
-            {priorityNote ? (
+            {effectivePriorityNote ? (
               <div className="workspace-note-card">
                 <div className="workspace-note-label">优先关注</div>
-                <div>{cleanDisplayText(priorityNote)}</div>
+                <div>{cleanDisplayText(effectivePriorityNote)}</div>
               </div>
             ) : null}
             {recommendation ? (
