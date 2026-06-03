@@ -17,6 +17,7 @@ __all__ = [
     "ToolService",
     "SkillService",
     "KnowledgeService",
+    "WorkingMemoryService",
     "workspace_from_agent_state",
 ]
 
@@ -29,6 +30,7 @@ _LAZY_IMPORTS = {
     "ToolService": ("product_agent.services.tool_service", "ToolService"),
     "SkillService": ("product_agent.services.skill_service", "SkillService"),
     "KnowledgeService": ("product_agent.services.knowledge_service", "KnowledgeService"),
+    "WorkingMemoryService": ("product_agent.services.working_memory_service", "WorkingMemoryService"),
 }
 
 

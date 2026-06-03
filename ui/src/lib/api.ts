@@ -3,6 +3,7 @@ import type {
   ConversationDetailItem,
   CreateKnowledgeDocumentPayload,
   DeleteConversationPayload,
+  KnowledgeScope,
   KnowledgeDocumentItem,
   KnowledgeSearchPayload,
   ConversationResponsePayload,
@@ -12,6 +13,7 @@ import type {
   ResearchTaskSummaryItem,
   RunTaskPayload,
   SkillItem,
+  SearchPaperCandidatesPayload,
   ToolItem,
   WorkspaceSnapshot,
 } from "../types/api";
@@ -134,6 +136,7 @@ export const api = {
     focus?: string;
     create_follow_up_task?: boolean;
     mode?: string;
+    knowledge_scope?: KnowledgeScope;
   }) => {
     if (payload.conversation_id === DEMO_CONVERSATION_ID) {
       return Promise.resolve({
@@ -156,9 +159,10 @@ export const api = {
     topic: string;
     mode?: string;
     use_shared_knowledge?: boolean;
+    knowledge_scope?: KnowledgeScope;
     enabled_tools?: string[];
   }) =>
-    request<ApiResponse<{ task_id: string; conversation_id: string; status: string }>>(
+    request<ApiResponse<{ task_id: string; conversation_id: string; status: string; knowledge_scope?: KnowledgeScope }>>(
       "/research/tasks",
       {
         method: "POST",
@@ -238,6 +242,21 @@ export const api = {
     request<ApiResponse<{ items: KnowledgeDocumentItem[] }>>("/knowledge/documents"),
   createKnowledgeDocument: (payload: CreateKnowledgeDocumentPayload) =>
     request<ApiResponse<KnowledgeDocumentItem>>("/knowledge/documents", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  searchPaperCandidates: (payload: { query: string; limit?: number }) =>
+    request<ApiResponse<SearchPaperCandidatesPayload>>("/knowledge/paper-candidates", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  importPaperCandidate: (payload: {
+    candidate_id: string;
+    conversation_id?: string;
+    notes?: string;
+    tags?: string[];
+  }) =>
+    request<ApiResponse<KnowledgeDocumentItem>>("/knowledge/paper-candidates/import", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

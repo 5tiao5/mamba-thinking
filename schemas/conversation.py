@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
+KnowledgeScopeLiteral = Literal["none", "conversation_only", "shared"]
+
+
 class CreateConversationRequest(BaseModel):
-    topic: str = Field(..., description="本次会话围绕的研究主题")
-    title: Optional[str] = Field(default=None, description="会话标题；为空时可回退为 topic")
+    topic: str = Field(..., description="Research topic for this conversation")
+    title: Optional[str] = Field(default=None, description="Optional display title; falls back to topic")
 
 
 class CreateConversationResponse(BaseModel):
@@ -31,9 +34,9 @@ class ConversationDetailResponse(ConversationSummaryView):
 
 
 class SendMessageRequest(BaseModel):
-    role: str = Field(..., description="消息角色，通常为 user")
-    content: str = Field(..., description="用户输入内容")
-    run_research: bool = Field(default=True, description="是否基于该消息触发一轮研究任务")
+    role: str = Field(..., description="Message role, usually user")
+    content: str = Field(..., description="User message content")
+    run_research: bool = Field(default=True, description="Whether this message should trigger a research task")
 
 
 class FollowUpTaskPreview(BaseModel):
@@ -46,9 +49,29 @@ class FollowUpTaskPreview(BaseModel):
 class ContinueConversationRequest(BaseModel):
     conversation_id: str
     content: str
-    focus: Optional[str] = Field(default=None, description="本轮追问希望聚焦的子问题")
-    create_follow_up_task: bool = Field(default=True, description="是否为本轮追问创建 follow-up 任务")
-    mode: str = Field(default="default", description="follow-up 任务模式：default / fast / balanced")
+    focus: Optional[str] = Field(default=None, description="Optional sub-problem to focus on in this follow-up")
+    create_follow_up_task: bool = Field(default=True, description="Whether to create a follow-up research task")
+    mode: str = Field(default="default", description="Follow-up task mode: default / fast / balanced")
+    knowledge_scope: Optional[KnowledgeScopeLiteral] = Field(
+        default=None,
+        description="Knowledge scope for this follow-up: none / conversation_only / shared.",
+    )
+
+    def resolve_knowledge_scope(self) -> str:
+        return self.knowledge_scope or "shared"
+
+
+class KnowledgeHitView(BaseModel):
+    document_id: str
+    title: str
+    snippet: str
+    score: float = 0.0
+    scope: str = "shared"
+    source_task_id: Optional[str] = None
+    source_type: str = ""
+    evidence_level: str = "candidate"
+    matched_chunk_count: int = 0
+    supporting_snippets: list[str] = Field(default_factory=list)
 
 
 class ContinueConversationResponse(BaseModel):
@@ -57,7 +80,10 @@ class ContinueConversationResponse(BaseModel):
     message: str
     message_id: Optional[str] = None
     context_preview: list[str] = Field(default_factory=list)
+    knowledge_scope_applied: KnowledgeScopeLiteral = "shared"
     knowledge_context: list[str] = Field(default_factory=list, description="Retrieved knowledge snippets")
+    knowledge_hits: list[KnowledgeHitView] = Field(default_factory=list, description="Structured knowledge hits")
+    workspace_context: list[str] = Field(default_factory=list, description="Conversation workspace guidance")
     follow_up_task: Optional[FollowUpTaskPreview] = None
 
 

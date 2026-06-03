@@ -35,8 +35,19 @@ def clean_internal_context_text(value: object, *, max_length: int | None = None)
     if not text.strip():
         return ""
 
+    has_internal_prefix = any(
+        marker in text
+        for marker in (
+            "[Knowledge",
+            "[Prior research knowledge",
+            "[task:",
+            "[Auto]",
+            "Prior research knowledge",
+            "prior knowledge",
+        )
+    )
     anchor_indexes = [text.find(anchor) for anchor in _RESULT_ANCHORS if text.find(anchor) > 0]
-    if anchor_indexes:
+    if has_internal_prefix and anchor_indexes:
         text = text[min(anchor_indexes):]
 
     text = _INTERNAL_MARKER_PATTERN.sub(" ", text)

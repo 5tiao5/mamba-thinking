@@ -3,10 +3,12 @@ from .base import (
     KnowledgeRepository,
     MessageRepository,
     ResearchTaskRepository,
+    WorkingMemoryRepository,
     WorkspaceRepository,
 )
 from .memory_store import (
     InMemoryConversationRepository,
+    InMemoryWorkingMemoryRepository,
     InMemoryKnowledgeRepository,
     InMemoryMessageRepository,
     InMemoryResearchTaskRepository,
@@ -15,6 +17,7 @@ from .memory_store import (
 from .sqlite_db import SQLiteDatabase
 from .sqlite_store import (
     SQLiteConversationRepository,
+    SQLiteWorkingMemoryRepository,
     SQLiteKnowledgeRepository,
     SQLiteMessageRepository,
     SQLiteResearchTaskRepository,
@@ -28,16 +31,19 @@ __all__ = [
     "ResearchTaskRepository",
     "WorkspaceRepository",
     "KnowledgeRepository",
+    "WorkingMemoryRepository",
     "InMemoryConversationRepository",
     "InMemoryMessageRepository",
     "InMemoryResearchTaskRepository",
     "InMemoryWorkspaceRepository",
     "InMemoryKnowledgeRepository",
+    "InMemoryWorkingMemoryRepository",
     "SQLiteDatabase",
     "SQLiteConversationRepository",
     "SQLiteMessageRepository",
     "SQLiteResearchTaskRepository",
     "SQLiteWorkspaceRepository",
     "SQLiteKnowledgeRepository",
+    "SQLiteWorkingMemoryRepository",
     "SQLiteVectorStore",
 ]

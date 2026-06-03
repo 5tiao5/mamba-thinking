@@ -14,6 +14,8 @@ from product_agent.schemas import (
     CreateConversationRequest,
     CreateMessageRequest,
     CreateResearchTaskRequest,
+    ImportPaperCandidateRequest,
+    SearchPaperCandidatesRequest,
     UpdateToolRequest,
 )
 
@@ -140,6 +142,14 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.post("/knowledge/documents")
     def create_knowledge_document(request: CreateKnowledgeDocumentRequest):
         return handlers.create_knowledge_document(request).model_dump()
+
+    @app.post("/knowledge/paper-candidates")
+    def search_paper_candidates(request: SearchPaperCandidatesRequest):
+        return handlers.search_paper_candidates(request).model_dump()
+
+    @app.post("/knowledge/paper-candidates/import")
+    def import_paper_candidate(request: ImportPaperCandidateRequest):
+        return handlers.import_paper_candidate(request).model_dump()
 
     @app.delete("/knowledge/documents/{document_id}")
     def delete_knowledge_document(document_id: str = Path(..., description="知识文档 ID")):

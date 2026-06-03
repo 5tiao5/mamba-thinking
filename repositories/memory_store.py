@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from product_agent.domain import Conversation, KnowledgeDocument, MessageRecord, ResearchTask, ResearchWorkspace
+from product_agent.domain import (
+    Conversation,
+    ConversationWorkingMemory,
+    KnowledgeDocument,
+    MessageRecord,
+    ResearchTask,
+    ResearchWorkspace,
+)
 
 
 class InMemoryConversationRepository:
@@ -146,3 +153,23 @@ class InMemoryKnowledgeRepository:
             del self._items[document_id]
             return True
         return False
+
+
+class InMemoryWorkingMemoryRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, ConversationWorkingMemory] = {}
+
+    def save(self, memory: ConversationWorkingMemory) -> ConversationWorkingMemory:
+        stored = deepcopy(memory)
+        self._items[memory.conversation_id] = stored
+        return deepcopy(stored)
+
+    def get(self, conversation_id: str) -> ConversationWorkingMemory | None:
+        item = self._items.get(conversation_id)
+        return deepcopy(item) if item else None
+
+    def delete(self, conversation_id: str) -> bool:
+        if conversation_id not in self._items:
+            return False
+        del self._items[conversation_id]
+        return True

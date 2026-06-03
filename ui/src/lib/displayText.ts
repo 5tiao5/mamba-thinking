@@ -8,6 +8,11 @@ const TRUNCATED_TASK_TAG_PATTERN = /\[t(?:ask)?\.{2,}.*?(?=\s|$)/gi;
 const INLINE_TASK_REFERENCE_PATTERN = /\s*[（(]?\s*任务\s*[:：]\s*task_[a-z0-9_-]+\s*[)）]?/gi;
 const FOLLOW_UP_LABEL_PATTERN = /\s+-\s+(?:follow\s*up|focus\s*on)\s*:\s*/gi;
 const INFORMED_BY_SUFFIX_PATTERN = /\s+-\s+informed\s+by\s+.*$/gi;
+const WORKSPACE_NAVIGATION_PATTERN =
+  /(?:完整\s*(?:taxonomy|研究方向图|演进图)[^。；;\n]*可在工作台(?:中)?查看[^。；;\n]*[。；;]?)/gi;
+const DUPLICATE_PUNCTUATION_PATTERN = /([，,；;：:。])(?:\s*[，,；;：:。])+/g;
+const TRAILING_PUNCTUATION_PATTERN = /[，,；;：:]\s*(?=[。！？!?]|$)/g;
+const PUNCTUATION_SPACING_PATTERN = /\s*([，,；;：:。！？!?])\s*/g;
 
 const RESULT_ANCHORS = [
   "\u7814\u7a76\u5ba1\u8ba1\u6982\u89c8",
@@ -42,10 +47,14 @@ export function cleanDisplayText(value: unknown, maxLength?: number) {
     .replace(INLINE_TASK_REFERENCE_PATTERN, " ")
     .replace(FOLLOW_UP_LABEL_PATTERN, " - ")
     .replace(INFORMED_BY_SUFFIX_PATTERN, "")
+    .replace(WORKSPACE_NAVIGATION_PATTERN, " ")
     .replace(/\btaxonomy\b/gi, "研究方向图")
     .replace(/\bgaps?\b/gi, "研究空白")
     .replace(/\[\s*\]/g, " ")
     .replace(/\s+/g, " ")
+    .replace(DUPLICATE_PUNCTUATION_PATTERN, "$1")
+    .replace(TRAILING_PUNCTUATION_PATTERN, "")
+    .replace(PUNCTUATION_SPACING_PATTERN, "$1 ")
     .trim()
     .replace(/^[\s:;,-]+|[\s:;,-]+$/g, "");
 

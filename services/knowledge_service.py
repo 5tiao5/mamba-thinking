@@ -1,15 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import re
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from uuid import uuid4
 
 from product_agent.domain import KnowledgeDocument
-from product_agent.repositories import KnowledgeRepository
+from product_agent.repositories import KnowledgeRepository, ResearchTaskRepository
+
+_OPENALEX_WORKS_API = "https://api.openalex.org/works"
+_ARXIV_API = "http://export.arxiv.org/api/query"
+_HTTP_TIMEOUT_SECONDS = 20
+_DOI_PATTERN = re.compile(r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", re.IGNORECASE)
+_ARXIV_ID_PATTERN = re.compile(r"(?P<id>\d{4}\.\d{4,5})(?:v\d+)?", re.IGNORECASE)
+_ARXIV_URL_PATTERN = re.compile(
+    r"https?://arxiv\.org/(?:(?:abs|pdf)/)(?P<id>\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?",
+    re.IGNORECASE,
+)
 
 
 # ============================================================================
@@ -36,6 +50,37 @@ class SearchResult:
     chunk: DocumentChunk
     score: float
     rank: int
+
+
+@dataclass
+class KnowledgeHit:
+    document_id: str
+    title: str
+    snippet: str
+    score: float
+    scope: str
+    source_task_id: Optional[str] = None
+    source_type: str = ""
+    evidence_level: str = "candidate"
+    matched_chunk_count: int = 0
+    supporting_snippets: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PaperImportCandidate:
+    candidate_id: str
+    title: str
+    authors: List[str] = field(default_factory=list)
+    year: Optional[int] = None
+    abstract: str = ""
+    source_url: Optional[str] = None
+    pdf_url: Optional[str] = None
+    doi: Optional[str] = None
+    arxiv_id: Optional[str] = None
+    source: str = ""
+    venue: Optional[str] = None
+    openalex_id: Optional[str] = None
+    is_exact_match: bool = False
 
 
 # ============================================================================
@@ -288,6 +333,7 @@ class KnowledgeService:
         vector_store: Optional[VectorStore] = None,
         reranker: Optional[Reranker] = None,
         *,
+        task_repository: Optional[ResearchTaskRepository] = None,
         enable_hybrid_search: bool = True,
         keyword_weight: float = 0.3,
         vector_weight: float = 0.7,
@@ -312,10 +358,12 @@ class KnowledgeService:
         self.embedder = embedder or HashEmbedder()
         self.vector_store = vector_store or InMemoryVectorStore()
         self.reranker = reranker or NoopReranker()
+        self.task_repository = task_repository
         self.enable_hybrid_search = enable_hybrid_search
         self.keyword_weight = keyword_weight
         self.vector_weight = vector_weight
         self.async_indexing = async_indexing
+        self.paper_candidate_cache: Dict[str, PaperImportCandidate] = {}
 
 
     def save_summary(
@@ -324,6 +372,7 @@ class KnowledgeService:
         title: str,
         content: str,
         source_task_id: str | None = None,
+        conversation_id: str | None = None,
         tags: List[str] | None = None,
         index_immediately: bool = True
     ) -> KnowledgeDocument:
@@ -340,13 +389,20 @@ class KnowledgeService:
         Returns:
             保存后的 KnowledgeDocument
         """
+        metadata: Dict[str, Any] = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_type": "workspace_summary",
+        }
+        if conversation_id:
+            metadata["conversation_id"] = conversation_id
+
         document = KnowledgeDocument(
             document_id=f"doc_{uuid4().hex[:12]}",
             title=title,
             source_task_id=source_task_id,
             content=content,
             tags=tags or [],
-            metadata={"created_at": datetime.now(timezone.utc).isoformat()},
+            metadata=metadata,
         )
         saved_doc = self.repository.save(document)
         if index_immediately:
@@ -361,15 +417,21 @@ class KnowledgeService:
         tags: List[str] | None = None,
         source_url: str | None = None,
         source_task_id: str | None = None,
+        conversation_id: str | None = None,
         notes: str | None = None,
+        metadata_extra: Dict[str, Any] | None = None,
         index_immediately: bool = True
     ) -> KnowledgeDocument:
         """Save a user-imported knowledge document for later retrieval and grounding."""
         metadata = {"created_at": datetime.now(timezone.utc).isoformat(), "source_type": "user_import"}
         if source_url:
             metadata["source_url"] = source_url
+        if conversation_id:
+            metadata["conversation_id"] = conversation_id
         if notes:
             metadata["notes"] = notes
+        if metadata_extra:
+            metadata.update(metadata_extra)
 
         document = KnowledgeDocument(
             document_id=f"doc_{uuid4().hex[:12]}",
@@ -383,6 +445,349 @@ class KnowledgeService:
         if index_immediately:
             self._maybe_index_document(saved_doc)
         return saved_doc
+
+    def search_paper_candidates(self, query: str, *, limit: int = 3) -> List[PaperImportCandidate]:
+        normalized_query = " ".join(query.strip().split())
+        if len(normalized_query) < 2:
+            return []
+
+        exact_arxiv_id = self._extract_arxiv_id(normalized_query)
+        if exact_arxiv_id:
+            candidate = self._fetch_arxiv_candidate(exact_arxiv_id)
+            return self._cache_paper_candidates([candidate] if candidate else [])
+
+        exact_doi = self._extract_doi(normalized_query)
+        if exact_doi:
+            candidate = self._fetch_openalex_candidate_by_doi(exact_doi)
+            return self._cache_paper_candidates([candidate] if candidate else [])
+
+        candidates = self._search_openalex_candidates(normalized_query, limit=max(limit, 3))
+        return self._cache_paper_candidates(candidates[:limit])
+
+    def import_paper_candidate(
+        self,
+        candidate_id: str,
+        *,
+        conversation_id: str | None = None,
+        notes: str | None = None,
+        tags: List[str] | None = None,
+    ) -> KnowledgeDocument:
+        candidate = self.paper_candidate_cache.get(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+
+        auto_tags = self._build_paper_import_tags(candidate)
+        merged_tags = []
+        for tag in [*(tags or []), *auto_tags]:
+            normalized = tag.strip().lower()
+            if normalized and normalized not in merged_tags:
+                merged_tags.append(normalized)
+
+        metadata_extra = {
+            "source_type": "paper_import",
+            "import_method": "paper_candidate",
+            "paper_source": candidate.source,
+            "authors": list(candidate.authors),
+            "year": candidate.year,
+            "doi": candidate.doi,
+            "arxiv_id": candidate.arxiv_id,
+            "pdf_url": candidate.pdf_url,
+            "venue": candidate.venue,
+            "openalex_id": candidate.openalex_id,
+            "is_exact_match": candidate.is_exact_match,
+        }
+
+        return self.import_document(
+            title=candidate.title,
+            content=self._build_paper_import_content(candidate),
+            tags=merged_tags,
+            source_url=candidate.source_url,
+            conversation_id=conversation_id,
+            notes=notes,
+            metadata_extra=metadata_extra,
+            index_immediately=True,
+        )
+
+    def _cache_paper_candidates(self, candidates: List[PaperImportCandidate]) -> List[PaperImportCandidate]:
+        for candidate in candidates:
+            self.paper_candidate_cache[candidate.candidate_id] = candidate
+        return candidates
+
+    def _fetch_json(self, url: str) -> Dict[str, Any] | List[Any] | None:
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
+            with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SECONDS) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return None
+
+    def _fetch_text(self, url: str) -> str | None:
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
+            with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SECONDS) as response:
+                return response.read().decode("utf-8")
+        except Exception:
+            return None
+
+    def _extract_doi(self, query: str) -> str | None:
+        match = _DOI_PATTERN.search(query)
+        return match.group(1).strip() if match else None
+
+    def _extract_arxiv_id(self, query: str) -> str | None:
+        url_match = _ARXIV_URL_PATTERN.search(query)
+        if url_match:
+            return url_match.group("id")
+
+        normalized = query.strip()
+        if normalized.lower().startswith("arxiv:"):
+            normalized = normalized.split(":", 1)[1].strip()
+
+        id_match = _ARXIV_ID_PATTERN.fullmatch(normalized)
+        if id_match:
+            return id_match.group("id")
+        return None
+
+    def _fetch_arxiv_candidate(self, arxiv_id: str) -> PaperImportCandidate | None:
+        url = f"{_ARXIV_API}?id_list={urllib.parse.quote(arxiv_id, safe='')}"
+        xml_text = self._fetch_text(url)
+        if not xml_text:
+            return None
+
+        ns = {
+            "atom": "http://www.w3.org/2005/Atom",
+        }
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            return None
+
+        entry = root.find("atom:entry", ns)
+        if entry is None:
+            return None
+
+        title = " ".join((entry.findtext("{http://www.w3.org/2005/Atom}title") or "").split())
+        abstract = " ".join((entry.findtext("{http://www.w3.org/2005/Atom}summary") or "").split())
+        published = (entry.findtext("{http://www.w3.org/2005/Atom}published") or "")[:4]
+        authors = []
+        for author in entry.findall("{http://www.w3.org/2005/Atom}author"):
+            name = " ".join((author.findtext("{http://www.w3.org/2005/Atom}name") or "").split())
+            if name:
+                authors.append(name)
+
+        source_url = None
+        pdf_url = None
+        for link in entry.findall("{http://www.w3.org/2005/Atom}link"):
+            href = link.attrib.get("href", "").strip()
+            if not href:
+                continue
+            if link.attrib.get("title") == "pdf" or href.endswith(".pdf"):
+                pdf_url = href
+            elif link.attrib.get("rel") == "alternate":
+                source_url = href
+
+        candidate = PaperImportCandidate(
+            candidate_id=f"paper_candidate_{uuid4().hex[:12]}",
+            title=title or f"arXiv {arxiv_id}",
+            authors=authors,
+            year=int(published) if published.isdigit() else None,
+            abstract=abstract,
+            source_url=source_url or f"https://arxiv.org/abs/{arxiv_id}",
+            pdf_url=pdf_url,
+            arxiv_id=arxiv_id,
+            source="arxiv",
+            venue="arXiv",
+            is_exact_match=True,
+        )
+        doi = self._extract_doi(candidate.abstract)  # unlikely, but harmless
+        if doi:
+            candidate.doi = doi
+        return candidate
+
+    def _fetch_openalex_candidate_by_doi(self, doi: str) -> PaperImportCandidate | None:
+        encoded = urllib.parse.quote(f"https://doi.org/{doi}", safe="")
+        payload = self._fetch_json(f"{_OPENALEX_WORKS_API}/{encoded}")
+        if not isinstance(payload, dict):
+            return None
+        return self._paper_candidate_from_openalex_result(payload, exact_query=doi)
+
+    def _search_openalex_candidates(self, query: str, limit: int) -> List[PaperImportCandidate]:
+        encoded_query = urllib.parse.quote(query)
+        payload = self._fetch_json(f"{_OPENALEX_WORKS_API}?search={encoded_query}&per-page={max(limit * 2, limit)}")
+        if not isinstance(payload, dict):
+            return []
+
+        results = payload.get("results")
+        if not isinstance(results, list):
+            return []
+
+        candidates: List[PaperImportCandidate] = []
+        seen_titles: set[str] = set()
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            candidate = self._paper_candidate_from_openalex_result(item, exact_query=query)
+            if candidate is None:
+                continue
+            normalized_title = self._normalize_match_text(candidate.title)
+            if normalized_title in seen_titles:
+                continue
+            seen_titles.add(normalized_title)
+            candidates.append(candidate)
+
+        candidates.sort(
+            key=lambda candidate: (
+                0 if candidate.is_exact_match else 1,
+                abs((candidate.year or 0) - datetime.now(timezone.utc).year),
+                candidate.title.lower(),
+            )
+        )
+        return candidates[:limit]
+
+    def _paper_candidate_from_openalex_result(
+        self,
+        item: Dict[str, Any],
+        *,
+        exact_query: str,
+    ) -> PaperImportCandidate | None:
+        title = " ".join(str(item.get("display_name") or "").split())
+        if not title:
+            return None
+
+        authorships = item.get("authorships") or []
+        authors: List[str] = []
+        for authorship in authorships[:8]:
+            if not isinstance(authorship, dict):
+                continue
+            author = authorship.get("author") or {}
+            name = " ".join(str(author.get("display_name") or "").split())
+            if name:
+                authors.append(name)
+
+        primary_location = item.get("primary_location") or {}
+        landing_page_url = primary_location.get("landing_page_url") or item.get("id")
+        pdf_url = primary_location.get("pdf_url")
+        ids = item.get("ids") or {}
+        raw_doi = ids.get("doi") or item.get("doi")
+        doi = self._normalize_doi(raw_doi)
+        arxiv_id = self._extract_arxiv_id(str(landing_page_url or "")) or self._extract_arxiv_id(str(pdf_url or ""))
+        if arxiv_id is None and doi and doi.lower().startswith("10.48550/arxiv."):
+            arxiv_id = doi.split("arxiv.", 1)[1]
+
+        year = item.get("publication_year")
+        if not isinstance(year, int):
+            year = None
+
+        venue = None
+        source_info = primary_location.get("source") or {}
+        if isinstance(source_info, dict):
+            venue = source_info.get("display_name")
+
+        candidate = PaperImportCandidate(
+            candidate_id=f"paper_candidate_{uuid4().hex[:12]}",
+            title=title,
+            authors=authors,
+            year=year,
+            abstract=self._reconstruct_openalex_abstract(item.get("abstract_inverted_index")),
+            source_url=str(landing_page_url) if landing_page_url else None,
+            pdf_url=str(pdf_url) if pdf_url else None,
+            doi=doi,
+            arxiv_id=arxiv_id,
+            source="openalex",
+            venue=str(venue) if venue else None,
+            openalex_id=str(item.get("id") or ""),
+            is_exact_match=self._is_exact_title_match(title, exact_query),
+        )
+        return candidate
+
+    @staticmethod
+    def _normalize_doi(value: Any) -> str | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.lower().startswith("https://doi.org/"):
+            return text.split("doi.org/", 1)[1]
+        if text.lower().startswith("http://doi.org/"):
+            return text.split("doi.org/", 1)[1]
+        return text
+
+    @staticmethod
+    def _reconstruct_openalex_abstract(abstract_index: Any) -> str:
+        if not isinstance(abstract_index, dict) or not abstract_index:
+            return ""
+
+        positioned_words: List[Tuple[int, str]] = []
+        for word, positions in abstract_index.items():
+            if not isinstance(word, str) or not isinstance(positions, list):
+                continue
+            for position in positions:
+                if isinstance(position, int):
+                    positioned_words.append((position, word))
+
+        if not positioned_words:
+            return ""
+
+        positioned_words.sort(key=lambda item: item[0])
+        return " ".join(word for _, word in positioned_words)
+
+    @staticmethod
+    def _normalize_match_text(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+    def _is_exact_title_match(self, title: str, query: str) -> bool:
+        normalized_title = self._normalize_match_text(title)
+        normalized_query = self._normalize_match_text(query)
+        if not normalized_query:
+            return False
+        if normalized_title == normalized_query:
+            return True
+        return normalized_query in normalized_title and len(normalized_query) >= max(12, len(normalized_title) - 8)
+
+    def _build_paper_import_tags(self, candidate: PaperImportCandidate) -> List[str]:
+        tags = ["paper-import", candidate.source]
+        if candidate.arxiv_id:
+            tags.append("arxiv")
+        if candidate.year:
+            tags.append(str(candidate.year))
+            if candidate.year >= datetime.now(timezone.utc).year - 2:
+                tags.append("recent-paper")
+        if candidate.venue:
+            venue_tag = self._normalize_match_text(candidate.venue).replace(" ", "-")
+            if venue_tag:
+                tags.append(venue_tag[:40])
+        deduped: List[str] = []
+        for tag in tags:
+            normalized = tag.strip().lower()
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+        return deduped
+
+    @staticmethod
+    def _build_paper_import_content(candidate: PaperImportCandidate) -> str:
+        lines = [f"Paper title: {candidate.title}"]
+        if candidate.authors:
+            lines.append(f"Authors: {', '.join(candidate.authors)}")
+        if candidate.year:
+            lines.append(f"Year: {candidate.year}")
+        if candidate.venue:
+            lines.append(f"Venue: {candidate.venue}")
+        if candidate.doi:
+            lines.append(f"DOI: {candidate.doi}")
+        if candidate.arxiv_id:
+            lines.append(f"arXiv: {candidate.arxiv_id}")
+        if candidate.source_url:
+            lines.append(f"Landing page: {candidate.source_url}")
+        if candidate.pdf_url:
+            lines.append(f"PDF: {candidate.pdf_url}")
+
+        abstract = " ".join(candidate.abstract.split())
+        if abstract:
+            lines.extend(["", "Abstract:", abstract])
+        else:
+            lines.extend(["", "Abstract:", "No abstract was available from the upstream metadata source."])
+
+        return "\n".join(lines)
 
     def _maybe_index_document(self, document: KnowledgeDocument) -> None:
         """Index a document, using async if an event loop is running, else sync."""
@@ -407,6 +812,8 @@ class KnowledgeService:
             "source_task_id": document.source_task_id,
             "tags": document.tags,
             "created_at": document.metadata.get("created_at"),
+            "conversation_id": document.metadata.get("conversation_id"),
+            "source_type": document.metadata.get("source_type"),
         }
         chunks = self.chunker.chunk(document.content, metadata)
         if not chunks:
@@ -451,44 +858,75 @@ class KnowledgeService:
         Returns:
             匹配的 KnowledgeDocument 列表（按分数降序）
         """
-        query_words = [w.strip().lower() for w in keyword.split() if len(w.strip()) >= 2]
-        if not query_words:
+        scored = self._score_documents_by_keyword(keyword, min_score=min_score)
+        return [doc for _, doc in scored[:limit]]
+
+    def retrieve_hits_for_context(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        max_chars_per_doc: int = 300,
+        knowledge_scope: str = "shared",
+        conversation_id: str | None = None,
+    ) -> list[KnowledgeHit]:
+        """Retrieve structured knowledge hits for context assembly."""
+        normalized_scope = self._normalize_knowledge_scope(knowledge_scope)
+        if normalized_scope == "none":
             return []
 
-        scored: list[tuple[float, KnowledgeDocument]] = []
-        for doc in self.repository.list_all():
-            title_lower = doc.title.lower()
-            content_lower = doc.content.lower()
-            tags_lower = [t.lower() for t in (doc.tags or [])]
+        search_limit = max(top_k * (8 if normalized_scope == "conversation_only" else 4), top_k)
+        hybrid_results = self.retrieve(
+            query,
+            top_k=search_limit,
+            hybrid=self.enable_hybrid_search,
+            use_reranker=False,
+        )
+        hits = self._hits_from_search_results(
+            hybrid_results,
+            top_k=top_k,
+            max_chars_per_doc=max_chars_per_doc,
+            knowledge_scope=normalized_scope,
+            conversation_id=conversation_id,
+        )
 
-            score = 0.0
-            for word in query_words:
-                # Title scoring
-                if word == title_lower:
-                    score += 5.0
-                elif word in title_lower:
-                    score += 3.0
-                # Content scoring
-                if word in content_lower:
-                    score += 1.0
-                # Tag scoring
-                for tag in tags_lower:
-                    if word in tag:
-                        score += 2.0
-                        break
+        if len(hits) >= top_k:
+            return hits[:top_k]
 
-            # Normalize by content length (long docs shouldn't dominate)
-            content_len = max(1, len(content_lower))
-            length_penalty = min(1.0, 500.0 / content_len)
-            score *= length_penalty
+        existing_doc_ids = {hit.document_id for hit in hits}
+        scored_docs = self._score_documents_by_keyword(query, min_score=0.5)
+        filtered_docs = self._filter_scored_documents_for_scope(
+            scored_docs[: max(search_limit * 2, top_k)],
+            knowledge_scope=normalized_scope,
+            conversation_id=conversation_id,
+        )
 
-            if score > 0:
-                scored.append((score, doc))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        if min_score > 0:
-            scored = [(s, d) for s, d in scored if s >= min_score]
-        return [doc for _, doc in scored[:limit]]
+        for score, doc in filtered_docs:
+            if doc.document_id in existing_doc_ids:
+                continue
+            normalized_keyword_score = min(float(score) / 8.0, 1.0)
+            hits.append(
+                KnowledgeHit(
+                    document_id=doc.document_id,
+                    title=doc.title.strip(),
+                    snippet=self._build_document_excerpt(doc, max_chars=max_chars_per_doc),
+                    score=round(normalized_keyword_score, 3),
+                    scope=self._document_scope(doc, conversation_id=conversation_id),
+                    source_task_id=doc.source_task_id,
+                    source_type=str(doc.metadata.get("source_type", "")),
+                    evidence_level=self._knowledge_evidence_level(
+                        document=doc,
+                        aggregate_score=normalized_keyword_score,
+                        matched_chunk_count=1,
+                    ),
+                    matched_chunk_count=1,
+                    supporting_snippets=[self._build_document_excerpt(doc, max_chars=max(max_chars_per_doc, 1200))],
+                )
+            )
+            existing_doc_ids.add(doc.document_id)
+            if len(hits) >= top_k:
+                break
+        return hits
 
     def retrieve_for_context(
         self,
@@ -496,6 +934,8 @@ class KnowledgeService:
         *,
         top_k: int = 5,
         max_chars_per_doc: int = 300,
+        knowledge_scope: str = "shared",
+        conversation_id: str | None = None,
     ) -> list[str]:
         """
         检索相关知识并格式化为可注入上下文的文本片段。
@@ -508,30 +948,24 @@ class KnowledgeService:
         Returns:
             格式化的知识上下文字符串列表，如 ["[Knowledge] DocTitle: excerpt...", ...]
         """
-        docs = self.search_by_keyword(query, limit=top_k * 2, min_score=0.5)
-        if not docs:
-            return []
+        hits = self.retrieve_hits_for_context(
+            query,
+            top_k=top_k,
+            max_chars_per_doc=max_chars_per_doc,
+            knowledge_scope=knowledge_scope,
+            conversation_id=conversation_id,
+        )
+        return [self.format_hit_for_context(hit) for hit in hits]
 
-        snippets: list[str] = []
-        for doc in docs:
-            title = doc.title.strip()
-            # Use content summary: first meaningful lines, trim whitespace
-            content = " ".join((doc.content or "").split())
-            excerpt = content[:max_chars_per_doc]
-            if len(content) > max_chars_per_doc:
-                excerpt += "..."
-
-            source_tag = ""
-            if doc.source_task_id:
-                source_tag = f" [task:{doc.source_task_id[:8]}]"
-            elif doc.metadata.get("source_url"):
-                source_tag = f" [imported]"
-
-            snippets.append(f"[Knowledge]{source_tag} {title}: {excerpt}")
-            if len(snippets) >= top_k:
-                break
-
-        return snippets
+    def format_hit_for_context(self, hit: KnowledgeHit) -> str:
+        source_tag = ""
+        if hit.source_task_id:
+            source_tag = f" [task:{hit.source_task_id[:8]}]"
+        elif hit.source_type == "user_import":
+            source_tag = " [imported]"
+        elif hit.scope == "conversation":
+            source_tag = " [conversation]"
+        return f"[Knowledge]{source_tag} {hit.title}: {hit.snippet}"
 
     def vector_search(
         self,
@@ -660,6 +1094,238 @@ class KnowledgeService:
     # ------------------------------------------------------------------------
     # 辅助方法
     # ------------------------------------------------------------------------
+
+    def _score_documents_by_keyword(
+        self,
+        keyword: str,
+        *,
+        min_score: float = 0.0,
+    ) -> list[tuple[float, KnowledgeDocument]]:
+        query_words = [w.strip().lower() for w in keyword.split() if len(w.strip()) >= 2]
+        if not query_words:
+            return []
+
+        scored: list[tuple[float, KnowledgeDocument]] = []
+        for doc in self.repository.list_all():
+            title_lower = doc.title.lower()
+            content_lower = doc.content.lower()
+            tags_lower = [t.lower() for t in (doc.tags or [])]
+
+            score = 0.0
+            for word in query_words:
+                if word == title_lower:
+                    score += 5.0
+                elif word in title_lower:
+                    score += 3.0
+                if word in content_lower:
+                    score += 1.0
+                for tag in tags_lower:
+                    if word in tag:
+                        score += 2.0
+                        break
+
+            content_len = max(1, len(content_lower))
+            length_penalty = min(1.0, 500.0 / content_len)
+            score *= length_penalty
+
+            if score > 0 and score >= min_score:
+                scored.append((score, doc))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored
+
+    def _hits_from_search_results(
+        self,
+        results: List[SearchResult],
+        *,
+        top_k: int,
+        max_chars_per_doc: int,
+        knowledge_scope: str,
+        conversation_id: str | None,
+    ) -> list[KnowledgeHit]:
+        doc_cache: dict[str, KnowledgeDocument | None] = {}
+        grouped_results: dict[str, list[SearchResult]] = {}
+
+        for result in results:
+            document_id = str(getattr(result.chunk, "document_id", "") or "").strip()
+            if not document_id:
+                continue
+
+            if document_id not in doc_cache:
+                doc_cache[document_id] = self.repository.get(document_id)
+            document = doc_cache[document_id]
+            if document is None:
+                continue
+
+            if knowledge_scope == "conversation_only" and not self._document_matches_conversation(
+                document,
+                conversation_id=conversation_id,
+            ):
+                continue
+
+            grouped_results.setdefault(document.document_id, []).append(result)
+
+        aggregated_hits: list[KnowledgeHit] = []
+        for document_id, doc_results in grouped_results.items():
+            document = doc_cache.get(document_id)
+            if document is None:
+                continue
+
+            top_results = sorted(doc_results, key=lambda item: item.score, reverse=True)[:3]
+            supporting_snippets = self._unique_supporting_snippets(
+                [
+                    self._build_chunk_excerpt(
+                        getattr(item.chunk, "content", "") or "",
+                        max_chars=max(max_chars_per_doc, 1200),
+                    )
+                    for item in top_results
+                ]
+            )
+            primary_snippet = (
+                supporting_snippets[0]
+                if supporting_snippets
+                else self._build_document_excerpt(document, max_chars=max_chars_per_doc)
+            )
+            aggregate_score = self._aggregate_document_relevance(top_results)
+            aggregated_hits.append(
+                KnowledgeHit(
+                    document_id=document.document_id,
+                    title=document.title.strip(),
+                    snippet=primary_snippet,
+                    score=round(aggregate_score, 3),
+                    scope=self._document_scope(document, conversation_id=conversation_id),
+                    source_task_id=document.source_task_id,
+                    source_type=str(document.metadata.get("source_type", "")),
+                    evidence_level=self._knowledge_evidence_level(
+                        document=document,
+                        aggregate_score=aggregate_score,
+                        matched_chunk_count=len(supporting_snippets) or len(top_results),
+                    ),
+                    matched_chunk_count=len(supporting_snippets) or len(top_results),
+                    supporting_snippets=supporting_snippets,
+                )
+            )
+
+        ordered_hits = sorted(aggregated_hits, key=lambda hit: hit.score, reverse=True)
+        return ordered_hits[:top_k]
+
+    @staticmethod
+    def _aggregate_document_relevance(results: List[SearchResult]) -> float:
+        if not results:
+            return 0.0
+        top_score = max(float(item.score) for item in results)
+        if len(results) == 1:
+            return min(top_score, 1.0)
+        remaining = [float(item.score) for item in results if float(item.score) != top_score]
+        avg_remaining = sum(remaining) / len(remaining) if remaining else top_score
+        aggregate = top_score * 0.75 + avg_remaining * 0.25 + min(0.05 * (len(results) - 1), 0.1)
+        return min(aggregate, 1.0)
+
+    def _knowledge_evidence_level(
+        self,
+        *,
+        document: KnowledgeDocument,
+        aggregate_score: float,
+        matched_chunk_count: int,
+    ) -> str:
+        source_type = str(document.metadata.get("source_type", "") or "").strip().lower()
+        confidence = max(0.0, min(float(aggregate_score), 1.0))
+
+        if source_type in {"paper_import", "workspace_summary"}:
+            confidence += 0.12
+        elif source_type == "user_import":
+            confidence += 0.06
+
+        if matched_chunk_count >= 2:
+            confidence += 0.08
+        if matched_chunk_count >= 3:
+            confidence += 0.04
+
+        confidence = min(confidence, 1.0)
+        if confidence >= 0.82:
+            return "strong"
+        if confidence >= 0.62:
+            return "moderate"
+        return "candidate"
+
+    @staticmethod
+    def _unique_supporting_snippets(snippets: List[str], *, limit: int = 3) -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        for snippet in snippets:
+            normalized = " ".join((snippet or "").split()).strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(normalized)
+            if len(values) >= limit:
+                break
+        return values
+
+    def _filter_scored_documents_for_scope(
+        self,
+        scored_docs: list[tuple[float, KnowledgeDocument]],
+        *,
+        knowledge_scope: str,
+        conversation_id: str | None,
+    ) -> list[tuple[float, KnowledgeDocument]]:
+        normalized_scope = self._normalize_knowledge_scope(knowledge_scope)
+        if normalized_scope != "conversation_only":
+            return scored_docs
+        return [
+            (score, doc)
+            for score, doc in scored_docs
+            if self._document_matches_conversation(doc, conversation_id=conversation_id)
+        ]
+
+    @staticmethod
+    def _normalize_knowledge_scope(knowledge_scope: str | None) -> str:
+        if knowledge_scope in {"none", "conversation_only", "shared"}:
+            return str(knowledge_scope)
+        return "shared"
+
+    def _document_scope(self, document: KnowledgeDocument, *, conversation_id: str | None) -> str:
+        return "conversation" if self._document_matches_conversation(document, conversation_id=conversation_id) else "shared"
+
+    def _document_matches_conversation(
+        self,
+        document: KnowledgeDocument,
+        *,
+        conversation_id: str | None,
+    ) -> bool:
+        if not conversation_id:
+            return False
+
+        metadata_conversation_id = str(document.metadata.get("conversation_id", "") or "")
+        if metadata_conversation_id and metadata_conversation_id == conversation_id:
+            return True
+
+        if not document.source_task_id or self.task_repository is None:
+            return False
+
+        task = self.task_repository.get(document.source_task_id)
+        return bool(task and task.conversation_id == conversation_id)
+
+    @staticmethod
+    def _build_document_excerpt(document: KnowledgeDocument, *, max_chars: int) -> str:
+        content = " ".join((document.content or "").split())
+        excerpt = content[:max_chars]
+        if len(content) > max_chars:
+            excerpt += "..."
+        return excerpt
+
+    @staticmethod
+    def _build_chunk_excerpt(content: str, *, max_chars: int) -> str:
+        normalized = " ".join((content or "").split())
+        if not normalized:
+            return ""
+        excerpt = normalized[:max_chars]
+        if len(normalized) > max_chars:
+            excerpt += "..."
+        return excerpt
 
     def get_document(self, document_id: str) -> Optional[KnowledgeDocument]:
         """根据文档 ID 获取原始文档。"""

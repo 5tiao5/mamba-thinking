@@ -128,8 +128,8 @@ export function WorkspaceTaxonomyRail({
       <section className="pane taxonomy-pane-expanded">
         <div className="section-header">
           <div>
-            <div className="section-eyebrow">{branches.length} 个方向</div>
-            <h2>研究方向图</h2>
+            <div className="section-eyebrow">{branches.length} 个分支</div>
+            <h2>Taxonomy / 研究分类</h2>
           </div>
         </div>
         <div className="pane-scroll taxonomy-panel">

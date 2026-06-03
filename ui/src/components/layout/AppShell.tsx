@@ -9,20 +9,92 @@ import type {
   ConversationSummaryItem,
   CreateKnowledgeDocumentPayload,
   FollowUpTaskItem,
+  KnowledgeScope,
   KnowledgeDocumentItem,
   MessageItem,
+  PaperImportCandidateItem,
   ResearchTaskSummaryItem,
   SkillItem,
   ToolItem,
   WorkspaceSnapshot,
 } from "../../types/api";
 import { AssistantMessageContent } from "../chat/AssistantMessageContent";
+import { MessageSourceTrace } from "../chat/MessageSourceTrace";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { StatusPill } from "../ui/StatusPill";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 
+const modeOptions = [
+  { value: "default", label: "标准" },
+  { value: "fast", label: "快速" },
+  { value: "balanced", label: "均衡" },
+];
+
+const knowledgeScopeOptions: Array<{ value: KnowledgeScope; label: string }> = [
+  { value: "conversation_only", label: "仅会话" },
+  { value: "shared", label: "共享知识" },
+  { value: "none", label: "关闭增强" },
+];
+
+function knowledgeScopeLabel(scope: KnowledgeScope) {
+  switch (scope) {
+    case "conversation_only":
+      return "仅当前会话知识";
+    case "none":
+      return "不启用知识增强";
+    case "shared":
+    default:
+      return "当前会话 + 共享知识";
+  }
+}
+
 function knowledgeMetadata(document: KnowledgeDocumentItem, key: string) {
   const value = document.metadata?.[key];
-  return typeof value === "string" ? value : "";
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return "";
+}
+
+function paperSourceLabel(candidate: PaperImportCandidateItem) {
+  if (candidate.venue?.trim()) {
+    return candidate.venue.trim();
+  }
+  if (candidate.source === "openalex") {
+    return "OpenAlex";
+  }
+  if (candidate.source === "arxiv") {
+    return "arXiv";
+  }
+  return candidate.source;
+}
+
+function getMessageTaskId(message: MessageItem) {
+  const taskId = message.metadata?.task_id;
+  return typeof taskId === "string" && taskId.trim() ? taskId : "";
+}
+
+function getMessageTaskStatus(message: MessageItem) {
+  const taskStatus = message.metadata?.task_status;
+  return typeof taskStatus === "string" && taskStatus.trim() ? taskStatus : "";
+}
+
+function getDisplayMessageContent(message: MessageItem) {
+  const taskId = getMessageTaskId(message);
+  if (!taskId) {
+    return cleanDisplayText(message.content);
+  }
+
+  return cleanDisplayText(
+    message.content
+      .split("\n")
+      .filter((line) => !line.includes(taskId))
+      .join("\n")
+      .trim()
+  );
 }
 
 export function AppShell({ children }: PropsWithChildren) {
@@ -35,6 +107,8 @@ export function AppShell({ children }: PropsWithChildren) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [newTopic, setNewTopic] = useState("AI Agent 工具使用评测");
   const [newTitle, setNewTitle] = useState("新的研究");
+  const [runMode, setRunMode] = useState("balanced");
+  const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("shared");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [toolDialogOpen, setToolDialogOpen] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
@@ -42,6 +116,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const [askStatus, setAskStatus] = useState("选择或创建一个研究后，可以在这里生成结果或继续追问。");
   const [asking, setAsking] = useState(false);
   const [latestFollowUpTask, setLatestFollowUpTask] = useState<FollowUpTaskItem | null>(null);
+  const [latestFollowUpTaskScope, setLatestFollowUpTaskScope] = useState<KnowledgeScope>("shared");
   const [runningTaskId, setRunningTaskId] = useState("");
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [tools, setTools] = useState<ToolItem[]>([]);
@@ -59,6 +134,11 @@ export function AppShell({ children }: PropsWithChildren) {
     source_url: "",
     notes: "",
   });
+  const [paperImportQuery, setPaperImportQuery] = useState("");
+  const [paperImportCandidates, setPaperImportCandidates] = useState<PaperImportCandidateItem[]>([]);
+  const [paperImportLoading, setPaperImportLoading] = useState(false);
+  const [importingPaperCandidateId, setImportingPaperCandidateId] = useState("");
+  const [showManualKnowledgeForm, setShowManualKnowledgeForm] = useState(false);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState("选择左侧研究后，可以生成并查看简略结果。");
@@ -143,6 +223,8 @@ export function AppShell({ children }: PropsWithChildren) {
     activeConversationId === DEMO_CONVERSATION_ID
       ? currentTaskId || DEMO_WORKSPACE_TASK_ID
       : activeConversationTask?.task_id ?? currentTaskId;
+  const activeTaskKnowledgeScope =
+    activeConversationTask?.knowledge_scope ?? workspace?.source_trace?.knowledge_scope ?? "shared";
 
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +246,11 @@ export function AppShell({ children }: PropsWithChildren) {
       cancelled = true;
     };
   }, [activeConversationId, location.key]);
+
+  useEffect(() => {
+    setLatestFollowUpTask(null);
+    setLatestFollowUpTaskScope("shared");
+  }, [activeConversationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -197,6 +284,16 @@ export function AppShell({ children }: PropsWithChildren) {
     };
   }, [activeConversationId, activeTaskId]);
 
+  useEffect(() => {
+    if (!activeConversationId) {
+      setKnowledgeScope("shared");
+      setLatestFollowUpTaskScope("shared");
+      return;
+    }
+
+    setKnowledgeScope(activeTaskKnowledgeScope);
+  }, [activeConversationId, activeTaskKnowledgeScope]);
+
   const workspaceDirections = useMemo(() => {
     if (!workspace) return [];
     const branches = workspace.taxonomy.branches.map((branch) => cleanDisplayText(branch.name, 80)).filter(Boolean);
@@ -206,6 +303,7 @@ export function AppShell({ children }: PropsWithChildren) {
 
   async function createConversationFromSidebar() {
     if (!newTopic.trim()) return;
+    const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     setCreatingConversation(true);
     try {
       const response = await api.createConversation({
@@ -215,6 +313,8 @@ export function AppShell({ children }: PropsWithChildren) {
       setCreateDialogOpen(false);
       setAskStatus("研究已创建。现在可以生成结果，也可以先补充你的要求。");
       await loadHistory();
+      setAskStatus(`结果已生成，本轮使用「${scopeLabel}」。可以继续追问来调整方向。`);
+      setAskStatus("研究已创建。现在可以生成结果，也可以先补充你的要求。");
       navigate(`/conversation?conversation_id=${encodeURIComponent(response.data.conversation_id)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
@@ -230,21 +330,33 @@ export function AppShell({ children }: PropsWithChildren) {
     }
 
     setRunningTaskId(activeTaskId || "creating");
+    const scopeLabel = knowledgeScopeLabel(knowledgeScope);
+    const shouldCreateFreshTask =
+      activeConversationId !== DEMO_CONVERSATION_ID &&
+      (!activeTaskId || activeTaskKnowledgeScope !== knowledgeScope);
     setAskStatus("正在生成研究结果...");
     try {
+      setAskStatus(
+        shouldCreateFreshTask
+          ? `知识范围已切换为「${scopeLabel}」，正在创建新一轮研究结果...`
+          : `正在按「${scopeLabel}」生成研究结果...`
+      );
       let taskId = activeTaskId;
-      if (!taskId) {
+      if (shouldCreateFreshTask || !taskId) {
         const created = await api.createTask({
           conversation_id: activeConversationId,
           topic: activeConversation.topic,
-          mode: "balanced",
-          use_shared_knowledge: true,
+          mode: runMode,
+          use_shared_knowledge: knowledgeScope === "shared",
+          knowledge_scope: knowledgeScope,
         });
         taskId = created.data.task_id;
       }
       await api.runTask(taskId);
+      setAskStatus(`结果已生成，本轮使用「${scopeLabel}」。可以继续追问来调整方向。`);
       setAskStatus("结果已生成，可以继续追问来调整方向。");
       await loadHistory();
+      setAskStatus(`结果已生成，本轮使用「${scopeLabel}」。可以继续追问来调整方向。`);
       navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
@@ -264,18 +376,28 @@ export function AppShell({ children }: PropsWithChildren) {
     }
 
     setAsking(true);
+    const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     setAskStatus("正在继续追问...");
     try {
+      setAskStatus(`正在按「${scopeLabel}」继续追问...`);
       const response = await api.continueConversation({
         conversation_id: activeConversationId,
         content: askContent.trim(),
         create_follow_up_task: true,
-        mode: "balanced",
+        mode: runMode,
+        knowledge_scope: knowledgeScope,
       });
+      const appliedScope = response.data.knowledge_scope_applied ?? knowledgeScope;
       setAskContent("");
       setLatestFollowUpTask(response.data.follow_up_task ?? null);
+      setLatestFollowUpTaskScope(appliedScope);
       setAskStatus(response.data.follow_up_task ? "已生成后续研究任务，可运行后刷新结果。" : "追问已发送。");
       await loadHistory();
+      setAskStatus(
+        response.data.follow_up_task
+          ? `已按「${knowledgeScopeLabel(appliedScope)}」生成后续研究任务，可运行后刷新结果。`
+          : `追问已按「${knowledgeScopeLabel(appliedScope)}」发送。`
+      );
       navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
@@ -286,11 +408,14 @@ export function AppShell({ children }: PropsWithChildren) {
 
   async function runFollowUpTask(taskId: string) {
     setRunningTaskId(taskId);
+    const scopeLabel = knowledgeScopeLabel(latestFollowUpTaskScope);
     setAskStatus("正在运行后续研究任务...");
     try {
+      setAskStatus(`正在按「${scopeLabel}」运行后续研究任务...`);
       await api.runTask(taskId);
       setAskStatus("新的结果已生成，右侧窗口已刷新。");
       await loadHistory();
+      setAskStatus(`新的结果已生成，本轮沿用「${scopeLabel}」，右侧窗口已刷新。`);
       navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
@@ -347,6 +472,7 @@ export function AppShell({ children }: PropsWithChildren) {
   async function openKnowledgeDialog() {
     setToolDialogOpen(true);
     setToolDialogTab("knowledge");
+    setShowManualKnowledgeForm(false);
     await loadKnowledgeDocuments();
   }
 
@@ -384,6 +510,59 @@ export function AppShell({ children }: PropsWithChildren) {
       setToolStatus(`知识库加载失败：${toErrorMessage(error)}`);
     } finally {
       setKnowledgeLoading(false);
+    }
+  }
+
+  async function searchPaperCandidates() {
+    if (!paperImportQuery.trim()) {
+      setToolStatus("请先输入论文标题、DOI、arXiv ID 或 arXiv 链接。");
+      return;
+    }
+
+    setPaperImportLoading(true);
+    setToolStatus("正在识别论文候选...");
+    try {
+      const response = await api.searchPaperCandidates({
+        query: paperImportQuery.trim(),
+        limit: 3,
+      });
+      setPaperImportCandidates(response.data.items);
+      setToolStatus(
+        response.data.items.length
+          ? `已识别 ${response.data.items.length} 条候选论文，请确认后导入。`
+          : "没有找到可导入的候选论文，试试更完整的标题、DOI 或 arXiv 链接。"
+      );
+    } catch (error) {
+      setPaperImportCandidates([]);
+      setToolStatus(`识别失败：${toErrorMessage(error)}`);
+    } finally {
+      setPaperImportLoading(false);
+    }
+  }
+
+  async function importPaperCandidate(candidateId: string, target: "conversation" | "shared") {
+    if (target === "conversation" && !activeConversationId) {
+      setToolStatus("当前没有激活的研究会话，暂时只能导入到共享知识。");
+      return;
+    }
+
+    setImportingPaperCandidateId(candidateId);
+    setToolStatus(target === "conversation" ? "正在导入到当前研究..." : "正在导入到共享知识...");
+    try {
+      const response = await api.importPaperCandidate({
+        candidate_id: candidateId,
+        conversation_id: target === "conversation" ? activeConversationId : undefined,
+      });
+      setKnowledgeDocuments((current) => [response.data, ...current]);
+      setToolStatus(
+        target === "conversation"
+          ? "论文已导入到当前研究，后续追问会优先利用这份资料。"
+          : "论文已导入到共享知识，后续研究都可以复用它。"
+      );
+    } catch (error) {
+      setToolStatus(`导入失败：${toErrorMessage(error)}`);
+    } finally {
+      setImportingPaperCandidateId("");
     }
   }
 
@@ -533,9 +712,18 @@ export function AppShell({ children }: PropsWithChildren) {
               </div>
               {activeConversationId ? (
                 <div className="research-window-actions">
+                  <Link
+                    className="secondary-button"
+                    to={`/workspace?conversation_id=${encodeURIComponent(activeConversationId)}${activeTaskId ? `&task_id=${encodeURIComponent(activeTaskId)}` : ""}&view=conversation`}
+                  >
+                    打开本研究总览
+                  </Link>
                   {activeTaskId ? (
-                    <Link className="secondary-button" to={`/workspace?task_id=${encodeURIComponent(activeTaskId)}`}>
-                      完整工作台
+                    <Link
+                      className="secondary-button"
+                      to={`/workspace?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(activeTaskId)}&view=task`}
+                    >
+                      查看本次结果
                     </Link>
                   ) : null}
                   <button
@@ -566,10 +754,31 @@ export function AppShell({ children }: PropsWithChildren) {
                         <div className="unified-message-bubble">
                           <span className="message-speaker">{message.role === "user" ? "你" : "智能体"}</span>
                           {message.role === "assistant" ? (
-                            <AssistantMessageContent content={message.content} />
+                            <>
+                              <AssistantMessageContent content={getDisplayMessageContent(message)} />
+                              <MessageSourceTrace
+                                inheritedContext={message.metadata?.inherited_context}
+                                sourceTrace={message.metadata?.source_trace}
+                              />
+                            </>
                           ) : (
-                            <p>{cleanDisplayText(message.content)}</p>
+                            <p>{getDisplayMessageContent(message)}</p>
                           )}
+                          {message.role === "assistant" && getMessageTaskId(message) ? (
+                            <div className="unified-message-actions">
+                              {getMessageTaskStatus(message) ? (
+                                <StatusPill compact tone={taskStatusTone(getMessageTaskStatus(message))}>
+                                  {taskStatusLabel(getMessageTaskStatus(message))}
+                                </StatusPill>
+                              ) : null}
+                              <Link
+                                className="secondary-button message-action-button"
+                                to={`/workspace?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(getMessageTaskId(message))}&view=task`}
+                              >
+                                ↗ 查看本次结果
+                              </Link>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     ))
@@ -622,6 +831,24 @@ export function AppShell({ children }: PropsWithChildren) {
                           <circle cx="16" cy="12" r="2" />
                         </svg>
                       </button>
+                      <div className="composer-mode-picker">
+                        <span className="composer-mode-label">运行模式</span>
+                        <SegmentedControl
+                          label="运行模式"
+                          onChange={setRunMode}
+                          options={modeOptions}
+                          value={runMode}
+                        />
+                      </div>
+                      <div className="composer-mode-picker">
+                        <span className="composer-mode-label">知识范围</span>
+                        <SegmentedControl
+                          label="知识范围"
+                          onChange={(value) => setKnowledgeScope(value as KnowledgeScope)}
+                          options={knowledgeScopeOptions}
+                          value={knowledgeScope}
+                        />
+                      </div>
                       <div className="composer-status-text" role="status">{askStatus}</div>
                     </div>
                     <button
@@ -805,6 +1032,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 className={toolDialogTab === "knowledge" ? "tool-dialog-tab tool-dialog-tab-active" : "tool-dialog-tab"}
                 onClick={() => {
                   setToolDialogTab("knowledge");
+                  setShowManualKnowledgeForm(false);
                   void loadKnowledgeDocuments();
                 }}
                 type="button"
@@ -881,15 +1109,99 @@ export function AppShell({ children }: PropsWithChildren) {
                 </div>
               </section>
               </>
-              ) : (
+) : (
               <>
+              <section className="tool-dialog-section knowledge-import-primary">
+                <div className="tool-dialog-section-head">
+                  <div className="knowledge-import-headline">
+                    <strong>自动导入论文</strong>
+                    <span className="knowledge-import-recommend">推荐入口</span>
+                  </div>
+                  <StatusPill tone={paperImportLoading ? "neutral" : "info"} compact>
+                    {paperImportLoading ? "识别中" : "论文候选"}
+                  </StatusPill>
+                </div>
+                <div className="knowledge-form">
+                  <input
+                    className="input"
+                    onChange={(event) => setPaperImportQuery(event.target.value)}
+                    placeholder="输入论文标题、DOI、arXiv ID 或 arXiv 链接"
+                    value={paperImportQuery}
+                  />
+                  <div className="knowledge-import-tip">
+                    先识别候选，再一键导入到当前研究或共享知识。这样比手填摘要顺手很多，也更不容易导错论文。
+                  </div>
+                  <div className="knowledge-import-tip knowledge-import-tip-strong">
+                    默认建议先走自动导入；只有在你想录入自己的调研笔记、课堂资料或手工总结时，再切到手动模式。
+                  </div>
+                  <button
+                    className="primary-button"
+                    disabled={paperImportLoading}
+                    onClick={searchPaperCandidates}
+                    type="button"
+                  >
+                    {paperImportLoading ? "识别中" : "识别候选"}
+                  </button>
+                  {paperImportCandidates.length ? (
+                    <div className="knowledge-doc-list">
+                      {paperImportCandidates.map((candidate) => (
+                        <article className="knowledge-doc-card knowledge-candidate-card" key={candidate.candidate_id}>
+                          <div>
+                            <strong>{cleanDisplayText(candidate.title, 140)}</strong>
+                            <p>{compactText(cleanDisplayText(candidate.abstract || "上游元数据里暂时没有摘要，可先导入标题和基础信息。"), 220)}</p>
+                            <div className="knowledge-doc-meta">
+                              {candidate.year ? <span>{candidate.year}</span> : null}
+                              <span>{paperSourceLabel(candidate)}</span>
+                              {candidate.arxiv_id ? <span>arXiv {candidate.arxiv_id}</span> : null}
+                              {candidate.doi ? <span>{cleanDisplayText(candidate.doi, 48)}</span> : null}
+                              {candidate.is_exact_match ? <span>高匹配</span> : null}
+                            </div>
+                            {candidate.authors.length ? (
+                              <small>{cleanDisplayText(candidate.authors.slice(0, 4).join(", "), 120)}</small>
+                            ) : null}
+                          </div>
+                          <div className="knowledge-candidate-actions">
+                            <button
+                              className="primary-button"
+                              disabled={importingPaperCandidateId === candidate.candidate_id || !activeConversationId}
+                              onClick={() => importPaperCandidate(candidate.candidate_id, "conversation")}
+                              type="button"
+                            >
+                              {importingPaperCandidateId === candidate.candidate_id ? "导入中" : "导入到当前研究"}
+                            </button>
+                            <button
+                              className="secondary-button"
+                              disabled={importingPaperCandidateId === candidate.candidate_id}
+                              onClick={() => importPaperCandidate(candidate.candidate_id, "shared")}
+                              type="button"
+                            >
+                              导入到共享知识
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="button-row">
+                    <button
+                      className="secondary-button"
+                      onClick={() => setShowManualKnowledgeForm((current) => !current)}
+                      type="button"
+                    >
+                      {showManualKnowledgeForm ? "收起手动录入" : "改用手动录入"}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
               <section className="tool-dialog-section">
                 <div className="tool-dialog-section-head">
-                  <strong>导入资料</strong>
+                  <strong>手动录入（高级）</strong>
                   <StatusPill tone={knowledgeLoading ? "neutral" : "info"} compact>
                     {knowledgeLoading ? "同步中" : "资料库"}
                   </StatusPill>
                 </div>
+                {showManualKnowledgeForm ? (
                 <div className="knowledge-form">
                   <input
                     className="input"
@@ -932,6 +1244,11 @@ export function AppShell({ children }: PropsWithChildren) {
                     导入资料
                   </button>
                 </div>
+                ) : (
+                <div className="knowledge-import-collapsed-note">
+                  这里保留给更复杂的录入场景：例如你自己的调研笔记、课堂资料、中文摘要整理，或者你想手动控制标题、标签和备注。
+                </div>
+                )}
               </section>
 
               <section className="tool-dialog-section">
@@ -960,7 +1277,14 @@ export function AppShell({ children }: PropsWithChildren) {
                           <strong>{cleanDisplayText(document.title, 120)}</strong>
                           <p>{compactText(cleanDisplayText(document.content), 220)}</p>
                           <div className="knowledge-doc-meta">
+                            {document.conversation_id ? <span>当前研究</span> : <span>共享知识</span>}
                             {document.tags.length ? <span>{document.tags.join(" / ")}</span> : null}
+                            {knowledgeMetadata(document, "paper_source") ? (
+                              <span>{cleanDisplayText(knowledgeMetadata(document, "paper_source"), 40)}</span>
+                            ) : null}
+                            {knowledgeMetadata(document, "year") ? (
+                              <span>{cleanDisplayText(knowledgeMetadata(document, "year"), 12)}</span>
+                            ) : null}
                             {knowledgeMetadata(document, "notes") ? (
                               <span>{cleanDisplayText(knowledgeMetadata(document, "notes"), 120)}</span>
                             ) : null}

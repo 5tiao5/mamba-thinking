@@ -6,7 +6,7 @@ type MessageMetric = {
 };
 
 type MessageSection = {
-  key: "papers" | "gaps" | "ideas" | "next" | "directions";
+  key: "papers" | "priority" | "gaps" | "ideas" | "next" | "directions";
   title: string;
   items: string[];
 };
@@ -20,14 +20,15 @@ type ParsedAssistantMessage = {
 };
 
 const SECTION_LABEL_PATTERN =
-  /(代表性论文|论文线索|关键研究空白|研究空白|可继续推进的选题|建议选题|研究建议|下一步|建议动作|完整\s*研究方向图|研究方向图)\s*[-:：]/g;
+  /(代表性论文|论文线索|优先关注|关键研究空白|研究空白|可继续推进的选题|建议选题|研究建议|下一步|建议动作|完整\s*研究方向图|研究方向图)\s*[-:：]/g;
 const IDEA_LABEL_PATTERN = /\s+(选题[一二三四五六七八九十\d]+)\s*[:：]/g;
 const SECTION_LINE_PATTERN =
-  /^(代表性论文|论文线索|关键研究空白|研究空白|可继续推进的选题|建议选题|研究建议|下一步|建议动作|完整\s*研究方向图|研究方向图)\s*[:：-]\s*(.*)$/;
+  /^(代表性论文|论文线索|优先关注|关键研究空白|研究空白|可继续推进的选题|建议选题|研究建议|下一步|建议动作|完整\s*研究方向图|研究方向图)\s*[:：-]\s*(.*)$/;
 const IDEA_LINE_PATTERN = /^(选题[一二三四五六七八九十\d]+)\s*[:：]\s*(.*)$/;
 
 const sectionTitleMap: Record<MessageSection["key"], string> = {
   papers: "代表性论文",
+  priority: "优先关注",
   gaps: "关键空白",
   ideas: "选题建议",
   next: "下一步",
@@ -36,6 +37,7 @@ const sectionTitleMap: Record<MessageSection["key"], string> = {
 
 function normalizeSectionKey(label: string): MessageSection["key"] {
   if (label.includes("论文")) return "papers";
+  if (label.includes("优先关注")) return "priority";
   if (label.includes("空白")) return "gaps";
   if (label.includes("选题") || label.includes("建议选题") || label.includes("研究建议")) return "ideas";
   if (label.includes("方向图")) return "directions";
@@ -65,8 +67,8 @@ function uniqueNonEmpty(items: string[]) {
 
 function extractMetrics(text: string): MessageMetric[] {
   const metricCandidates: Array<[string, RegExp]> = [
-    ["建议", /建议\s*[:：]\s*(\d+)\s*条/],
-    ["对齐分数", /对齐分数\s*[:：]\s*([0-9.]+)/],
+    ["建议", /建议\s*[:：]?\s*(\d+)\s*条/],
+    ["对齐分数", /对齐分数\s*[:：]?\s*([0-9.]+)/],
     ["匹配度", /匹配度\s*[:：]?\s*([0-9.]+)/],
     ["论文", /论文\s*[:：]?\s*(\d+)\s*(?:篇|空白|$)/],
     ["研究空白", /(?:空白|研究空白)\s*[:：]?\s*(\d+)\s*(?:条|项|个|建议|$)/],
@@ -86,13 +88,27 @@ function extractMetrics(text: string): MessageMetric[] {
 }
 
 function stripMetricText(text: string) {
-  return text
-    .replace(/建议\s*[:：]\s*\d+\s*条/g, " ")
-    .replace(/对齐分数\s*[:：]\s*[0-9.]+/g, " ")
+  return cleanLeadText(
+    text
+      .replace(/建议\s*[:：]?\s*\d+\s*条/g, " ")
+      .replace(/对齐分数\s*[:：]?\s*[0-9.]+/g, " ")
     .replace(/匹配度\s*[:：]?\s*[0-9.]+/g, " ")
     .replace(/论文\s*[:：]?\s*\d+\s*(?:篇)?/g, " ")
     .replace(/(?:空白|研究空白)\s*[:：]?\s*\d+\s*(?:条|项|个)?/g, " ")
     .replace(/\s+-\s+/g, " ")
+  );
+}
+
+function cleanLeadText(text: string) {
+  return text
+    .replace(/^(已完成本轮研究任务[:：].*?)\s*/g, "")
+    .replace(/^(研究分析完成)\s*/g, "")
+    .replace(/^(研究主题[:：].*?)\s*/g, "")
+    .replace(/^(本轮概览)\s*/g, "")
+    .replace(/本轮分析共得到\s*[，,；;：:]*/g, "")
+    .replace(/([，,；;：:])(?:\s*[，,；;：:])+/g, "$1")
+    .replace(/([。！？!?])(?:\s*[。！？!?])+/g, "$1")
+    .replace(/[，,；;：:]\s*(?=[。！？!?]|$)/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -111,6 +127,10 @@ function splitSectionItems(key: MessageSection["key"], content: string) {
 
   if (key === "papers") {
     return uniqueNonEmpty(content.split(/\s+-\s+|[；;]/));
+  }
+
+  if (key === "priority") {
+    return uniqueNonEmpty(content.split(/\s+-\s+|[；;。]/));
   }
 
   return uniqueNonEmpty(content.split(/\s+-\s+|[；;。]/));
@@ -136,11 +156,14 @@ function addSection(sections: MessageSection[], key: MessageSection["key"], cont
   const items = splitSectionItems(key, content);
   if (!items.length) return;
 
+  if (key === "directions") {
+    return;
+  }
+
   if (key === "next") {
     const directionItems = items.filter((item) => /^完整\s*研究方向图/.test(item) || item.includes("工作台查看"));
     const nextItems = items.filter((item) => !directionItems.includes(item));
     upsertSection(sections, key, nextItems);
-    upsertSection(sections, "directions", directionItems);
     return;
   }
 

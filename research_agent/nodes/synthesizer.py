@@ -1,40 +1,28 @@
 from __future__ import annotations
 
-import json
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from observability import record_decision, record_tool_event
-from product_agent.services.idea_generation_service import (
-    IdeaGenerationInput,
-    IdeaGenerationOutput,
-    IdeaGenerationService,
-)
-from product_agent.services.report_generation_service import (
-    ReportGenerationInput,
-    ReportGenerationOutput,
-    ReportGenerationService,
-)
-from product_agent.services.summary_generation_service import (
-    SummaryGenerationInput,
-    SummaryGenerationOutput,
-    SummaryGenerationService,
-)
+from product_agent.services.idea_generation_service import IdeaGenerationInput, IdeaGenerationService
+from product_agent.services.report_generation_service import ReportGenerationInput, ReportGenerationService
+from product_agent.services.summary_generation_service import SummaryGenerationInput, SummaryGenerationService
+from product_agent.services.text_cleaning import clean_internal_context_text
 
 from ..models import EvolutionEdge, PaperNode, ResearchState
+from ..retrieval_plan import summarize_retrieval_plan
 
 
 def synthesizer_node(state: ResearchState) -> ResearchState:
     """
     Convert the internal analysis state into user-facing deliverables:
     report text, research ideas, a Mermaid graph, and a structured summary.
-
-    This implementation delegates actual generation logic to service classes.
     """
 
     papers = state.get("paper_nodes", {})
     edges = state.get("evolution_graph", [])
     mermaid = build_mermaid_graph(papers, edges)
     logs = list(state.get("logs", []))
+    context_grounding = _build_context_grounding(state)
 
     idea_input = IdeaGenerationInput(
         task_id=str(state.get("task_id", "")),
@@ -56,7 +44,7 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         mermaid=mermaid,
     )
     report_output = ReportGenerationService().run(report_input)
-    report_text = report_output.report_text
+    report_text = _append_context_grounding(report_output.report_text, context_grounding)
     report_source = report_output.source
     report_id = report_output.report_id
 
@@ -69,7 +57,8 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         report_text=report_text,
     )
     summary_output = SummaryGenerationService().run(summary_input)
-    summary = summary_output.summary
+    summary = dict(summary_output.summary or {})
+    summary["context_grounding"] = context_grounding
     summary_source = summary_output.source
 
     updated = dict(state)
@@ -115,6 +104,8 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     logs.append(f"Synthesizer generated {len(ideas)} ideas via {idea_source}.")
     logs.append(f"Synthesizer generated report via {report_source}.")
     logs.append(f"Synthesizer generated summary via {summary_source}.")
+    if context_grounding.get("knowledge_hit_count") or context_grounding.get("workspace_hint_count"):
+        logs.append("Synthesizer attached context grounding metadata to report summary.")
     updated["logs"] = logs
     return updated
 
@@ -138,6 +129,118 @@ def build_mermaid_graph(papers: Dict[str, PaperNode], edges: List[EvolutionEdge]
         rel = edge.relationship.replace('"', "'")
         lines.append(f'  {node_ids[edge.source]} -- "{rel}" --> {node_ids[edge.target]}')
     return "\n".join(lines)
+
+
+def _append_context_grounding(report_text: str, context_grounding: dict[str, Any]) -> str:
+    note = _context_grounding_note(context_grounding)
+    if not note:
+        return report_text
+    return report_text.rstrip() + "\n\n## Context Grounding\n\n" + note + "\n"
+
+
+def _build_context_grounding(state: ResearchState) -> dict[str, Any]:
+    knowledge_hits = state.get("knowledge_hits", []) or []
+    workspace_hints = state.get("conversation_workspace_context", []) or []
+    recent_context = state.get("recent_context", []) or []
+    retrieval_plan = state.get("retrieval_plan", {}) if isinstance(state.get("retrieval_plan"), dict) else {}
+    retrieval_outcome = state.get("retrieval_outcome", {}) if isinstance(state.get("retrieval_outcome"), dict) else {}
+    workspace_summary = clean_internal_context_text(
+        str(state.get("conversation_workspace_summary", "") or ""),
+        max_length=240,
+    )
+    working_memory_summary = clean_internal_context_text(
+        str(state.get("working_memory_summary", "") or ""),
+        max_length=240,
+    )
+    retrieval_plan_summary = summarize_retrieval_plan(retrieval_plan)
+
+    return {
+        "knowledge_scope": str(state.get("knowledge_scope", "shared") or "shared"),
+        "retrieval_plan": retrieval_plan_summary,
+        "retrieval_outcome": retrieval_outcome,
+        "knowledge_hit_count": len(knowledge_hits),
+        "knowledge_hits": [
+            {
+                "title": str(hit.get("title", "")).strip(),
+                "snippet": clean_internal_context_text(str(hit.get("snippet", "") or ""), max_length=1200),
+                "scope": str(hit.get("scope", "")).strip(),
+                "source_type": str(hit.get("source_type", "")).strip(),
+                "score": float(hit.get("score", 0.0) or 0.0),
+                "evidence_level": str(hit.get("evidence_level", "")).strip() or "candidate",
+                "matched_chunk_count": int(hit.get("matched_chunk_count", 0) or 0),
+                "supporting_snippets": [
+                    clean_internal_context_text(str(snippet), max_length=1200)
+                    for snippet in list(hit.get("supporting_snippets", []) or [])[:3]
+                    if clean_internal_context_text(str(snippet), max_length=1200)
+                ],
+            }
+            for hit in knowledge_hits[:3]
+        ],
+        "workspace_hint_count": len(workspace_hints),
+        "workspace_hints": [str(hint).strip() for hint in workspace_hints[:3] if str(hint).strip()],
+        "workspace_summary": workspace_summary,
+        "working_memory_summary": working_memory_summary,
+        "working_memory_current_focus": clean_internal_context_text(
+            str(state.get("working_memory_current_focus", "") or ""),
+            max_length=180,
+        ),
+        "working_memory_findings": [
+            clean_internal_context_text(str(item), max_length=140)
+            for item in list(state.get("working_memory_findings", []) or [])[:3]
+            if clean_internal_context_text(str(item), max_length=140)
+        ],
+        "working_memory_open_questions": [
+            clean_internal_context_text(str(item), max_length=160)
+            for item in list(state.get("working_memory_open_questions", []) or [])[:2]
+            if clean_internal_context_text(str(item), max_length=160)
+        ],
+        "working_memory_constraints": [
+            clean_internal_context_text(str(item), max_length=120)
+            for item in list(state.get("working_memory_constraints", []) or [])[:3]
+            if clean_internal_context_text(str(item), max_length=120)
+        ],
+        "recent_turn_count": len(recent_context),
+        "recent_user_turns": [
+            clean_internal_context_text(str(entry.get("content", "")), max_length=160)
+            for entry in recent_context
+            if str(entry.get("role", "")).lower() == "user"
+        ][:2],
+    }
+
+
+def _context_grounding_note(context_grounding: dict[str, Any]) -> str:
+    parts: list[str] = []
+    knowledge_hit_count = int(context_grounding.get("knowledge_hit_count", 0) or 0)
+    workspace_hint_count = int(context_grounding.get("workspace_hint_count", 0) or 0)
+    recent_turn_count = int(context_grounding.get("recent_turn_count", 0) or 0)
+    knowledge_scope = str(context_grounding.get("knowledge_scope", "shared") or "shared")
+    retrieval_plan = str(context_grounding.get("retrieval_plan", "") or "").strip()
+    retrieval_outcome = context_grounding.get("retrieval_outcome", {}) if isinstance(context_grounding.get("retrieval_outcome"), dict) else {}
+
+    if knowledge_hit_count:
+        parts.append(f"reused {knowledge_hit_count} knowledge hits from scope `{knowledge_scope}`")
+    if workspace_hint_count:
+        parts.append(f"inherited {workspace_hint_count} workspace hints")
+    working_memory_summary = str(context_grounding.get("working_memory_summary", "") or "").strip()
+    if working_memory_summary:
+        parts.append("used explicit working memory")
+    if recent_turn_count:
+        parts.append(f"referenced {recent_turn_count} recent dialogue turns")
+    if retrieval_plan:
+        parts.append(f"used retrieval plan `{retrieval_plan}`")
+    outcome_message = " ".join(str(retrieval_outcome.get("message", "")).split()).strip()
+    if outcome_message:
+        parts.append(outcome_message)
+    if not parts:
+        return ""
+
+    note = "This round did not start from zero. It " + ", ".join(parts) + "."
+    workspace_summary = str(context_grounding.get("workspace_summary", "") or "").strip()
+    if workspace_summary:
+        note += f" Prior workspace summary: {workspace_summary}"
+    if working_memory_summary:
+        note += f" Working memory summary: {working_memory_summary}"
+    return note
 
 
 def _paper_brief(paper: PaperNode) -> Dict[str, str]:

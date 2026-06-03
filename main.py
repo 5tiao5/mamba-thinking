@@ -33,6 +33,7 @@ def main() -> None:
     args = parser.parse_args()
 
     _apply_mode_flags(args)
+    selected_mode = _selected_mode(args)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -40,6 +41,7 @@ def main() -> None:
     state = run_pipeline(
         args.topic,
         max_results=args.max_results,
+        mode=selected_mode,
         show_progress=not args.quiet,
     )
     paths = _write_outputs(state, output_dir)
@@ -78,6 +80,14 @@ def _apply_mode_flags(args: argparse.Namespace) -> None:
         os.environ["CITATION_ENRICHMENT"] = "1"
     if not args.quiet:
         os.environ["SHOW_LIVE_EVENTS"] = "1"
+
+
+def _selected_mode(args: argparse.Namespace) -> str:
+    if args.fast:
+        return "fast"
+    if args.balanced:
+        return "balanced"
+    return "default"
 
 
 def _write_outputs(state: dict[str, Any], output_dir: Path) -> dict[str, Path]:

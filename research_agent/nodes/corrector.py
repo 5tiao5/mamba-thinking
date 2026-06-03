@@ -10,7 +10,7 @@ def corrector_node(state: ResearchState) -> ResearchState:
     """根据审计结果决定是否追加一次 gap-driven 检索。"""
 
     retry_count = int(state.get("retry_count", 0))
-    if fast_mode() or balanced_mode():
+    if fast_mode(state) or balanced_mode(state):
         record_audit_event(
             state,
             event_type="corrector_skipped",

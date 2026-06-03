@@ -22,9 +22,9 @@ class LLMAuditService:
                     AuditReport(
                         type="llm",
                         severity="info",
-                        description="LLM edge auditing skipped by environment variable.",
+                        description="已按环境变量配置跳过 LLM 关系审计。",
                         affected_items=[],
-                        suggestion="Enable LLM auditing if needed.",
+                        suggestion="如需更细的语义审计，可重新开启 LLM 审计。",
                     )
                 ],
                 gaps=[],
@@ -38,7 +38,7 @@ class LLMAuditService:
                     AuditReport(
                         type="llm",
                         severity="info",
-                        description="No improvement-style edges to audit.",
+                        description="当前没有需要做 LLM 语义审计的“改进类”关系边。",
                         affected_items=[],
                     )
                 ],
@@ -69,9 +69,9 @@ class LLMAuditService:
                     AuditReport(
                         type="llm",
                         severity="warning",
-                        description="No valid edges for LLM auditing.",
+                        description="当前没有可用于 LLM 审计的有效关系边。",
                         affected_items=[],
-                        suggestion="Check edge data integrity.",
+                        suggestion="请先检查关系边数据是否完整。",
                     )
                 ],
                 gaps=[],
@@ -100,9 +100,9 @@ class LLMAuditService:
                     AuditReport(
                         type="llm",
                         severity="error",
-                        description="LLM audit failed to return valid data.",
+                        description="LLM 关系审计未返回有效结果。",
                         affected_items=[],
-                        suggestion="Retry or use fallback logic.",
+                        suggestion="可以重试一次，或退回规则审计结果。",
                     )
                 ],
                 gaps=[],
@@ -133,7 +133,7 @@ class LLMAuditService:
                     AuditReport(
                         type="llm",
                         severity="info" if supported else "warning",
-                        description=f"LLM audit {edge_desc}: {reason}",
+                        description=f"LLM 对关系 {edge_desc} 的判断：{reason}",
                         affected_items=affected_items,
                     )
                 )
@@ -145,11 +145,11 @@ class LLMAuditService:
                     AuditGap(
                         type=gap_type,
                         severity="warning",
-                        description=f"LLM detected {gap_type_suffix.replace('_', ' ')}: {edge_desc}",
+                        description=f"LLM 判断关系 {edge_desc} 存在问题：{gap_type_suffix.replace('_', ' ')}。",
                         affected_items=affected_items,
                         actionable=True,
                         related_papers=affected_items,
-                        suggestion="Review or remove unsupported edge.",
+                        suggestion="请复核这条关系，必要时删除或调整关系类型。",
                         confidence=confidence,
                     )
                 )

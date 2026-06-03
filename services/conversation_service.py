@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from product_agent.domain import Conversation
-from product_agent.repositories import ConversationRepository, MessageRepository, ResearchTaskRepository, WorkspaceRepository
+from product_agent.repositories import (
+    ConversationRepository,
+    MessageRepository,
+    ResearchTaskRepository,
+    WorkingMemoryRepository,
+    WorkspaceRepository,
+)
 
 
 class ConversationService:
@@ -27,11 +33,13 @@ class ConversationService:
         message_repository: MessageRepository | None = None,
         task_repository: ResearchTaskRepository | None = None,
         workspace_repository: WorkspaceRepository | None = None,
+        working_memory_repository: WorkingMemoryRepository | None = None,
     ) -> None:
         self.repository = repository
         self.message_repository = message_repository
         self.task_repository = task_repository
         self.workspace_repository = workspace_repository
+        self.working_memory_repository = working_memory_repository
 
     def create_conversation(self, *, topic: str, title: str | None = None) -> Conversation:
         """
@@ -92,7 +100,13 @@ class ConversationService:
         workspace -> task -> message -> conversation。
         """
         if self.repository.get(conversation_id) is None:
-            return {"deleted": False, "deleted_messages": 0, "deleted_tasks": 0, "deleted_workspaces": 0}
+            return {
+                "deleted": False,
+                "deleted_messages": 0,
+                "deleted_tasks": 0,
+                "deleted_workspaces": 0,
+                "deleted_working_memory": 0,
+            }
 
         deleted_workspaces = 0
         deleted_task_ids: list[str] = []
@@ -105,10 +119,15 @@ class ConversationService:
         if self.message_repository is not None:
             deleted_messages = self.message_repository.delete_by_conversation(conversation_id)
 
+        deleted_working_memory = 0
+        if self.working_memory_repository is not None:
+            deleted_working_memory = int(self.working_memory_repository.delete(conversation_id))
+
         deleted = self.repository.delete(conversation_id)
         return {
             "deleted": deleted,
             "deleted_messages": deleted_messages,
             "deleted_tasks": len(deleted_task_ids),
             "deleted_workspaces": deleted_workspaces,
+            "deleted_working_memory": deleted_working_memory,
         }

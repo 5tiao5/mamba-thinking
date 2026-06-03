@@ -2,7 +2,15 @@ import { useMemo, useState } from "react";
 
 import { cleanDisplayText } from "../../lib/displayText";
 import type { WorkspaceGraphEdge, WorkspacePaper } from "../../types/api";
-import { categoryTone, relationshipTone, shortPaperLabel } from "./workspaceFormatters";
+import {
+  categoryTone,
+  formatGraphEdgeHeadline,
+  formatGraphEdgeReasoningByRelationship,
+  relationshipBadgeLabel,
+  relationshipLabel,
+  relationshipTone,
+  shortPaperLabel,
+} from "./workspaceFormatters";
 
 type WorkspaceGraphCanvasProps = {
   graphEdges: WorkspaceGraphEdge[];
@@ -214,109 +222,122 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
         })}
       </div>
 
-      <div
-        className="graph-canvas-wrap"
-        onClick={() => setGraphExpanded(true)}
-        role="button"
-        tabIndex={0}
-        title="单击放大演进图"
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            setGraphExpanded(true);
-          }
-        }}
-      >
-        <svg className="graph-canvas" viewBox="0 0 820 380">
-          <defs>
-            <marker
-              id="workspace-graph-arrow"
-              markerHeight="8"
-              markerWidth="8"
-              orient="auto-start-reverse"
-              refX="7"
-              refY="4"
-            >
-              <path d="M0,0 L8,4 L0,8 Z" fill="#9fb8e5" />
-            </marker>
-          </defs>
-
-          {visibleEdges.map((edge, index) => {
-            const source = nodes.find((node) => node.id === edge.source);
-            const target = nodes.find((node) => node.id === edge.target);
-            if (!source || !target) {
-              return null;
+      <div className={graphExpanded ? "graph-expanded-body" : "graph-inline-body"}>
+        <div
+          className={graphExpanded ? "graph-canvas-wrap graph-canvas-wrap-expanded" : "graph-canvas-wrap"}
+          onClick={() => {
+            if (!graphExpanded) {
+              setGraphExpanded(true);
             }
+          }}
+          role="button"
+          tabIndex={0}
+          title={graphExpanded ? "演进图谱放大视图" : "单击放大演进图谱"}
+          onKeyDown={(event) => {
+            if (!graphExpanded && (event.key === "Enter" || event.key === " ")) {
+              setGraphExpanded(true);
+            }
+          }}
+        >
+          <svg className="graph-canvas" viewBox="0 0 820 380">
+            <defs>
+              <marker
+                id="workspace-graph-arrow"
+                markerHeight="8"
+                markerWidth="8"
+                orient="auto-start-reverse"
+                refX="7"
+                refY="4"
+              >
+                <path d="M0,0 L8,4 L0,8 Z" fill="#9fb8e5" />
+              </marker>
+            </defs>
 
-            const active = selectedNode ? edge.source === selectedNode.id || edge.target === selectedNode.id : false;
+            {visibleEdges.map((edge, index) => {
+              const source = nodes.find((node) => node.id === edge.source);
+              const target = nodes.find((node) => node.id === edge.target);
+              if (!source || !target) {
+                return null;
+              }
 
-            return (
-              <path
-                d={curvedPath(source, target)}
-                fill="none"
-                key={`${edge.source}-${edge.target}-${index}`}
-                markerEnd="url(#workspace-graph-arrow)"
-                opacity={active ? 1 : 0.45}
-                stroke={relationshipTone(cleanDisplayText(edge.relationship, 80))}
-                strokeWidth={active ? 2.6 : 1.5}
-              />
-            );
-          })}
+              const active = selectedNode ? edge.source === selectedNode.id || edge.target === selectedNode.id : false;
 
-          {nodes.map((node) => {
-            const active = selectedNode?.id === node.id;
-            const radius = 22 + Math.min(node.degree * 2.4, 10);
-            const lines = wrapTitle(node.title);
-            const tone = categoryTone(node.category);
-            return (
-              <g className="graph-node-group" key={node.id} onClick={() => setSelectedNodeId(node.id)}>
-                <title>{`${node.fullTitle}\nPaper ID: ${node.subtitle}`}</title>
-                <circle
-                  className={active ? "graph-node-circle graph-node-circle-active" : "graph-node-circle"}
-                  cx={node.x}
-                  cy={node.y}
-                  fill={active ? tone.fill : "#ffffff"}
-                  r={radius}
-                  stroke={tone.stroke}
+              return (
+                <path
+                  d={curvedPath(source, target)}
+                  fill="none"
+                  key={`${edge.source}-${edge.target}-${index}`}
+                  markerEnd="url(#workspace-graph-arrow)"
+                  opacity={active ? 1 : 0.45}
+                  stroke={relationshipTone(cleanDisplayText(edge.relationship, 80))}
+                  strokeWidth={active ? 2.6 : 1.5}
                 />
-                <text className="graph-node-title" textAnchor="middle" x={node.x} y={node.y - 8}>
-                  {lines.map((line, index) => (
-                    <tspan dy={index === 0 ? 0 : 12} key={`${node.id}-line-${index}`} x={node.x}>
-                      {line}
-                    </tspan>
-                  ))}
-                </text>
-                <text className="graph-node-degree" textAnchor="middle" x={node.x} y={node.y + 13}>
-                  degree {node.degree}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
+              );
+            })}
 
-      {selectedNode ? (
-        <div className="graph-node-detail">
-          <div className="section-eyebrow">选中节点</div>
-          <div className="graph-node-detail-title">{selectedNode.fullTitle}</div>
-          <div className="fine-print">Paper ID: {selectedNode.id}</div>
-          <div className="fine-print">Taxonomy Category: {selectedNode.category}</div>
-          <div className="graph-node-detail-list">
-            {selectedEdges.length ? (
-              selectedEdges.map((edge, index) => (
-                <div className="graph-node-detail-item" key={`${edge.source}-${edge.target}-${index}`}>
-                  <strong>{cleanDisplayText(edge.relationship, 80)}</strong>
-                  <span>
-                    {cleanDisplayText(edge.source, 80)} {"->"} {cleanDisplayText(edge.target, 80)}
-                  </span>
-                  {edge.reasoning ? <small>{cleanDisplayText(edge.reasoning)}</small> : null}
-                </div>
-              ))
-            ) : (
-              <div className="empty-state">该节点在当前筛选条件下暂无连接关系。</div>
-            )}
-          </div>
+            {nodes.map((node) => {
+              const active = selectedNode?.id === node.id;
+              const radius = 22 + Math.min(node.degree * 2.4, 10);
+              const lines = wrapTitle(node.title);
+              const tone = categoryTone(node.category);
+              return (
+                <g
+                  className="graph-node-group"
+                  key={node.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedNodeId(node.id);
+                  }}
+                >
+                  <title>{`${node.fullTitle}\nPaper ID: ${node.subtitle}`}</title>
+                  <circle
+                    className={active ? "graph-node-circle graph-node-circle-active" : "graph-node-circle"}
+                    cx={node.x}
+                    cy={node.y}
+                    fill={active ? tone.fill : "#ffffff"}
+                    r={radius}
+                    stroke={tone.stroke}
+                  />
+                  <text className="graph-node-title" textAnchor="middle" x={node.x} y={node.y - 8}>
+                    {lines.map((line, index) => (
+                      <tspan dy={index === 0 ? 0 : 12} key={`${node.id}-line-${index}`} x={node.x}>
+                        {line}
+                      </tspan>
+                    ))}
+                  </text>
+                  <text className="graph-node-degree" textAnchor="middle" x={node.x} y={node.y + 13}>
+                    degree {node.degree}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
         </div>
-      ) : null}
+
+        {selectedNode ? (
+          <div className="graph-node-detail">
+            <div className="section-eyebrow">选中节点</div>
+            <div className="graph-node-detail-title">{selectedNode.fullTitle}</div>
+            <div className="graph-node-detail-meta">
+              <div className="fine-print">Paper ID: {selectedNode.id}</div>
+              <div className="fine-print">Taxonomy Category: {selectedNode.category}</div>
+            </div>
+            <div className="graph-node-detail-list">
+              {selectedEdges.length ? (
+                selectedEdges.map((edge, index) => (
+                  <div className="graph-node-detail-item" key={`${edge.source}-${edge.target}-${index}`}>
+                    <strong>{relationshipBadgeLabel(cleanDisplayText(edge.relationship, 80))}</strong>
+                    <span>{formatGraphEdgeHeadline(edge.relationship, edge.source, edge.target, papers)}</span>
+                    <small>{formatGraphEdgeReasoningByRelationship(edge.relationship, edge.reasoning, papers)}</small>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">该节点在当前筛选条件下暂无连接关系。</div>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

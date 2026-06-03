@@ -13,8 +13,12 @@ from .conversation import (
 from .message import CreateMessageRequest, ListMessagesResponse, MessageView
 from .knowledge import (
     CreateKnowledgeDocumentRequest,
+    ImportPaperCandidateRequest,
     KnowledgeDocumentView,
     ListKnowledgeDocumentsResponse,
+    ListPaperImportCandidatesResponse,
+    PaperImportCandidateView,
+    SearchPaperCandidatesRequest,
 )
 from .research import (
     CreateResearchTaskRequest,
@@ -25,9 +29,13 @@ from .research import (
     WorkspaceGraphEdgeView,
     WorkspaceIdeaView,
     WorkspaceEvidenceStatusView,
+    WorkspaceInheritedContextView,
+    WorkspaceKnowledgeHitView,
     WorkspacePaperView,
     WorkspaceSnapshotResponse,
+    WorkspaceSourceTraceView,
     WorkspaceTraceView,
+    WorkspaceWorkingMemoryView,
 )
 from .tooling import SkillView, ToolView, UpdateToolRequest
 
@@ -47,6 +55,10 @@ __all__ = [
     "MessageView",
     "ListMessagesResponse",
     "CreateKnowledgeDocumentRequest",
+    "SearchPaperCandidatesRequest",
+    "PaperImportCandidateView",
+    "ListPaperImportCandidatesResponse",
+    "ImportPaperCandidateRequest",
     "KnowledgeDocumentView",
     "ListKnowledgeDocumentsResponse",
     "CreateResearchTaskRequest",
@@ -58,6 +70,10 @@ __all__ = [
     "WorkspaceGapView",
     "WorkspaceIdeaView",
     "WorkspaceEvidenceStatusView",
+    "WorkspaceKnowledgeHitView",
+    "WorkspaceSourceTraceView",
+    "WorkspaceInheritedContextView",
+    "WorkspaceWorkingMemoryView",
     "WorkspaceTraceView",
     "WorkspaceSnapshotResponse",
     "ToolView",

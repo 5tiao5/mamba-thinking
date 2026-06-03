@@ -32,6 +32,22 @@ class MessageRecord:
 
 
 @dataclass
+class ConversationWorkingMemory:
+    """Conversation-level explicit working memory for multi-round research continuity."""
+
+    conversation_id: str
+    current_focus: str = ""
+    summary: str = ""
+    stable_findings: List[str] = field(default_factory=list)
+    open_questions: List[str] = field(default_factory=list)
+    active_constraints: List[str] = field(default_factory=list)
+    supporting_task_ids: List[str] = field(default_factory=list)
+    source_task_id: Optional[str] = None
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
 class ResearchTask:
     """会话中的一次具体研究分析任务。"""
 
@@ -41,6 +57,7 @@ class ResearchTask:
     status: str = "queued"
     trigger_message_id: Optional[str] = None
     mode: str = "default"
+    knowledge_scope: str = "shared"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -59,6 +76,7 @@ class PaperRecord:
     taxonomy_category: str = ""
     citation_count: int = 0
     url: str = ""
+    is_new_this_round: bool = False
 
 
 @dataclass

@@ -79,7 +79,7 @@ def evolution_node(state: ResearchState) -> ResearchState:
                     score=overlap,
                 )
 
-    if balanced_mode() and not edges:
+    if balanced_mode(state) and not edges:
         fallback_pairs = balanced_fallback_pairs(list(papers.values()), state.get("topic", ""))
         for source, target, overlap in fallback_pairs:
             edges[(source.paper_id, target.paper_id)] = EvolutionEdge(
