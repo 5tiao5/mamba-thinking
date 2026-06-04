@@ -42,3 +42,4 @@ class UpdateToolRequest(BaseModel):
     enabled: bool
     config: Dict[str, Any] = Field(default_factory=dict)
 
+

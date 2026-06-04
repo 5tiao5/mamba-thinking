@@ -162,3 +162,4 @@ class WorkspaceSnapshotResponse(BaseModel):
     inherited_context: Optional[WorkspaceInheritedContextView] = None
     working_memory: Optional[WorkspaceWorkingMemoryView] = None
     trace: Optional[WorkspaceTraceView] = None
+

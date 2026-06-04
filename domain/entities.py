@@ -205,3 +205,4 @@ class KnowledgeDocument:
     content: str = ""
     tags: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+

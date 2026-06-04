@@ -198,3 +198,4 @@ class SkillService:
             if not tool.enabled:
                 warnings.append(f"Required tool `{tid}` is currently disabled.")
         return warnings
+

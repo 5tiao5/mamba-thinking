@@ -777,3 +777,4 @@ class SQLiteSkillRepository:
             required_tools=list(_load_json(row["required_tools_json"]) or []),
             prompts=dict(_load_json(row["prompts_json"]) or {}),
         )
+

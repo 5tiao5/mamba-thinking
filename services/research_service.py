@@ -629,3 +629,4 @@ class ResearchService:
             return self.working_memory_service.get_conversation_memory(conversation_id)
         except Exception:
             return None
+

@@ -157,3 +157,4 @@ class AppContainer:
                 required_tools=["arxiv_search", "semantic_scholar"],
             )
         )
+

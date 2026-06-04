@@ -49,3 +49,4 @@ __all__ = [
     "SQLiteWorkingMemoryRepository",
     "SQLiteVectorStore",
 ]
+

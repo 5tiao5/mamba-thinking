@@ -813,3 +813,4 @@ class ProductApiHandlers:
             if len(hints) >= 2:
                 break
         return hints
+

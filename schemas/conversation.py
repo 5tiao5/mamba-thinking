@@ -90,3 +90,4 @@ class ContinueConversationResponse(BaseModel):
 
 class ListConversationsResponse(BaseModel):
     items: list[ConversationSummaryView] = Field(default_factory=list)
+

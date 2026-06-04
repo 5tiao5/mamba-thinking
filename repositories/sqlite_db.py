@@ -154,3 +154,4 @@ class SQLiteDatabase:
             yield connection
         finally:
             connection.close()
+
