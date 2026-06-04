@@ -37,6 +37,14 @@ class ResearchContextBundle:
     previous_round_paper_ids: list[str]
     previous_round_query_intent: dict[str, Any]
     context_inputs: list[dict[str, Any]]
+    selected_skill_ids: list[str] = None
+    skill_descriptions: list[str] = None
+
+    def __post_init__(self):
+        if self.selected_skill_ids is None:
+            self.selected_skill_ids = []
+        if self.skill_descriptions is None:
+            self.skill_descriptions = []
 
     def to_pipeline_payload(self) -> dict[str, Any]:
         return {
@@ -57,6 +65,8 @@ class ResearchContextBundle:
             "previous_round_paper_ids": list(self.previous_round_paper_ids),
             "previous_round_query_intent": dict(self.previous_round_query_intent),
             "context_inputs": list(self.context_inputs),
+            "selected_skill_ids": list(self.selected_skill_ids),
+            "skill_descriptions": list(self.skill_descriptions),
         }
 
 
@@ -81,6 +91,7 @@ class ResearchService:
         message_service: MessageService | None = None,
         knowledge_service: KnowledgeService | None = None,
         working_memory_service: WorkingMemoryService | None = None,
+        skill_service=None,
     ) -> None:
         self.conversation_repository = conversation_repository
         self.task_repository = task_repository
@@ -89,6 +100,7 @@ class ResearchService:
         self.message_service = message_service
         self.knowledge_service = knowledge_service
         self.working_memory_service = working_memory_service
+        self.skill_service = skill_service
 
     def create_task(
         self,
@@ -98,6 +110,7 @@ class ResearchService:
         mode: str = "default",
         knowledge_scope: str = "shared",
         trigger_message_id: str | None = None,
+        selected_skill_ids: list[str] | None = None,
     ) -> ResearchTask:
         """
         创建一条新的研究分析任务记录。
@@ -121,6 +134,7 @@ class ResearchService:
             mode=mode,
             knowledge_scope=knowledge_scope,
             trigger_message_id=trigger_message_id,
+            selected_skill_ids=list(selected_skill_ids or []),
             status="created",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -143,12 +157,13 @@ class ResearchService:
         mode: str = "default",
         knowledge_scope: str = "shared",
         trigger_message_id: str | None = None,
+        selected_skill_ids: list[str] | None = None,
     ) -> ResearchTask:
         """
         基于一轮新追问创建 follow-up 研究任务。
 
         设计目标：
-        - 让“继续对话”不只是写消息，而是真正落到任务链路中
+        - 让"继续对话"不只是写消息，而是真正落到任务链路中
         - 前端可以选择立即运行该任务，或先把任务展示给用户
         """
         follow_up_topic = self._derive_follow_up_topic(
@@ -164,6 +179,7 @@ class ResearchService:
             mode=mode,
             knowledge_scope=knowledge_scope,
             trigger_message_id=trigger_message_id,
+            selected_skill_ids=selected_skill_ids,
         )
 
     def get_task(self, task_id: str) -> ResearchTask:
@@ -222,6 +238,11 @@ class ResearchService:
                 topic=task.topic,
                 state=state,
             )
+            # 将 selected_skill_ids 显式记录到 trace 中
+            if task.selected_skill_ids:
+                trace = dict(workspace.trace)
+                trace["selected_skill_ids"] = list(task.selected_skill_ids)
+                workspace.trace = trace
             saved_workspace = self.workspace_repository.save(workspace)
             if self.working_memory_service is not None:
                 self.working_memory_service.refresh_from_workspace(
@@ -376,6 +397,18 @@ class ResearchService:
             },
             query_intent.to_context_input(),
         ]
+
+        # ── Skill context injection ──
+        skill_descriptions: list[str] = []
+        if self.skill_service is not None and task.selected_skill_ids:
+            skill_descriptions = self.skill_service.get_enabled_skill_descriptions(task.selected_skill_ids)
+            if skill_descriptions:
+                context_inputs.append({
+                    "kind": "selected_skills",
+                    "skill_ids": list(task.selected_skill_ids),
+                    "descriptions": skill_descriptions,
+                })
+
         return ResearchContextBundle(
             conversation_topic=conversation_topic,
             knowledge_scope=task.knowledge_scope,
@@ -394,6 +427,8 @@ class ResearchService:
             previous_round_paper_ids=previous_round["paper_ids"],
             previous_round_query_intent=previous_round["query_intent"],
             context_inputs=context_inputs,
+            selected_skill_ids=list(task.selected_skill_ids),
+            skill_descriptions=skill_descriptions,
         )
 
     def _recent_message_context(self, conversation_id: str, *, limit: int = 6) -> list[dict[str, Any]]:

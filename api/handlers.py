@@ -11,14 +11,17 @@ from product_agent.schemas import (
     CreateConversationRequest,
     CreateMessageRequest,
     CreateResearchTaskRequest,
+    CreateSkillRequest,
     FollowUpTaskPreview,
     ImportPaperCandidateRequest,
     ListPaperImportCandidatesResponse,
     PaperImportCandidateView,
     SearchPaperCandidatesRequest,
+    UpdateSkillRequest,
     UpdateToolRequest,
 )
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
+from product_agent.services.skill_service import SkillServiceError
 from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 
 from .response import fail, ok
@@ -162,6 +165,12 @@ class ProductApiHandlers:
 
         follow_up_task = None
         if request.create_follow_up_task:
+            # 校验 selected_skill_ids
+            if request.selected_skill_ids:
+                skill_errors = self.skill_service.validate_skills_for_task(request.selected_skill_ids)
+                if skill_errors:
+                    return fail("skill_invalid", "; ".join(skill_errors))
+
             enriched_focus = request.focus
             knowledge_hints = self._extract_knowledge_hints(display_knowledge_context)
 
@@ -176,6 +185,7 @@ class ProductApiHandlers:
                     mode=request.mode,
                     knowledge_scope=knowledge_scope,
                     trigger_message_id=message.message_id,
+                    selected_skill_ids=request.selected_skill_ids,
                 )
             except InvalidTaskModeError as error:
                 return fail("task_invalid_mode", str(error))
@@ -204,12 +214,20 @@ class ProductApiHandlers:
     def create_research_task(self, request: CreateResearchTaskRequest):
         """创建研究任务，但不立即运行。"""
         knowledge_scope = request.resolve_knowledge_scope()
+
+        # 校验 selected_skill_ids
+        if request.selected_skill_ids:
+            skill_errors = self.skill_service.validate_skills_for_task(request.selected_skill_ids)
+            if skill_errors:
+                return fail("skill_invalid", "; ".join(skill_errors))
+
         try:
             task = self.research_service.create_task(
                 conversation_id=request.conversation_id,
                 topic=request.topic,
                 mode=request.mode,
                 knowledge_scope=knowledge_scope,
+                selected_skill_ids=request.selected_skill_ids,
             )
         except ConversationNotFoundError:
             return fail("conversation_not_found", "Conversation does not exist.")
@@ -377,7 +395,71 @@ class ProductApiHandlers:
     def list_skills(self):
         """列出当前已注册 skill。"""
         skills = self.skill_service.list_skills()
-        return ok([asdict(skill) for skill in skills])
+        return ok([
+            {
+                "skill_id": s.skill_id,
+                "display_name": s.display_name,
+                "description": s.description,
+                "enabled": s.enabled,
+                "required_tools": list(s.required_tools),
+                "created_at": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
+                "updated_at": s.updated_at.isoformat() if getattr(s, "updated_at", None) else None,
+            }
+            for s in skills
+        ])
+
+    def create_skill(self, request: CreateSkillRequest):
+        """创建新的 skill。"""
+        try:
+            descriptor = self.skill_service.create_skill(
+                skill_id=request.skill_id,
+                display_name=request.display_name,
+                description=request.description,
+                required_tools=request.required_tools,
+                enabled=request.enabled,
+            )
+        except SkillServiceError as error:
+            return fail("skill_invalid", str(error))
+
+        return ok({
+            "skill_id": descriptor.skill_id,
+            "display_name": descriptor.display_name,
+            "description": descriptor.description,
+            "enabled": descriptor.enabled,
+            "required_tools": list(descriptor.required_tools),
+            "created_at": descriptor.created_at.isoformat() if getattr(descriptor, "created_at", None) else None,
+            "updated_at": descriptor.updated_at.isoformat() if getattr(descriptor, "updated_at", None) else None,
+        })
+
+    def update_skill(self, skill_id: str, request: UpdateSkillRequest):
+        """更新已有 skill。"""
+        try:
+            descriptor = self.skill_service.update_skill(
+                skill_id=skill_id,
+                display_name=request.display_name,
+                description=request.description,
+                required_tools=request.required_tools,
+                enabled=request.enabled,
+            )
+        except SkillServiceError as error:
+            return fail("skill_invalid", str(error))
+
+        return ok({
+            "skill_id": descriptor.skill_id,
+            "display_name": descriptor.display_name,
+            "description": descriptor.description,
+            "enabled": descriptor.enabled,
+            "required_tools": list(descriptor.required_tools),
+            "created_at": descriptor.created_at.isoformat() if getattr(descriptor, "created_at", None) else None,
+            "updated_at": descriptor.updated_at.isoformat() if getattr(descriptor, "updated_at", None) else None,
+        })
+
+    def delete_skill(self, skill_id: str):
+        """删除 skill。"""
+        deleted = self.skill_service.delete_skill(skill_id)
+        if not deleted:
+            return fail("skill_not_found", f"Skill `{skill_id}` does not exist.")
+        return ok({"skill_id": skill_id, "deleted": True})
 
     def list_knowledge_documents(self):
         documents = self.knowledge_service.list_documents()
@@ -481,6 +563,7 @@ class ProductApiHandlers:
             "mode": task.mode,
             "knowledge_scope": task.knowledge_scope,
             "trigger_message_id": task.trigger_message_id,
+            "selected_skill_ids": list(getattr(task, "selected_skill_ids", []) or []),
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
         }

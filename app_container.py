@@ -14,6 +14,7 @@ from product_agent.repositories import (
     InMemoryWorkspaceRepository,
     SQLiteConversationRepository,
     SQLiteDatabase,
+    SQLiteSkillRepository,
     SQLiteWorkingMemoryRepository,
     SQLiteKnowledgeRepository,
     SQLiteMessageRepository,
@@ -106,6 +107,14 @@ class AppContainer:
                 async_indexing=True,
             )
 
+        # ✅ 先创建 tool_service 和 skill_service（被 research_service 依赖）
+        self.tool_service = ToolService(self.tool_registry)
+        self.skill_service = SkillService(
+            self.skill_registry,
+            repository=SQLiteSkillRepository(self.database) if backend == "sqlite" else None,
+            tool_registry=self.tool_registry,
+        )
+
         # ✅ 再创建 research_service
         self.workspace_service = WorkspaceService(
             self.workspace_repository,
@@ -121,9 +130,8 @@ class AppContainer:
             message_service=self.message_service,
             knowledge_service=self.knowledge_service,
             working_memory_service=self.working_memory_service,
+            skill_service=self.skill_service,
         )
-        self.tool_service = ToolService(self.tool_registry)
-        self.skill_service = SkillService(self.skill_registry)
         # 注意：self.knowledge_service 已经在上面创建，这里不要重复创建
 
     def _register_defaults(self) -> None:

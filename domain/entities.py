@@ -58,6 +58,7 @@ class ResearchTask:
     trigger_message_id: Optional[str] = None
     mode: str = "default"
     knowledge_scope: str = "shared"
+    selected_skill_ids: List[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -190,6 +191,8 @@ class SkillDescriptor:
     enabled: bool = True
     prompts: Dict[str, str] = field(default_factory=dict)
     required_tools: List[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
 
 
 @dataclass

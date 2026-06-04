@@ -101,6 +101,18 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_vector_chunks_document_id
     ON vector_chunks(document_id)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS skills (
+        skill_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        required_tools_json TEXT NOT NULL DEFAULT '[]',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        prompts_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -127,6 +139,10 @@ class SQLiteDatabase:
         if "knowledge_scope" not in task_columns:
             connection.execute(
                 "ALTER TABLE research_tasks ADD COLUMN knowledge_scope TEXT NOT NULL DEFAULT 'shared'"
+            )
+        if "selected_skill_ids_json" not in task_columns:
+            connection.execute(
+                "ALTER TABLE research_tasks ADD COLUMN selected_skill_ids_json TEXT NOT NULL DEFAULT '[]'"
             )
 
     @contextmanager

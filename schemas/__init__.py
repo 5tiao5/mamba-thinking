@@ -37,7 +37,7 @@ from .research import (
     WorkspaceTraceView,
     WorkspaceWorkingMemoryView,
 )
-from .tooling import SkillView, ToolView, UpdateToolRequest
+from .tooling import CreateSkillRequest, SkillView, ToolView, UpdateSkillRequest, UpdateToolRequest
 
 __all__ = [
     "ApiResponse",
@@ -78,5 +78,7 @@ __all__ = [
     "WorkspaceSnapshotResponse",
     "ToolView",
     "SkillView",
+    "CreateSkillRequest",
+    "UpdateSkillRequest",
     "UpdateToolRequest",
 ]
