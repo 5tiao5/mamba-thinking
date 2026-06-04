@@ -14,8 +14,10 @@ from product_agent.schemas import (
     CreateConversationRequest,
     CreateMessageRequest,
     CreateResearchTaskRequest,
+    CreateSkillRequest,
     ImportPaperCandidateRequest,
     SearchPaperCandidatesRequest,
+    UpdateSkillRequest,
     UpdateToolRequest,
 )
 
@@ -135,6 +137,21 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     def list_skills():
         return handlers.list_skills().model_dump()
 
+    @app.post("/skills")
+    def create_skill(request: CreateSkillRequest):
+        return handlers.create_skill(request).model_dump()
+
+    @app.patch("/skills/{skill_id}")
+    def update_skill(
+        request: UpdateSkillRequest,
+        skill_id: str = Path(..., description="Skill ID"),
+    ):
+        return handlers.update_skill(skill_id, request).model_dump()
+
+    @app.delete("/skills/{skill_id}")
+    def delete_skill(skill_id: str = Path(..., description="Skill ID")):
+        return handlers.delete_skill(skill_id).model_dump()
+
     @app.get("/knowledge/documents")
     def list_knowledge_documents():
         return handlers.list_knowledge_documents().model_dump()
@@ -167,3 +184,4 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
 
 
 app = create_app()
+

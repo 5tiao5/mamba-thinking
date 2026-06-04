@@ -14,6 +14,7 @@ from product_agent.domain import (
     ResearchIdeaRecord,
     ResearchTask,
     ResearchWorkspace,
+    SkillDescriptor,
 )
 
 from .sqlite_db import SQLiteDatabase
@@ -192,8 +193,8 @@ class SQLiteResearchTaskRepository:
                 """
                 INSERT INTO research_tasks (
                     task_id, conversation_id, topic, status, trigger_message_id,
-                    mode, knowledge_scope, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    mode, knowledge_scope, selected_skill_ids_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_id,
@@ -203,6 +204,7 @@ class SQLiteResearchTaskRepository:
                     task.trigger_message_id,
                     task.mode,
                     task.knowledge_scope,
+                    _dump_json(list(task.selected_skill_ids)),
                     _dump_datetime(task.created_at),
                     _dump_datetime(task.updated_at),
                 ),
@@ -226,7 +228,8 @@ class SQLiteResearchTaskRepository:
                 """
                 UPDATE research_tasks
                 SET conversation_id = ?, topic = ?, status = ?, trigger_message_id = ?,
-                    mode = ?, knowledge_scope = ?, created_at = ?, updated_at = ?
+                    mode = ?, knowledge_scope = ?, selected_skill_ids_json = ?,
+                    created_at = ?, updated_at = ?
                 WHERE task_id = ?
                 """,
                 (
@@ -236,6 +239,7 @@ class SQLiteResearchTaskRepository:
                     task.trigger_message_id,
                     task.mode,
                     task.knowledge_scope,
+                    _dump_json(list(task.selected_skill_ids)),
                     _dump_datetime(task.created_at),
                     _dump_datetime(task.updated_at),
                     task.task_id,
@@ -279,6 +283,9 @@ class SQLiteResearchTaskRepository:
                 if "knowledge_scope" in row.keys() and row["knowledge_scope"]
                 else "shared"
             ),
+            selected_skill_ids=list(
+                _load_json(row["selected_skill_ids_json"]) or []
+            ) if "selected_skill_ids_json" in row.keys() else [],
             created_at=_load_datetime(row["created_at"]),
             updated_at=_load_datetime(row["updated_at"]),
         )
@@ -700,3 +707,74 @@ class _VectorChunkProxy:
         self.end_idx = kwargs["end_idx"]
         self.tags = kwargs["tags"]
         self.metadata = kwargs["metadata"]
+
+
+class SQLiteSkillRepository:
+    """SQLite 持久化 skill 描述符。"""
+
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def list_all(self) -> list[SkillDescriptor]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM skills ORDER BY created_at DESC"
+            ).fetchall()
+        return [self._row_to_entity(row) for row in rows]
+
+    def get(self, skill_id: str) -> SkillDescriptor | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM skills WHERE skill_id = ?",
+                (skill_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_entity(row)
+
+    def save(self, descriptor: SkillDescriptor) -> SkillDescriptor:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO skills (
+                    skill_id, display_name, description, required_tools_json,
+                    enabled, prompts_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    descriptor.skill_id,
+                    descriptor.display_name,
+                    descriptor.description,
+                    _dump_json(list(descriptor.required_tools)),
+                    1 if descriptor.enabled else 0,
+                    _dump_json(dict(getattr(descriptor, "prompts", {}))),
+                    _dump_datetime(getattr(descriptor, "created_at", datetime.now())),
+                    _dump_datetime(getattr(descriptor, "updated_at", datetime.now())),
+                ),
+            )
+            connection.commit()
+        return descriptor
+
+    def update(self, descriptor: SkillDescriptor) -> SkillDescriptor:
+        return self.save(descriptor)
+
+    def delete(self, skill_id: str) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM skills WHERE skill_id = ?",
+                (skill_id,),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _row_to_entity(row) -> SkillDescriptor:
+        return SkillDescriptor(
+            skill_id=row["skill_id"],
+            display_name=row["display_name"],
+            description=row["description"] or "",
+            enabled=bool(row["enabled"]),
+            required_tools=list(_load_json(row["required_tools_json"]) or []),
+            prompts=dict(_load_json(row["prompts_json"]) or {}),
+        )
+

@@ -56,6 +56,7 @@ class ContinueConversationRequest(BaseModel):
         default=None,
         description="Knowledge scope for this follow-up: none / conversation_only / shared.",
     )
+    selected_skill_ids: list[str] = Field(default_factory=list, description="Skill IDs to activate for this follow-up task")
 
     def resolve_knowledge_scope(self) -> str:
         return self.knowledge_scope or "shared"
@@ -89,3 +90,4 @@ class ContinueConversationResponse(BaseModel):
 
 class ListConversationsResponse(BaseModel):
     items: list[ConversationSummaryView] = Field(default_factory=list)
+

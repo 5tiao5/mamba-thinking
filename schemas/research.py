@@ -18,6 +18,7 @@ class CreateResearchTaskRequest(BaseModel):
         description="Knowledge scope for this task: none / conversation_only / shared.",
     )
     enabled_tools: List[str] = Field(default_factory=list)
+    selected_skill_ids: List[str] = Field(default_factory=list, description="Skill IDs to activate for this task")
 
     def resolve_knowledge_scope(self) -> str:
         if self.knowledge_scope is not None:
@@ -161,3 +162,4 @@ class WorkspaceSnapshotResponse(BaseModel):
     inherited_context: Optional[WorkspaceInheritedContextView] = None
     working_memory: Optional[WorkspaceWorkingMemoryView] = None
     trace: Optional[WorkspaceTraceView] = None
+
