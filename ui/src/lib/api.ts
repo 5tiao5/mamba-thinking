@@ -1,6 +1,7 @@
 import type {
   ContinueConversationPayload,
   ConversationDetailItem,
+  CreateSkillPayload,
   CreateKnowledgeDocumentPayload,
   DeleteConversationPayload,
   KnowledgeScope,
@@ -15,6 +16,7 @@ import type {
   SkillItem,
   SearchPaperCandidatesPayload,
   ToolItem,
+  UpdateSkillPayload,
   WorkspaceSnapshot,
 } from "../types/api";
 import {
@@ -55,7 +57,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       });
 
       if (!response.ok) {
-        lastError = new Error(`HTTP ${response.status}`);
+        lastError =
+          response.status === 405
+            ? new Error("当前后端未启用这个接口，请重启后端或确认已拉取最新后端代码。")
+            : new Error(`HTTP ${response.status}`);
         if (response.status === 404 || response.status === 405 || response.status >= 500) {
           continue;
         }
@@ -137,6 +142,7 @@ export const api = {
     create_follow_up_task?: boolean;
     mode?: string;
     knowledge_scope?: KnowledgeScope;
+    selected_skill_ids?: string[];
   }) => {
     if (payload.conversation_id === DEMO_CONVERSATION_ID) {
       return Promise.resolve({
@@ -161,6 +167,7 @@ export const api = {
     use_shared_knowledge?: boolean;
     knowledge_scope?: KnowledgeScope;
     enabled_tools?: string[];
+    selected_skill_ids?: string[];
   }) =>
     request<ApiResponse<{ task_id: string; conversation_id: string; status: string; knowledge_scope?: KnowledgeScope }>>(
       "/research/tasks",
@@ -238,6 +245,20 @@ export const api = {
       return { success: true, data: demoSkills };
     }
   },
+  createSkill: (payload: CreateSkillPayload) =>
+    request<ApiResponse<SkillItem>>("/skills", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateSkill: (skillId: string, payload: UpdateSkillPayload) =>
+    request<ApiResponse<SkillItem>>(`/skills/${skillId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteSkill: (skillId: string) =>
+    request<ApiResponse<{ skill_id: string; deleted: boolean }>>(`/skills/${skillId}`, {
+      method: "DELETE",
+    }),
   listKnowledgeDocuments: () =>
     request<ApiResponse<{ items: KnowledgeDocumentItem[] }>>("/knowledge/documents"),
   createKnowledgeDocument: (payload: CreateKnowledgeDocumentPayload) =>
