@@ -51,6 +51,7 @@ export type ResearchTaskSummaryItem = {
   status: string;
   mode: string;
   knowledge_scope?: KnowledgeScope;
+  selected_skill_ids?: string[];
   trigger_message_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -239,6 +240,23 @@ export type SkillItem = {
   description: string;
   enabled: boolean;
   required_tools: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type CreateSkillPayload = {
+  skill_id: string;
+  display_name: string;
+  description?: string;
+  required_tools?: string[];
+  enabled?: boolean;
+};
+
+export type UpdateSkillPayload = {
+  display_name?: string;
+  description?: string;
+  required_tools?: string[];
+  enabled?: boolean;
 };
 
 export type DeleteConversationPayload = {

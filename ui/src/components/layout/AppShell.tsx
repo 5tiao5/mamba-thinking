@@ -111,6 +111,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("shared");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [toolDialogOpen, setToolDialogOpen] = useState(false);
+  const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [askContent, setAskContent] = useState("");
   const [askStatus, setAskStatus] = useState("选择或创建一个研究后，可以在这里生成结果或继续追问。");
@@ -121,10 +122,21 @@ export function AppShell({ children }: PropsWithChildren) {
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [toolStatus, setToolStatus] = useState("打开后会同步当前工具状态。");
-  const [toolDialogTab, setToolDialogTab] = useState<"tools" | "knowledge">("tools");
+  const [toolDialogTab, setToolDialogTab] = useState<"tools" | "skills" | "knowledge">("tools");
   const [toolsLoading, setToolsLoading] = useState(false);
   const [updatingToolId, setUpdatingToolId] = useState("");
+  const [savingSkillId, setSavingSkillId] = useState("");
+  const [deletingSkillId, setDeletingSkillId] = useState("");
+  const [editingSkillId, setEditingSkillId] = useState("");
+  const [skillDraft, setSkillDraft] = useState({
+    skill_id: "",
+    display_name: "",
+    description: "",
+    required_tools: [] as string[],
+    enabled: true,
+  });
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocumentItem[]>([]);
   const [knowledgeQuery, setKnowledgeQuery] = useState("");
   const [knowledgeDraft, setKnowledgeDraft] = useState<CreateKnowledgeDocumentPayload>({
@@ -225,6 +237,17 @@ export function AppShell({ children }: PropsWithChildren) {
       : activeConversationTask?.task_id ?? currentTaskId;
   const activeTaskKnowledgeScope =
     activeConversationTask?.knowledge_scope ?? workspace?.source_trace?.knowledge_scope ?? "shared";
+  const selectedSkillSummary = useMemo(() => {
+    if (!selectedSkillIds.length) return "未选择";
+    return selectedSkillIds
+      .map((skillId) => skills.find((skill) => skill.skill_id === skillId)?.display_name ?? skillId)
+      .join(" / ");
+  }, [selectedSkillIds, skills]);
+  const selectedSkillItems = useMemo(
+    () =>
+      selectedSkillIds.map((skillId) => skills.find((skill) => skill.skill_id === skillId)).filter(Boolean) as SkillItem[],
+    [selectedSkillIds, skills]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -349,6 +372,7 @@ export function AppShell({ children }: PropsWithChildren) {
           mode: runMode,
           use_shared_knowledge: knowledgeScope === "shared",
           knowledge_scope: knowledgeScope,
+          selected_skill_ids: selectedSkillIds,
         });
         taskId = created.data.task_id;
       }
@@ -386,6 +410,7 @@ export function AppShell({ children }: PropsWithChildren) {
         create_follow_up_task: true,
         mode: runMode,
         knowledge_scope: knowledgeScope,
+        selected_skill_ids: selectedSkillIds,
       });
       const appliedScope = response.data.knowledge_scope_applied ?? knowledgeScope;
       setAskContent("");
@@ -495,6 +520,109 @@ export function AppShell({ children }: PropsWithChildren) {
 
   function getToolDisplayName(toolId: string) {
     return tools.find((tool) => tool.tool_id === toolId)?.display_name ?? toolId;
+  }
+
+  function resetSkillDraft() {
+    setEditingSkillId("");
+    setSkillDraft({
+      skill_id: "",
+      display_name: "",
+      description: "",
+      required_tools: [],
+      enabled: true,
+    });
+  }
+
+  function toggleDraftRequiredTool(toolId: string) {
+    setSkillDraft((current) => ({
+      ...current,
+      required_tools: current.required_tools.includes(toolId)
+        ? current.required_tools.filter((item) => item !== toolId)
+        : [...current.required_tools, toolId],
+    }));
+  }
+
+  function editSkill(skill: SkillItem) {
+    setEditingSkillId(skill.skill_id);
+    setSkillDraft({
+      skill_id: skill.skill_id,
+      display_name: skill.display_name,
+      description: skill.description,
+      required_tools: [...skill.required_tools],
+      enabled: skill.enabled,
+    });
+    setToolDialogOpen(false);
+    setSkillDialogOpen(true);
+  }
+
+  async function saveSkill() {
+    const skillId = editingSkillId || skillDraft.skill_id.trim();
+    if (!skillId || !skillDraft.display_name.trim()) {
+      setToolStatus("请填写能力 ID 和显示名称。");
+      return;
+    }
+
+    setSavingSkillId(skillId);
+    setToolStatus(editingSkillId ? "正在保存研究能力..." : "正在创建研究能力...");
+    try {
+      const payload = {
+        display_name: skillDraft.display_name.trim(),
+        description: skillDraft.description.trim(),
+        required_tools: skillDraft.required_tools,
+        enabled: skillDraft.enabled,
+      };
+      const response = editingSkillId
+        ? await api.updateSkill(editingSkillId, payload)
+        : await api.createSkill({ skill_id: skillId, ...payload });
+      setSkills((current) => {
+        const exists = current.some((skill) => skill.skill_id === response.data.skill_id);
+        return exists
+          ? current.map((skill) => (skill.skill_id === response.data.skill_id ? response.data : skill))
+          : [response.data, ...current];
+      });
+      setSkillDialogOpen(false);
+      resetSkillDraft();
+      setToolDialogOpen(true);
+      setToolDialogTab("skills");
+      setToolStatus(editingSkillId ? "研究能力已更新。" : "研究能力已创建。");
+    } catch (error) {
+      setToolStatus(`研究能力保存失败：${toErrorMessage(error)}`);
+    } finally {
+      setSavingSkillId("");
+    }
+  }
+
+  async function toggleSkillEnabled(skill: SkillItem) {
+    setSavingSkillId(skill.skill_id);
+    try {
+      const response = await api.updateSkill(skill.skill_id, { enabled: !skill.enabled });
+      setSkills((current) => current.map((item) => (item.skill_id === skill.skill_id ? response.data : item)));
+      if (!response.data.enabled) {
+        setSelectedSkillIds((current) => current.filter((skillId) => skillId !== skill.skill_id));
+      }
+      setToolStatus(`${response.data.display_name} 已${response.data.enabled ? "启用" : "停用"}。`);
+    } catch (error) {
+      setToolStatus(`研究能力更新失败：${toErrorMessage(error)}`);
+    } finally {
+      setSavingSkillId("");
+    }
+  }
+
+  async function deleteSkill(skill: SkillItem) {
+    const confirmed = window.confirm(`确定删除研究能力「${skill.display_name}」吗？`);
+    if (!confirmed) return;
+
+    setDeletingSkillId(skill.skill_id);
+    try {
+      await api.deleteSkill(skill.skill_id);
+      setSkills((current) => current.filter((item) => item.skill_id !== skill.skill_id));
+      setSelectedSkillIds((current) => current.filter((skillId) => skillId !== skill.skill_id));
+      setToolStatus("研究能力已删除。");
+    } catch (error) {
+      setToolStatus(`研究能力删除失败：${toErrorMessage(error)}`);
+    } finally {
+      setDeletingSkillId("");
+    }
   }
 
   async function loadKnowledgeDocuments() {
@@ -849,6 +977,17 @@ export function AppShell({ children }: PropsWithChildren) {
                           value={knowledgeScope}
                         />
                       </div>
+                      <button
+                        className="selected-skills-summary"
+                        onClick={() => {
+                          void openToolDialog();
+                          setToolDialogTab("skills");
+                        }}
+                        type="button"
+                      >
+                        <span>已选能力</span>
+                        <strong>{selectedSkillSummary}</strong>
+                      </button>
                       <div className="composer-status-text" role="status">{askStatus}</div>
                     </div>
                     <button
@@ -1029,6 +1168,13 @@ export function AppShell({ children }: PropsWithChildren) {
                 工具能力
               </button>
               <button
+                className={toolDialogTab === "skills" ? "tool-dialog-tab tool-dialog-tab-active" : "tool-dialog-tab"}
+                onClick={() => setToolDialogTab("skills")}
+                type="button"
+              >
+                研究能力
+              </button>
+              <button
                 className={toolDialogTab === "knowledge" ? "tool-dialog-tab tool-dialog-tab-active" : "tool-dialog-tab"}
                 onClick={() => {
                   setToolDialogTab("knowledge");
@@ -1105,6 +1251,140 @@ export function AppShell({ children }: PropsWithChildren) {
                     ))
                   ) : (
                     <div className="sidebar-empty">{toolsLoading ? "正在加载能力..." : "暂无可展示能力。"}</div>
+                  )}
+                </div>
+              </section>
+              </>
+) : toolDialogTab === "skills" ? (
+              <>
+              <section className="tool-dialog-section">
+                <div className="tool-dialog-section-head">
+                  <strong>本轮启用能力</strong>
+                  <StatusPill tone="info" compact>
+                    已选 {selectedSkillIds.length} 项
+                  </StatusPill>
+                </div>
+                <div className="selected-skills-panel">
+                  <span>当前已选</span>
+                  {selectedSkillItems.length ? (
+                    <div className="selected-skills-chip-row">
+                      {selectedSkillItems.map((skill) => (
+                        <button
+                          className="selected-skill-chip"
+                          key={skill.skill_id}
+                          onClick={() =>
+                            setSelectedSkillIds((current) => current.filter((skillId) => skillId !== skill.skill_id))
+                          }
+                          title="移除这个能力"
+                          type="button"
+                        >
+                          {skill.display_name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <strong>未选择研究能力</strong>
+                  )}
+                </div>
+                <div className="skill-select-list">
+                  {skills.length ? (
+                    skills.map((skill) => {
+                      const selected = selectedSkillIds.includes(skill.skill_id);
+                      return (
+                        <button
+                          className={selected ? "skill-select-card skill-select-card-active" : "skill-select-card"}
+                          disabled={!skill.enabled}
+                          key={skill.skill_id}
+                          onClick={() =>
+                            setSelectedSkillIds((current) =>
+                              current.includes(skill.skill_id)
+                                ? current.filter((skillId) => skillId !== skill.skill_id)
+                                : [...current, skill.skill_id]
+                            )
+                          }
+                          type="button"
+                        >
+                          <span>
+                            <strong>{skill.display_name}</strong>
+                            <small>{skill.description || skill.skill_id}</small>
+                          </span>
+                          <StatusPill tone={skill.enabled ? (selected ? "success" : "neutral") : "danger"} compact>
+                            {skill.enabled ? (selected ? "已选择" : "可选择") : "已停用"}
+                          </StatusPill>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="sidebar-empty">暂无可选研究能力。可以先创建一个。</div>
+                  )}
+                </div>
+              </section>
+
+              <section className="tool-dialog-section">
+                <div className="tool-dialog-section-head">
+                  <strong>研究能力库</strong>
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      resetSkillDraft();
+                      setToolDialogOpen(false);
+                      setSkillDialogOpen(true);
+                    }}
+                    type="button"
+                  >
+                    创建能力
+                  </button>
+                </div>
+                <div className="skill-chip-list">
+                  {skills.length ? (
+                    skills.map((skill) => (
+                      <div className="skill-chip-card skill-manage-card" key={skill.skill_id}>
+                        <div>
+                          <strong>{skill.display_name}</strong>
+                          <p>{skill.description || "暂无描述。"}</p>
+                          <div className="button-row">
+                            <StatusPill tone={skill.enabled ? "success" : "danger"} compact>
+                              {skill.enabled ? "已启用" : "已停用"}
+                            </StatusPill>
+                            {skill.required_tools.length ? (
+                              skill.required_tools.map((toolId) => (
+                                <StatusPill key={toolId} tone="info" compact>
+                                  {getToolDisplayName(toolId)}
+                                </StatusPill>
+                              ))
+                            ) : (
+                              <StatusPill tone="neutral" compact>
+                                无工具依赖
+                              </StatusPill>
+                            )}
+                          </div>
+                        </div>
+                        <div className="skill-card-actions">
+                          <button className="secondary-button" onClick={() => editSkill(skill)} type="button">
+                            编辑
+                          </button>
+                          <button
+                            className="secondary-button"
+                            disabled={savingSkillId === skill.skill_id}
+                            onClick={() => toggleSkillEnabled(skill)}
+                            type="button"
+                          >
+                            {skill.enabled ? "停用" : "启用"}
+                          </button>
+                          <button
+                            className="history-delete-button"
+                            disabled={deletingSkillId === skill.skill_id}
+                            onClick={() => deleteSkill(skill)}
+                            title="删除研究能力"
+                            type="button"
+                          >
+                            {deletingSkillId === skill.skill_id ? "..." : "x"}
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="sidebar-empty">暂无研究能力。点击“创建能力”添加一个。</div>
                   )}
                 </div>
               </section>
@@ -1314,6 +1594,114 @@ export function AppShell({ children }: PropsWithChildren) {
               </section>
               </>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {skillDialogOpen ? (
+        <div className="modal-backdrop modal-backdrop-blur" role="dialog" aria-modal="true" aria-label="研究能力设置">
+          <div className="create-dialog skill-edit-dialog">
+            <div className="create-dialog-head">
+              <div>
+                <div className="section-eyebrow">研究能力</div>
+                <h2>{editingSkillId ? "编辑研究能力" : "创建研究能力"}</h2>
+              </div>
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  setSkillDialogOpen(false);
+                  resetSkillDraft();
+                  setToolDialogOpen(true);
+                  setToolDialogTab("skills");
+                }}
+                type="button"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="workspace-side-status">{toolStatus}</div>
+            <div className="skill-form-grid">
+              <label className="field">
+                <span>能力 ID</span>
+                <input
+                  className="input"
+                  disabled={Boolean(editingSkillId)}
+                  onChange={(event) => setSkillDraft((current) => ({ ...current, skill_id: event.target.value }))}
+                  placeholder="paper_compare"
+                  value={skillDraft.skill_id}
+                />
+              </label>
+              <label className="field">
+                <span>显示名称</span>
+                <input
+                  className="input"
+                  onChange={(event) => setSkillDraft((current) => ({ ...current, display_name: event.target.value }))}
+                  placeholder="论文对比分析"
+                  value={skillDraft.display_name}
+                />
+              </label>
+            </div>
+            <label className="field">
+              <span>能力说明</span>
+              <textarea
+                className="input textarea skill-description-input"
+                onChange={(event) => setSkillDraft((current) => ({ ...current, description: event.target.value }))}
+                placeholder="说明这个能力适合什么时候使用，以及会如何影响研究规划。"
+                value={skillDraft.description}
+              />
+            </label>
+            <div className="field">
+              <span>依赖工具</span>
+              {tools.length ? (
+                <div className="skill-tool-picker" aria-label="选择依赖工具">
+                  {tools.map((tool) => {
+                    const checked = skillDraft.required_tools.includes(tool.tool_id);
+                    return (
+                      <button
+                        className={checked ? "skill-tool-option skill-tool-option-active" : "skill-tool-option"}
+                        key={tool.tool_id}
+                        onClick={() => toggleDraftRequiredTool(tool.tool_id)}
+                        type="button"
+                      >
+                        <span>
+                          <strong>{tool.display_name}</strong>
+                          <small>{tool.tool_id}</small>
+                        </span>
+                        <StatusPill tone={tool.enabled ? (checked ? "success" : "neutral") : "danger"} compact>
+                          {tool.enabled ? (checked ? "已选择" : "可选择") : "已停用"}
+                        </StatusPill>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="sidebar-empty">暂无可选择工具。请先确认后端 /tools 已返回工具列表。</div>
+              )}
+            </div>
+            <div className="skill-editor-actions">
+              <ToggleSwitch
+                checked={skillDraft.enabled}
+                label={skillDraft.enabled ? "启用" : "停用"}
+                onChange={() => setSkillDraft((current) => ({ ...current, enabled: !current.enabled }))}
+              />
+              <div className="button-row">
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setSkillDialogOpen(false);
+                    resetSkillDraft();
+                    setToolDialogOpen(true);
+                    setToolDialogTab("skills");
+                  }}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button className="primary-button" disabled={Boolean(savingSkillId)} onClick={saveSkill} type="button">
+                  {savingSkillId ? "保存中" : editingSkillId ? "保存能力" : "创建能力"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

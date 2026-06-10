@@ -126,7 +126,7 @@ export function WorkspaceEvidenceBoard({
                     <td>
                       {paper.url ? (
                         <a className="inline-link" href={paper.url} rel="noreferrer" target="_blank">
-                          打开
+                          来源
                         </a>
                       ) : (
                         <span className="muted">-</span>
