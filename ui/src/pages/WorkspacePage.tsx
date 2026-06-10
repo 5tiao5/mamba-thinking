@@ -303,7 +303,7 @@ export function WorkspacePage() {
 
   return (
     <div className="dense-layout">
-      <section className="surface content-pad">
+      <section className="surface content-pad workspace-command-surface">
         <div className="workspace-toolbar">
           <div className="workspace-context-summary">
             <div className="section-eyebrow">研究工作台</div>
@@ -337,46 +337,48 @@ export function WorkspacePage() {
                 本次结果
               </button>
             </div>
-            <div className="button-row">
-            <button className="secondary-button" onClick={handleCloseWorkspace} type="button">
-              返回对话
-            </button>
-            <button className="primary-button" disabled={running} onClick={handleRunTask} type="button">
-              {running ? "生成中" : "生成结果"}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={loading}
-              onClick={() =>
-                activeView === "conversation"
-                  ? handleLoadConversationWorkspace(conversationId || conversationIdFromQuery, {
-                      fallbackTaskId: taskId || taskIdFromQuery,
-                    })
-                  : handleLoadWorkspace(taskId || taskIdFromQuery, {
-                      preferredConversationId: conversationId || conversationIdFromQuery,
-                    })
-              }
-              type="button"
-            >
-              {loading ? "刷新中" : "刷新结果"}
-            </button>
+            <div className="button-row workspace-action-row">
+              <button className="secondary-button" onClick={handleCloseWorkspace} type="button">
+                返回对话
+              </button>
+              <button className="primary-button" disabled={running} onClick={handleRunTask} type="button">
+                {running ? "生成中" : "生成结果"}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={loading}
+                onClick={() =>
+                  activeView === "conversation"
+                    ? handleLoadConversationWorkspace(conversationId || conversationIdFromQuery, {
+                        fallbackTaskId: taskId || taskIdFromQuery,
+                      })
+                    : handleLoadWorkspace(taskId || taskIdFromQuery, {
+                        preferredConversationId: conversationId || conversationIdFromQuery,
+                      })
+                }
+                type="button"
+              >
+                {loading ? "刷新中" : "刷新结果"}
+              </button>
             </div>
           </div>
         </div>
-        <details className="advanced-task-selector">
-          <summary>手动定位本次结果</summary>
-          <label>
-            <span className="field-label">结果引用</span>
-            <input
-              className="input"
-              onChange={(event) => setTaskId(event.target.value)}
-              placeholder="从研究记录进入后会自动填充"
-              value={taskId}
-            />
-          </label>
-        </details>
-        <div className="status-line" style={{ marginTop: 10 }}>
-          {status}
+        <div className="workspace-utility-row">
+          <details className="advanced-task-selector">
+            <summary>手动定位本次结果</summary>
+            <label>
+              <span className="field-label">结果引用</span>
+              <input
+                className="input"
+                onChange={(event) => setTaskId(event.target.value)}
+                placeholder="从研究记录进入后会自动填充"
+                value={taskId}
+              />
+            </label>
+          </details>
+          <div className="status-line workspace-status-line">
+            {status}
+          </div>
         </div>
       </section>
 

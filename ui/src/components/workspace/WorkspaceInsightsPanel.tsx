@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { cleanDisplayText } from "../../lib/displayText";
 import {
@@ -631,6 +631,33 @@ function InheritedContextPanel({ inheritedContext }: { inheritedContext?: Worksp
   );
 }
 
+function CollapsibleInsightSection({
+  title,
+  eyebrow,
+  children,
+  defaultOpen = false,
+  className = "",
+}: {
+  title: string;
+  eyebrow: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+}) {
+  return (
+    <details className={`pane workspace-collapsible-pane ${className}`} open={defaultOpen}>
+      <summary className="workspace-collapsible-summary">
+        <span>
+          <span className="section-eyebrow">{eyebrow}</span>
+          <strong>{title}</strong>
+        </span>
+        <span className="workspace-collapsible-indicator">展开</span>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 export function WorkspaceInsightsPanel({
   gaps,
   ideas,
@@ -672,87 +699,94 @@ export function WorkspaceInsightsPanel({
         </div>
       </section>
 
-      <section className="pane workspace-graph-pane">
-        <SectionHeader eyebrow={`${graphEdges.length} 条关系`} title="整体演进图谱" />
-        <div className="content-pad pane-scroll">
-          {insufficientEvidence ? (
-            <div className="empty-state workspace-evidence-mode-note">
-              当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者导入更多资料后，再看关系图谱会更有意义。
+      <section className="workspace-secondary-stack">
+        <CollapsibleInsightSection
+          eyebrow={`${graphEdges.length} 条关系`}
+          title="整体演进图谱"
+          className="workspace-graph-pane"
+        >
+          <div className="content-pad pane-scroll">
+            {insufficientEvidence ? (
+              <div className="empty-state workspace-evidence-mode-note">
+                当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者导入更多资料后，再看关系图谱会更有意义。
+              </div>
+            ) : (
+              <>
+                <WorkspaceGraphCanvas graphEdges={graphEdges} papers={papers} />
+                <details className="workspace-edge-details">
+                  <summary>查看关系明细</summary>
+                  {graphEdges.length ? (
+                    <div className="data-table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>起点</th>
+                            <th>终点</th>
+                            <th>关系</th>
+                            <th>依据</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {graphEdges.map((edge, index) => (
+                            <tr key={`${edge.source}-${edge.target}-${index}`}>
+                              <td>{cleanDisplayText(edge.source, 80)}</td>
+                              <td>{cleanDisplayText(edge.target, 80)}</td>
+                              <td>{cleanDisplayText(edge.relationship, 80)}</td>
+                              <td>{cleanDisplayText(edge.reasoning) || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="empty-state">暂无线索关系可展示。</div>
+                  )}
+                </details>
+              </>
+            )}
+          </div>
+        </CollapsibleInsightSection>
+
+        {showWorkingMemory ? (
+          <CollapsibleInsightSection eyebrow="会话级记忆" title="工作记忆">
+            <WorkingMemoryPanel workingMemory={workingMemory} />
+          </CollapsibleInsightSection>
+        ) : null}
+
+        <CollapsibleInsightSection
+          eyebrow={sourceTrace ? `${sourceTrace.knowledge_hit_count} 条知识命中` : "结果依据"}
+          title="本轮依据"
+        >
+          <SourceTracePanel sourceTrace={sourceTrace} />
+        </CollapsibleInsightSection>
+
+        <CollapsibleInsightSection
+          eyebrow={inheritedContext?.conversation_topic ? "连续研究" : "历史上下文"}
+          title="继承上下文"
+        >
+          <InheritedContextPanel inheritedContext={inheritedContext} />
+        </CollapsibleInsightSection>
+
+        <CollapsibleInsightSection eyebrow="过程记录" title="研究过程">
+          {trace ? (
+            <div className="content-grid content-pad">
+              <div className="trace-row">
+                <div className="trace-label">分析步骤</div>
+                <div>{trace.thought_trace.length} 步</div>
+              </div>
+              <div className="trace-row">
+                <div className="trace-label">搜索动作</div>
+                <div>{trace.action_history.length} 条</div>
+              </div>
+              <div className="trace-row">
+                <div className="trace-label">上下文输入</div>
+                <div>{trace.context_inputs.length} 组</div>
+              </div>
             </div>
           ) : (
-            <>
-              <WorkspaceGraphCanvas graphEdges={graphEdges} papers={papers} />
-              <details className="workspace-edge-details">
-                <summary>查看关系明细</summary>
-                {graphEdges.length ? (
-                  <div className="data-table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>起点</th>
-                          <th>终点</th>
-                          <th>关系</th>
-                          <th>依据</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {graphEdges.map((edge, index) => (
-                          <tr key={`${edge.source}-${edge.target}-${index}`}>
-                            <td>{cleanDisplayText(edge.source, 80)}</td>
-                            <td>{cleanDisplayText(edge.target, 80)}</td>
-                            <td>{cleanDisplayText(edge.relationship, 80)}</td>
-                            <td>{cleanDisplayText(edge.reasoning) || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="empty-state">暂无线索关系可展示。</div>
-                )}
-              </details>
-            </>
+            <div className="empty-state">暂时没有研究过程记录。</div>
           )}
-        </div>
-      </section>
-
-      {showWorkingMemory ? (
-        <section className="pane">
-          <SectionHeader eyebrow="会话级记忆" title="工作记忆" />
-          <WorkingMemoryPanel workingMemory={workingMemory} />
-        </section>
-      ) : null}
-
-      <section className="pane">
-        <SectionHeader eyebrow={sourceTrace ? `${sourceTrace.knowledge_hit_count} 条知识命中` : "Grounding"} title="本轮依据" />
-        <SourceTracePanel sourceTrace={sourceTrace} />
-      </section>
-
-      <section className="pane">
-        <SectionHeader eyebrow={inheritedContext?.conversation_topic ? "连续研究" : "History"} title="继承上下文" />
-        <InheritedContextPanel inheritedContext={inheritedContext} />
-      </section>
-
-      <section className="pane">
-        <SectionHeader eyebrow="过程记录" title="研究过程" />
-        {trace ? (
-          <div className="content-grid content-pad">
-            <div className="trace-row">
-              <div className="trace-label">分析步骤</div>
-              <div>{trace.thought_trace.length} 步</div>
-            </div>
-            <div className="trace-row">
-              <div className="trace-label">搜索动作</div>
-              <div>{trace.action_history.length} 条</div>
-            </div>
-            <div className="trace-row">
-              <div className="trace-label">上下文输入</div>
-              <div>{trace.context_inputs.length} 组</div>
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state">暂时没有研究过程记录。</div>
-        )}
+        </CollapsibleInsightSection>
       </section>
     </section>
   );

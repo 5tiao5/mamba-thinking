@@ -1992,11 +1992,10 @@ body {
 }
 
 .advanced-task-selector {
-  margin-top: 10px;
-  border: 1px solid #e8eef6;
-  border-radius: 8px;
-  background: #fbfdff;
-  padding: 8px 10px;
+  border: 1px solid #d9e6f8;
+  border-radius: 7px;
+  background: #f8fbff;
+  padding: 6px 9px;
 }
 
 .advanced-task-selector summary {
@@ -2007,8 +2006,9 @@ body {
 }
 
 .advanced-task-selector label {
-  display: block;
-  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
 }
 
 .field {
@@ -2194,17 +2194,86 @@ body {
 }
 
 .workspace-grid {
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(330px, 400px) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
 }
 
 .workspace-hero {
-  grid-template-columns: minmax(0, 1fr);
-  padding: 22px;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.workspace-command-surface {
+  padding: 12px 14px;
+}
+
+.workspace-toolbar {
+  align-items: center;
+}
+
+.workspace-toolbar-actions {
+  gap: 8px;
+}
+
+.workspace-action-row {
+  justify-content: flex-end;
+}
+
+.workspace-utility-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.workspace-utility-row .advanced-task-selector {
+  margin-top: 0;
+}
+
+.workspace-status-line {
+  margin-top: 0;
+  min-height: 30px;
+  padding: 7px 9px;
+  font-size: 0.78rem;
+}
+
+.workspace-context-summary strong {
+  font-size: 1rem;
+}
+
+.workspace-context-summary span {
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.workspace-hero-title {
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
+.workspace-hero-summary {
+  font-size: 0.9rem;
+  line-height: 1.58;
+}
+
+.workspace-hero-notes {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.workspace-note-card {
+  gap: 4px;
+  border-color: #e3edf9;
+  border-left: 3px solid #bfd3f8;
+  padding: 9px 10px;
 }
 
 .workspace-hero-side {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .workspace-note-card,
@@ -2213,6 +2282,19 @@ body {
 .workspace-filter-card {
   border-radius: 8px;
   background: #ffffff;
+}
+
+.workspace-kpi-card {
+  gap: 5px;
+  padding: 10px 11px;
+}
+
+.workspace-kpi-card strong {
+  font-size: 1.18rem;
+}
+
+.workspace-fallback-banner {
+  padding: 9px 10px;
 }
 
 .workspace-evidence-detail {
@@ -2228,7 +2310,7 @@ body {
 
 .workspace-evidence-detail div {
   border-right: 1px solid #e8eef6;
-  padding: 12px;
+  padding: 9px 10px;
 }
 
 .workspace-evidence-detail div:last-child {
@@ -2246,7 +2328,166 @@ body {
   display: block;
   margin-top: 4px;
   color: #142033;
-  font-size: 1.15rem;
+  font-size: 1rem;
+}
+
+.workspace-filter-list {
+  gap: 5px;
+  padding: 8px;
+}
+
+.workspace-filter-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-color: transparent;
+  background: transparent;
+  padding: 6px 8px;
+}
+
+.workspace-filter-card:hover,
+.workspace-filter-card-active {
+  background: #eef5ff;
+  transform: none;
+}
+
+.workspace-filter-title {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-filter-meta {
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.taxonomy-panel {
+  padding: 8px 10px 10px;
+}
+
+.taxonomy-layout,
+.workspace-main-column,
+.workspace-rail {
+  gap: 10px;
+}
+
+.taxonomy-detail-card {
+  gap: 9px;
+  border-color: #e3edf9;
+  padding: 11px;
+}
+
+.taxonomy-detail-stats {
+  gap: 6px;
+}
+
+.taxonomy-stat {
+  border-color: #e8eef6;
+  padding: 7px 8px;
+}
+
+.taxonomy-map {
+  min-height: 440px;
+}
+
+.taxonomy-chip-wrap {
+  gap: 6px;
+}
+
+.taxonomy-chip {
+  min-height: 24px;
+  padding: 3px 8px;
+}
+
+.workspace-paper-meta-grid {
+  gap: 8px;
+}
+
+.workspace-paper-meta-item {
+  border-color: #e8eef6;
+  padding: 8px 9px;
+}
+
+.workspace-insights-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workspace-secondary-stack {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+}
+
+.workspace-collapsible-pane {
+  overflow: hidden;
+}
+
+.workspace-collapsible-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  border-bottom: 1px solid transparent;
+  background: #fbfdff;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.workspace-collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-collapsible-summary strong {
+  display: block;
+  color: #142033;
+  font-size: 0.94rem;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.workspace-collapsible-indicator {
+  color: #2f6fed;
+  font-size: 0.74rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.workspace-collapsible-pane[open] .workspace-collapsible-summary {
+  border-bottom-color: #e8eef6;
+}
+
+.workspace-collapsible-pane[open] .workspace-collapsible-indicator {
+  color: #64748b;
+}
+
+.workspace-collapsible-pane[open] .workspace-collapsible-indicator::before {
+  content: "收起";
+}
+
+.workspace-collapsible-pane[open] .workspace-collapsible-indicator {
+  font-size: 0;
+}
+
+.workspace-collapsible-pane[open] .workspace-collapsible-indicator::before {
+  font-size: 0.74rem;
+}
+
+.insight-item {
+  padding: 11px 12px 12px;
+}
+
+.data-table th {
+  padding: 8px 10px;
+}
+
+.data-table td {
+  padding: 8px 10px;
 }
 
 .primary-button,
@@ -2336,9 +2577,34 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .workspace-utility-row {
+    grid-template-columns: 1fr;
+  }
+
   .simple-metrics,
   .workspace-hero-side {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 720px) and (max-width: 980px) {
+  .workspace-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .workspace-toolbar-actions {
+    grid-template-columns: auto;
+    justify-items: end;
+  }
+
+  .workspace-view-switch,
+  .workspace-action-row {
+    justify-content: flex-end;
+  }
+
+  .workspace-utility-row {
+    grid-template-columns: minmax(170px, 240px) minmax(0, 1fr);
   }
 }
 

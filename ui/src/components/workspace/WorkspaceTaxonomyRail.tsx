@@ -85,10 +85,10 @@ export function WorkspaceTaxonomyRail({
 
   return (
     <aside className="workspace-rail workspace-rail-wide">
-      <section className="pane">
+      <section className="pane workspace-filter-pane">
         <div className="section-header">
           <div>
-            <div className="section-eyebrow">Filter</div>
+            <div className="section-eyebrow">论文分类</div>
             <h2>论文筛选</h2>
           </div>
         </div>
@@ -129,7 +129,7 @@ export function WorkspaceTaxonomyRail({
         <div className="section-header">
           <div>
             <div className="section-eyebrow">{branches.length} 个分支</div>
-            <h2>Taxonomy / 研究分类</h2>
+            <h2>研究方向图</h2>
           </div>
         </div>
         <div className="pane-scroll taxonomy-panel">
