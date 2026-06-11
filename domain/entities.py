@@ -78,6 +78,9 @@ class PaperRecord:
     citation_count: int = 0
     url: str = ""
     is_new_this_round: bool = False
+    relevance_score: float = 0.0
+    relevance_tier: str = "candidate"
+    relevance_reasons: List[str] = field(default_factory=list)
 
 
 @dataclass

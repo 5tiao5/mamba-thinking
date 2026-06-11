@@ -63,6 +63,37 @@ export const demoWorkspace: WorkspaceSnapshot = {
   topic: "AI Agent Tool Use: benchmark evaluation gaps",
   summary:
     "本次演示工作台聚焦 AI Agent 工具调用评测。模拟结果显示：当前研究已经覆盖静态工具选择、API 调用成功率和代码生成准确性，但对长程任务中的错误恢复、跨工具依赖、成本约束和人机协同评估仍然不足。",
+  evidence_snapshot: {
+    snapshot_id: "evidence_demo_tool_use",
+    version: "v1",
+    created_at: "2026-06-10T08:30:00+00:00",
+    topic: "AI Agent Tool Use: benchmark evaluation gaps",
+    stats: {
+      paper_count: 4,
+      real_paper_count: 4,
+      fallback_paper_count: 0,
+      new_paper_count: 1,
+      taxonomy_branch_count: 4,
+      grounded_taxonomy_branch_count: 3,
+      edge_count: 3,
+      evidence_level_counts: {
+        confirmed: 1,
+        supported: 1,
+        inferred: 1,
+      },
+      gap_count: 3,
+      evidence_backed_gap_count: 2,
+    },
+    retrieval_plan: {
+      strict_queries: ["AI agent tool use benchmark evaluation"],
+    },
+    retrieval_outcome: {
+      status: "success",
+      message: "本轮重新检索并补入 1 篇新论文，同时保留 3 篇高相关旧证据。",
+      novel_paper_count: 1,
+    },
+    alignment_score: 0.82,
+  },
   papers: [
     {
       paper_id: "paper-toolbench",
@@ -105,6 +136,11 @@ export const demoWorkspace: WorkspaceSnapshot = {
       is_new_this_round: false,
     },
   ],
+  analysis_paper_ids: [
+    "paper-toolbench",
+    "paper-swebench",
+    "paper-agentbench",
+  ],
   taxonomy: {
     branches: [
       {
@@ -115,6 +151,7 @@ export const demoWorkspace: WorkspaceSnapshot = {
         paper_count: 1,
         evidence_tier: "strong",
         branch_confidence: 0.92,
+        matched_paper_ids: ["paper-toolbench"],
       },
       {
         branch_id: "code-agent-evaluation",
@@ -124,15 +161,17 @@ export const demoWorkspace: WorkspaceSnapshot = {
         paper_count: 1,
         evidence_tier: "strong",
         branch_confidence: 0.88,
+        matched_paper_ids: ["paper-swebench"],
       },
       {
         branch_id: "general-agent-benchmark",
         name: "General Agent Benchmark",
         description: "覆盖 planning、memory 与 environment interaction 的通用 benchmark。",
         required_concepts: ["planning", "memory", "environment interaction"],
-        paper_count: 2,
+        paper_count: 1,
         evidence_tier: "moderate",
         branch_confidence: 0.81,
+        matched_paper_ids: ["paper-agentbench"],
       },
       {
         branch_id: "missing-dimensions",
@@ -157,9 +196,9 @@ export const demoWorkspace: WorkspaceSnapshot = {
       },
     ],
     coverage: {
-      "tool-use-benchmark": { paper_count: 1, gap_count: 0, coverage_score: 1, evidence_tier: "strong" },
-      "code-agent-evaluation": { paper_count: 1, gap_count: 0, coverage_score: 1, evidence_tier: "strong" },
-      "general-agent-benchmark": { paper_count: 2, gap_count: 1, coverage_score: 1, evidence_tier: "moderate" },
+      "tool-use-benchmark": { paper_count: 1, gap_count: 0, coverage_score: 1, evidence_tier: "strong", matched_paper_ids: ["paper-toolbench"] },
+      "code-agent-evaluation": { paper_count: 1, gap_count: 0, coverage_score: 1, evidence_tier: "strong", matched_paper_ids: ["paper-swebench"] },
+      "general-agent-benchmark": { paper_count: 1, gap_count: 1, coverage_score: 1, evidence_tier: "moderate", matched_paper_ids: ["paper-agentbench"] },
       "missing-dimensions": { paper_count: 0, gap_count: 3, coverage_score: 0, evidence_tier: "candidate" },
     },
     raw: {
@@ -178,9 +217,9 @@ export const demoWorkspace: WorkspaceSnapshot = {
     },
     {
       source: "SWE-bench",
-      target: "WebArena",
+      target: "AgentBench",
       relationship: "contrasts",
-      reasoning: "SWE-bench 偏代码仓库修复，WebArena 偏浏览器和网页环境操作。",
+      reasoning: "SWE-bench 聚焦代码仓库修复，AgentBench 则评估更广泛的规划与环境交互能力。",
     },
     {
       source: "tool-use benchmark",

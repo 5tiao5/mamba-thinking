@@ -14,6 +14,7 @@ class PaperNode:
     publish_date: str = ""
     source: str = ""
     taxonomy_category: str = ""
+    expert_taxonomy_branches: List[str] = field(default_factory=list)
     citation_count: int = 0
     url: str = ""
     doi: str = ""
@@ -21,6 +22,9 @@ class PaperNode:
     is_gap_candidate: bool = False
     confidence_score: float = 1.0
     is_new_this_round: bool = False
+    relevance_score: float = 0.0
+    relevance_tier: str = "candidate"
+    relevance_reasons: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -32,6 +36,7 @@ class PaperNode:
             "publish_date": self.publish_date,
             "source": self.source,
             "taxonomy_category": self.taxonomy_category,
+            "expert_taxonomy_branches": self.expert_taxonomy_branches,
             "citation_count": self.citation_count,
             "url": self.url,
             "doi": self.doi,
@@ -39,6 +44,9 @@ class PaperNode:
             "is_gap_candidate": self.is_gap_candidate,
             "confidence_score": self.confidence_score,
             "is_new_this_round": self.is_new_this_round,
+            "relevance_score": self.relevance_score,
+            "relevance_tier": self.relevance_tier,
+            "relevance_reasons": self.relevance_reasons,
         }
 
 
@@ -50,6 +58,10 @@ class EvolutionEdge:
     reasoning: str = ""
     weight: float = 0.0
     evidence: str = ""
+    provenance: str = ""
+    confidence: float = 0.0
+    evidence_level: str = "candidate"
+    evidence_snippets: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +71,10 @@ class EvolutionEdge:
             "reasoning": self.reasoning,
             "weight": self.weight,
             "evidence": self.evidence,
+            "provenance": self.provenance,
+            "confidence": self.confidence,
+            "evidence_level": self.evidence_level,
+            "evidence_snippets": self.evidence_snippets,
         }
 
 
@@ -86,6 +102,7 @@ class ResearchState(TypedDict, total=False):
     previous_round_task_id: str
     previous_round_paper_ids: List[str]
     previous_round_query_intent: Dict[str, Any]
+    evidence_pool: Dict[str, PaperNode]
     paper_nodes: Dict[str, PaperNode]
     review_texts: List[str]
     expert_taxonomy: Dict[str, Any]
@@ -94,6 +111,7 @@ class ResearchState(TypedDict, total=False):
     audit_reports: List[Dict[str, Any]]
     detected_gaps: List[Dict[str, Any]]
     audit_summary: Dict[str, Any]
+    evidence_snapshot: Dict[str, Any]
     generated_ideas: List[Dict[str, Any]]
     final_report: str
     final_report_id: str
@@ -112,6 +130,13 @@ class ResearchState(TypedDict, total=False):
     graph_events: List[Dict[str, Any]]
     thought_trace: List[Dict[str, Any]]
     retry_count: int
+    max_repair_rounds: int
+    min_repair_alignment_gain: float
+    repair_baseline: Dict[str, Any]
+    repair_history: List[Dict[str, Any]]
+    repair_stop_reason: str
+    degraded_reason: str
+    termination_reason: str
     retry_requested: bool
     correction_checked: bool
     needs_taxonomy_refresh: bool

@@ -7,6 +7,7 @@ from collections import OrderedDict, defaultdict
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
 from product_agent.schemas import (
     WorkspaceEvidenceStatusView,
+    WorkspaceEvidenceSnapshotView,
     WorkspaceGapView,
     WorkspaceGraphEdgeView,
     WorkspaceInheritedContextView,
@@ -86,6 +87,8 @@ class WorkspaceService:
         )
         inherited_context = _build_inherited_context_view(trace)
         working_memory = self._workspace_working_memory(task_id=task_id)
+        evidence_snapshot = _build_evidence_snapshot_view(workspace.summary_payload or {})
+        analysis_paper_ids = _workspace_analysis_paper_ids(workspace)
         return WorkspaceSnapshotResponse(
             task_id=workspace.task_id,
             topic=workspace.topic,
@@ -100,9 +103,13 @@ class WorkspaceService:
                     citation_count=paper.citation_count,
                     url=paper.url,
                     is_new_this_round=bool(getattr(paper, "is_new_this_round", False)),
+                    relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
+                    relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
+                    relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
                 )
                 for paper in workspace.papers
             ],
+            analysis_paper_ids=analysis_paper_ids,
             taxonomy=workspace.taxonomy,
             graph_edges=[
                 WorkspaceGraphEdgeView(
@@ -110,6 +117,13 @@ class WorkspaceService:
                     target=str(edge.get("target", "")),
                     relationship=str(edge.get("relationship", "")),
                     reasoning=str(edge.get("reasoning", "")),
+                    provenance=str(edge.get("provenance", "")),
+                    confidence=float(edge.get("confidence", 0.0) or 0.0),
+                    evidence_level=str(edge.get("evidence_level", "candidate")),
+                    evidence=str(edge.get("evidence", "")),
+                    evidence_snippets=[
+                        str(item) for item in edge.get("evidence_snippets", []) if str(item).strip()
+                    ],
                 )
                 for edge in workspace.graph_edges
             ],
@@ -134,6 +148,7 @@ class WorkspaceService:
             ],
             alignment_score=workspace.alignment_score,
             evidence_status=WorkspaceEvidenceStatusView(**evidence_status),
+            evidence_snapshot=evidence_snapshot,
             source_trace=source_trace,
             inherited_context=inherited_context,
             working_memory=working_memory,
@@ -141,6 +156,13 @@ class WorkspaceService:
                 thought_trace=_normalize_trace_entries(trace.get("thought_trace", [])),
                 action_history=_normalize_trace_entries(trace.get("action_history", [])),
                 context_inputs=_normalize_trace_entries(trace.get("context_inputs", [])),
+                run_status=str(trace.get("run_status", "completed") or "completed"),
+                termination_reason=str(trace.get("termination_reason", "") or ""),
+                degraded_reason=str(trace.get("degraded_reason", "") or ""),
+                repair_count=int(trace.get("repair_count", 0) or 0),
+                max_repair_rounds=int(trace.get("max_repair_rounds", 0) or 0),
+                repair_stop_reason=str(trace.get("repair_stop_reason", "") or ""),
+                repair_history=list(trace.get("repair_history", [])),
             ),
         )
 
@@ -174,7 +196,8 @@ class WorkspaceService:
         tasks = [
             task
             for task in self.task_repository.list_all()
-            if task.conversation_id == conversation_id and task.status == "completed"
+            if task.conversation_id == conversation_id
+            and task.status in {"completed", "degraded"}
         ]
         if not tasks:
             return None
@@ -231,6 +254,8 @@ class WorkspaceService:
         )
         inherited_context = _build_inherited_context_view(trace)
         working_memory = self._conversation_working_memory_view(conversation_id)
+        evidence_snapshot = _build_evidence_snapshot_view(synthetic_workspace.summary_payload or {})
+        analysis_paper_ids = _workspace_analysis_paper_ids(synthetic_workspace)
         result = WorkspaceSnapshotResponse(
             task_id=synthetic_workspace.task_id,
             topic=synthetic_workspace.topic,
@@ -245,9 +270,13 @@ class WorkspaceService:
                     citation_count=paper.citation_count,
                     url=paper.url,
                     is_new_this_round=False,
+                    relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
+                    relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
+                    relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
                 )
                 for paper in synthetic_workspace.papers
             ],
+            analysis_paper_ids=analysis_paper_ids,
             taxonomy=synthetic_workspace.taxonomy,
             graph_edges=[
                 WorkspaceGraphEdgeView(
@@ -279,6 +308,7 @@ class WorkspaceService:
             ],
             alignment_score=synthetic_workspace.alignment_score,
             evidence_status=WorkspaceEvidenceStatusView(**evidence_status),
+            evidence_snapshot=evidence_snapshot,
             source_trace=source_trace,
             inherited_context=inherited_context,
             working_memory=working_memory,
@@ -450,6 +480,28 @@ def _build_evidence_status(workspace) -> dict:
     }
 
 
+def _build_evidence_snapshot_view(
+    summary_payload: dict,
+) -> WorkspaceEvidenceSnapshotView | None:
+    if not isinstance(summary_payload, dict):
+        return None
+    if summary_payload.get("aggregation_mode") == "conversation_workspace":
+        return None
+    snapshot = summary_payload.get("evidence_snapshot", {})
+    if not isinstance(snapshot, dict) or not snapshot.get("snapshot_id"):
+        return None
+    return WorkspaceEvidenceSnapshotView(
+        snapshot_id=str(snapshot.get("snapshot_id", "") or ""),
+        version=str(snapshot.get("version", "") or "v1"),
+        created_at=str(snapshot.get("created_at", "") or ""),
+        topic=str(snapshot.get("topic", "") or ""),
+        stats=dict(snapshot.get("stats", {}) or {}),
+        retrieval_plan=dict(snapshot.get("retrieval_plan", {}) or {}),
+        retrieval_outcome=dict(snapshot.get("retrieval_outcome", {}) or {}),
+        alignment_score=float(snapshot.get("alignment_score", 0.0) or 0.0),
+    )
+
+
 def _merge_workspace_summaries(
     *,
     topic: str,
@@ -518,6 +570,38 @@ def _merge_workspace_papers(workspaces: list) -> list:
         for paper in workspace.papers:
             merged[paper.paper_id] = paper
     return list(merged.values())
+
+
+def _workspace_analysis_paper_ids(workspace) -> list[str]:
+    all_ids = {
+        str(getattr(paper, "paper_id", "") or "").strip()
+        for paper in workspace.papers
+        if str(getattr(paper, "paper_id", "") or "").strip()
+    }
+    payload_ids = [
+        str(paper_id).strip()
+        for paper_id in list((workspace.summary_payload or {}).get("analysis_paper_ids", []) or [])
+        if str(paper_id).strip() in all_ids
+    ]
+    if payload_ids:
+        return list(dict.fromkeys(payload_ids))
+
+    inferred: list[str] = []
+    for edge in workspace.graph_edges:
+        for key in ("source", "target"):
+            paper_id = str(edge.get(key, "") or "").strip()
+            if paper_id in all_ids:
+                inferred.append(paper_id)
+    taxonomy = workspace.taxonomy if isinstance(workspace.taxonomy, dict) else {}
+    coverage = taxonomy.get("coverage", {}) if isinstance(taxonomy.get("coverage"), dict) else {}
+    for entry in coverage.values():
+        if not isinstance(entry, dict):
+            continue
+        for paper_id in list(entry.get("matched_paper_ids", []) or []):
+            normalized = str(paper_id).strip()
+            if normalized in all_ids:
+                inferred.append(normalized)
+    return list(dict.fromkeys(inferred)) or list(all_ids)
 
 
 def _merge_workspace_graph_edges(workspaces: list) -> list[dict]:
@@ -741,6 +825,11 @@ def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> Workspace
         refresh_triggered=bool(retrieval_outcome.get("refresh_triggered", False)),
         novel_paper_count=int(retrieval_outcome.get("novel_paper_count", 0) or 0),
         reused_paper_count=int(retrieval_outcome.get("reused_paper_count", 0) or 0),
+        direct_paper_count=int(retrieval_outcome.get("direct_paper_count", 0) or 0),
+        adjacent_paper_count=int(retrieval_outcome.get("adjacent_paper_count", 0) or 0),
+        low_relevance_filtered_count=int(
+            retrieval_outcome.get("low_relevance_filtered_count", 0) or 0
+        ),
         knowledge_hit_count=knowledge_hit_count,
         knowledge_hits=normalized_hits,
         workspace_hint_count=workspace_hint_count,

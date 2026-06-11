@@ -58,6 +58,7 @@ export function WorkspacePage() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedPaperId, setSelectedPaperId] = useState("");
   const [selectedBranchId, setSelectedBranchId] = useState("");
+  const [evidenceViewMode, setEvidenceViewMode] = useState<"analysis" | "extended">("analysis");
 
   function syncWorkspaceRoute(next: {
     view: WorkspaceView;
@@ -104,14 +105,24 @@ export function WorkspacePage() {
     setStatus("从对话页或首页进入后，可以运行分析或读取工作台。");
   }, [activeView, conversationIdFromQuery, taskIdFromQuery]);
 
+  const analysisPaperIds = useMemo(
+    () => new Set(workspace?.analysis_paper_ids ?? []),
+    [workspace]
+  );
+  const analysisPapers = useMemo(
+    () => (workspace?.papers ?? []).filter((paper) => analysisPaperIds.has(paper.paper_id)),
+    [analysisPaperIds, workspace]
+  );
+  const visibleEvidencePapers = evidenceViewMode === "analysis" ? analysisPapers : workspace?.papers ?? [];
+
   const paperCategories = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const paper of workspace?.papers ?? []) {
+    for (const paper of analysisPapers) {
       const key = paper.taxonomy_category || "未分类";
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return Array.from(counts.entries()).map(([name, count]) => ({ name, count }));
-  }, [workspace]);
+  }, [analysisPapers]);
 
   const taxonomyBranches = useMemo(() => workspace?.taxonomy?.branches ?? [], [workspace]);
   const taxonomyCoverage = useMemo(() => workspace?.taxonomy?.coverage ?? {}, [workspace]);
@@ -130,12 +141,12 @@ export function WorkspacePage() {
   }, [taxonomyBranches]);
 
   const filteredPapers = useMemo(() => {
-    const papers = workspace?.papers ?? [];
+    const papers = visibleEvidencePapers;
     if (selectedCategory === "all") {
       return papers;
     }
     return papers.filter((paper) => (paper.taxonomy_category || "未分类") === selectedCategory);
-  }, [selectedCategory, workspace]);
+  }, [selectedCategory, visibleEvidencePapers]);
 
   const taxonomyEvidencePapers = useMemo(() => {
     if (!workspace || !selectedBranchId) {
@@ -146,8 +157,8 @@ export function WorkspacePage() {
       return [] as WorkspacePaper[];
     }
     const idSet = new Set(matchedIds);
-    return workspace.papers.filter((paper) => idSet.has(paper.paper_id));
-  }, [selectedBranchId, workspace]);
+    return analysisPapers.filter((paper) => idSet.has(paper.paper_id));
+  }, [analysisPapers, selectedBranchId, workspace]);
 
   const selectedPaper = useMemo(() => {
     if (!filteredPapers.length) {
@@ -191,6 +202,7 @@ export function WorkspacePage() {
     try {
       const response = await api.getWorkspace(trimmedId);
       setWorkspace(response.data);
+      setEvidenceViewMode("analysis");
       setSelectedCategory("all");
       setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
       setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
@@ -268,6 +280,7 @@ export function WorkspacePage() {
     try {
       const response = await api.getConversationWorkspace(targetConversationId);
       setWorkspace(response.data);
+      setEvidenceViewMode("analysis");
       setSelectedCategory("all");
       setSelectedPaperId(response.data.papers[0]?.paper_id ?? "");
       setSelectedBranchId(response.data.taxonomy.branches[0]?.branch_id ?? "");
@@ -384,10 +397,12 @@ export function WorkspacePage() {
 
       <WorkspaceSummarySection
         alignmentScore={workspace?.alignment_score ?? 0}
+        evidenceSnapshot={workspace?.evidence_snapshot ?? null}
         evidenceStatus={workspace?.evidence_status}
         gapCount={workspace?.gaps.length ?? 0}
         ideaCount={workspace?.ideas.length ?? 0}
         paperCount={workspace?.papers.length ?? 0}
+        analysisPaperCount={analysisPapers.length}
         priorityNote={priorityNote}
         recommendation={recommendation}
         sourceTrace={workspace?.source_trace ?? null}
@@ -404,17 +419,26 @@ export function WorkspacePage() {
           evidenceStatus={workspace?.evidence_status}
           onSelectBranch={setSelectedBranchId}
           onSelectCategory={setSelectedCategory}
-          paperCount={workspace?.papers.length ?? 0}
+          paperCount={analysisPapers.length}
           papers={taxonomyEvidencePapers}
           selectedBranchId={selectedBranchId}
           selectedCategory={selectedCategory}
           topic={workspace?.topic ?? ""}
         />
         <WorkspaceEvidenceBoard
+          analysisPaperCount={analysisPapers.length}
           onSelectPaper={setSelectedPaperId}
+          onViewModeChange={(mode) => {
+            setEvidenceViewMode(mode);
+            setSelectedCategory("all");
+            const nextPapers = mode === "analysis" ? analysisPapers : workspace?.papers ?? [];
+            setSelectedPaperId(nextPapers[0]?.paper_id ?? "");
+          }}
           papers={filteredPapers}
           selectedPaperId={selectedPaper?.paper_id ?? ""}
           showRoundMarkers={activeView === "task"}
+          totalPaperCount={workspace?.papers.length ?? 0}
+          viewMode={evidenceViewMode}
         />
       </section>
 
@@ -424,7 +448,7 @@ export function WorkspacePage() {
         graphEdges={workspace?.graph_edges ?? []}
         inheritedContext={workspace?.inherited_context ?? null}
         ideas={workspace?.ideas ?? []}
-        papers={workspace?.papers ?? []}
+        papers={analysisPapers}
         sourceTrace={workspace?.source_trace ?? null}
         trace={workspace?.trace ?? null}
         workingMemory={workspace?.working_memory ?? null}

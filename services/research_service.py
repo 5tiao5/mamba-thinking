@@ -215,7 +215,7 @@ class ResearchService:
         当前副作用：
         - 调用 `product_agent.research_agent.pipeline.run_pipeline`
         - 调用 `workspace_repository.save` 保存工作台快照
-        - 成功时更新 `task.status=completed`
+        - 根据运行结果更新 `task.status=completed/degraded/step_limit_reached`
         - 失败时更新 `task.status=failed`
         """
         task.status = "running"
@@ -244,14 +244,15 @@ class ResearchService:
                 trace["selected_skill_ids"] = list(task.selected_skill_ids)
                 workspace.trace = trace
             saved_workspace = self.workspace_repository.save(workspace)
-            if self.working_memory_service is not None:
+            run_status = str(state.get("run_status", "step_limit_reached") or "step_limit_reached")
+            if self.working_memory_service is not None and state.get("synthesis_completed"):
                 self.working_memory_service.refresh_from_workspace(
                     task=task,
                     workspace=saved_workspace,
                     query_intent=research_context.query_intent,
                     conversation_topic=research_context.conversation_topic,
                 )
-            task.status = "completed"
+            task.status = run_status
             task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
             return saved_workspace
@@ -579,7 +580,7 @@ class ResearchService:
             for item in self.task_repository.list_all()
             if item.conversation_id == task.conversation_id
             and item.task_id != task.task_id
-            and str(getattr(item, "status", "")).lower() == "completed"
+            and str(getattr(item, "status", "")).lower() in {"completed", "degraded"}
         ]
         if not previous_tasks:
             return {"task_id": "", "paper_ids": [], "query_intent": {}}

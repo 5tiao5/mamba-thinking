@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Dict
 
-from pipeline_utils import initial_state
+from pipeline_utils import initial_state, repair_round_budget
 
 from .models import ResearchState
 from .nodes import (
@@ -27,6 +28,16 @@ def build_action_map() -> Dict[str, ActionSpec]:
         "corrector": ("Corrector", "Reflect and decide whether to repair the run.", corrector_node),
         "synthesizer": ("Synthesizer", "Generate the report, ideas, and Mermaid graph.", synthesizer_node),
     }
+
+
+def controller_step_budget(state: ResearchState) -> int:
+    configured = os.environ.get("AGENT_MAX_CONTROLLER_STEPS", "").strip()
+    if configured:
+        try:
+            return max(1, int(configured))
+        except ValueError:
+            pass
+    return 7 + 5 * repair_round_budget(state)
 
 
 def run_pipeline(
@@ -55,4 +66,5 @@ def run_pipeline(
         action_map=build_action_map(),
         show_progress=show_progress,
         state_callback=state_callback,
+        max_controller_steps=controller_step_budget(state),
     )

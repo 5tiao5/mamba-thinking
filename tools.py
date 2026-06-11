@@ -16,6 +16,14 @@ _S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 _REQUEST_TIMEOUT = 15
 
 
+def _semantic_scholar_headers() -> Dict[str, str]:
+    headers = {"User-Agent": "ProductAgent/1.0"}
+    api_key = str(os.environ.get("S2_API_KEY", "") or "").strip()
+    if api_key:
+        headers["x-api-key"] = api_key
+    return headers
+
+
 # ── arXiv ────────────────────────────────────────────────────────────────────
 
 def search_papers(query: str, max_results: int = 10) -> List[PaperNode]:
@@ -23,19 +31,137 @@ def search_papers(query: str, max_results: int = 10) -> List[PaperNode]:
     if not query.strip():
         return []
 
-    encoded = urllib.parse.quote(f'all:"{query}"', safe="")
-    url = (
-        f"{_ARXIV_API}?search_query={encoded}"
-        f"&start=0&max_results={max(max_results, 3)}"
-        f"&sortBy=relevance"
+    params = urllib.parse.urlencode(
+        {
+            "search_query": _build_arxiv_search_query(query),
+            "start": "0",
+            "max_results": str(max(max_results, 3)),
+            "sortBy": "relevance",
+        }
     )
+    url = f"{_ARXIV_API}?{params}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
         with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
             raw = resp.read().decode("utf-8")
         return _parse_arxiv_atom(raw, query)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise RuntimeError(
+                "arXiv rate limit reached; retry later instead of treating this "
+                "as an empty literature result."
+            ) from exc
+        return []
     except Exception:
         return []
+
+
+def search_papers_recall(
+    queries: List[str],
+    max_results: int = 10,
+) -> List[PaperNode]:
+    """Run one bounded arXiv OR query for recall rescue.
+
+    Each input remains an exact short phrase. The downstream relevance layer
+    still decides whether a retrieved paper is usable evidence.
+    """
+
+    compiled = _build_arxiv_recall_query(queries)
+    if not compiled:
+        return []
+    params = urllib.parse.urlencode(
+        {
+            "search_query": compiled,
+            "start": "0",
+            "max_results": str(max(max_results, 3)),
+            "sortBy": "relevance",
+        }
+    )
+    url = f"{_ARXIV_API}?{params}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
+        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+            raw = resp.read().decode("utf-8")
+        return _parse_arxiv_atom(raw, " OR ".join(queries))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise RuntimeError(
+                "arXiv rate limit reached during recall rescue; retry later."
+            ) from exc
+        return []
+    except Exception:
+        return []
+
+
+def _build_arxiv_recall_query(queries: List[str]) -> str:
+    phrases: List[str] = []
+    for query in queries:
+        normalized = " ".join(
+            re.findall(r"[A-Za-z][A-Za-z0-9-]*", str(query or ""))
+        ).strip()
+        if not normalized:
+            continue
+        words = normalized.split()
+        if len(words) > 5:
+            normalized = " ".join(words[:5])
+        phrase = f'all:"{normalized.casefold()}"'
+        if phrase not in phrases:
+            phrases.append(phrase)
+    return " OR ".join(phrases[:3])
+
+
+def _build_arxiv_search_query(query: str) -> str:
+    """Compile a natural-language query into recall-friendly arXiv syntax.
+
+    Wrapping the whole request in ``all:"..."`` behaves like a long phrase
+    search and frequently returns zero results. Short academic phrases are
+    preserved, while the remaining informative terms are combined with AND.
+    """
+
+    normalized = " ".join(str(query or "").replace("-", " ").split()).strip()
+    if not normalized:
+        return "all:*"
+
+    lowered = normalized.casefold()
+    phrase_aliases = (
+        ("software engineering", "software engineering"),
+        ("software development", "software development"),
+        ("development lifecycle", "development lifecycle"),
+        ("scientific literature", "scientific literature"),
+        ("research assistant", "research assistant"),
+        ("literature review", "literature review"),
+        ("evidence citation", "evidence citation"),
+        ("multi agent", "multi agent"),
+        ("function calling", "function calling"),
+        ("tool calling", "tool calling"),
+        ("tool use", "tool use"),
+        ("language agent", "language agent"),
+        ("coding agent", "coding agent"),
+        ("code agent", "code agent"),
+        ("failure mode", "failure mode"),
+    )
+    clauses: List[str] = []
+    consumed = lowered
+    for needle, phrase in phrase_aliases:
+        if needle not in consumed:
+            continue
+        clauses.append(f'all:"{phrase}"')
+        consumed = consumed.replace(needle, " ")
+
+    stopwords = {
+        "a", "an", "the", "and", "or", "for", "with", "from", "to", "of",
+        "in", "on", "by", "paper", "papers", "recent", "latest", "study",
+        "studies", "research",
+    }
+    tokens = [
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9]+", consumed)
+        if token.casefold() not in stopwords and len(token) >= 2
+    ]
+    for token in list(dict.fromkeys(tokens))[:5]:
+        clauses.append(f"all:{token}")
+
+    return " AND ".join(clauses[:6]) or f'all:"{normalized}"'
 
 
 def search_survey_papers(topic: str, max_results: int = 6) -> List[PaperNode]:
@@ -113,9 +239,16 @@ def search_semantic_scholar(query: str, max_results: int = 10) -> List[PaperNode
     )
     url = f"{_S2_API}?{params}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
+        req = urllib.request.Request(url, headers=_semantic_scholar_headers())
         with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise RuntimeError(
+                "Semantic Scholar rate limit reached; configure S2_API_KEY "
+                "or continue with arXiv recall."
+            ) from exc
+        return []
     except Exception:
         return []
 
@@ -157,46 +290,143 @@ def enrich_paper_references(
     """
     enriched = 0
     linked = 0
-    paper_items = list(papers.values())[:max_papers]
-    local_ids = set(papers.keys())
-    local_dois = {p.doi for p in papers.values() if p.doi}
+    paper_items = [
+        paper
+        for paper in papers.values()
+        if (paper.source or "").lower() not in {"seed", "fallback"}
+    ][:max_papers]
+    local_aliases = _local_paper_aliases(papers)
 
     for paper in paper_items:
         if paper.references:
             continue
         try:
-            refs = _fetch_s2_references(paper.paper_id)
-            if refs:
-                paper.references = refs
+            references = _fetch_s2_references(paper)
+            if references:
+                normalized_refs: List[str] = []
+                linked_for_paper = set()
+                for reference in references:
+                    local_paper_id = _match_local_reference(reference, local_aliases)
+                    if local_paper_id:
+                        normalized_refs.append(local_paper_id)
+                        linked_for_paper.add(local_paper_id)
+                    else:
+                        external_id = _preferred_reference_id(reference)
+                        if external_id:
+                            normalized_refs.append(external_id)
+                paper.references = list(dict.fromkeys(normalized_refs))
                 enriched += 1
-                for ref_id in refs:
-                    if ref_id in local_ids or ref_id in local_dois:
-                        linked += 1
+                linked += len(linked_for_paper)
         except Exception:
             continue
 
     return enriched, linked
 
 
-def _fetch_s2_references(paper_id: str) -> List[str]:
-    url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}/references?limit=20&fields=externalIds"
-    req = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.HTTPError, urllib.error.URLError):
-        return []
+def _fetch_s2_references(paper: PaperNode) -> List[Dict[str, str]]:
+    for identifier in _semantic_scholar_identifiers(paper):
+        encoded_identifier = urllib.parse.quote(identifier, safe=":")
+        url = (
+            "https://api.semanticscholar.org/graph/v1/paper/"
+            f"{encoded_identifier}/references?limit=40&fields=paperId,externalIds"
+        )
+        req = urllib.request.Request(url, headers=_semantic_scholar_headers())
+        try:
+            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            continue
 
-    ref_ids: List[str] = []
-    for ref in data.get("data", []):
-        cited = ref.get("citedPaper", {})
-        ext = cited.get("externalIds", {}) or {}
-        arxiv_id = ext.get("ArXiv", "")
-        if arxiv_id:
-            ref_ids.append(arxiv_id)
-        else:
-            ref_ids.append(cited.get("paperId", ""))
-    return [r for r in ref_ids if r]
+        references: List[Dict[str, str]] = []
+        for ref in data.get("data", []):
+            cited = ref.get("citedPaper", {}) or {}
+            ext = cited.get("externalIds", {}) or {}
+            reference = {
+                "s2": str(cited.get("paperId", "") or "").strip(),
+                "arxiv": str(ext.get("ArXiv", "") or "").strip(),
+                "doi": str(ext.get("DOI", "") or "").strip(),
+            }
+            if any(reference.values()):
+                references.append(reference)
+        return references
+    return []
+
+
+def _semantic_scholar_identifiers(paper: PaperNode) -> List[str]:
+    identifiers: List[str] = []
+    doi = _normalize_doi(paper.doi)
+    if doi:
+        identifiers.append(f"DOI:{doi}")
+
+    arxiv_id = _paper_arxiv_id(paper)
+    if arxiv_id:
+        identifiers.append(f"ARXIV:{arxiv_id}")
+
+    paper_id = str(paper.paper_id or "").strip()
+    if paper_id and paper_id != arxiv_id:
+        identifiers.append(paper_id)
+    return list(dict.fromkeys(identifiers))
+
+
+def _paper_arxiv_id(paper: PaperNode) -> str:
+    source = str(paper.source or "").lower()
+    paper_id = str(paper.paper_id or "").strip()
+    if source == "arxiv" and paper_id:
+        return paper_id
+    match = re.search(r"arxiv\.org/(?:abs|pdf)/([^?#/]+)", str(paper.url or ""), flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(1).removesuffix(".pdf")
+
+
+def _local_paper_aliases(papers: Dict[str, PaperNode]) -> Dict[str, str]:
+    aliases: Dict[str, str] = {}
+    for canonical_id, paper in papers.items():
+        candidates = [
+            canonical_id,
+            paper.paper_id,
+            _paper_arxiv_id(paper),
+            _normalize_doi(paper.doi),
+        ]
+        for candidate in candidates:
+            normalized = _normalize_paper_identifier(candidate)
+            if normalized:
+                aliases.setdefault(normalized, canonical_id)
+    return aliases
+
+
+def _match_local_reference(
+    reference: Dict[str, str],
+    local_aliases: Dict[str, str],
+) -> str:
+    for key in ("s2", "arxiv", "doi"):
+        normalized = _normalize_paper_identifier(reference.get(key, ""))
+        if normalized and normalized in local_aliases:
+            return local_aliases[normalized]
+    return ""
+
+
+def _preferred_reference_id(reference: Dict[str, str]) -> str:
+    return (
+        str(reference.get("arxiv", "") or "").strip()
+        or str(reference.get("doi", "") or "").strip()
+        or str(reference.get("s2", "") or "").strip()
+    )
+
+
+def _normalize_doi(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", normalized)
+    normalized = re.sub(r"^doi:\s*", "", normalized)
+    return normalized
+
+
+def _normalize_paper_identifier(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = re.sub(r"^(?:arxiv|doi):\s*", "", normalized)
+    normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", normalized)
+    normalized = re.sub(r"^https?://arxiv\.org/(?:abs|pdf)/", "", normalized)
+    return normalized.removesuffix(".pdf").strip()
 
 
 # ── Taxonomy Builder ─────────────────────────────────────────────────────────

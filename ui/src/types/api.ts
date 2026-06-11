@@ -81,6 +81,9 @@ export type WorkspacePaper = {
   citation_count: number;
   url: string;
   is_new_this_round: boolean;
+  relevance_score?: number;
+  relevance_tier?: "direct" | "adjacent" | "candidate" | "background";
+  relevance_reasons?: string[];
 };
 
 export type WorkspaceGraphEdge = {
@@ -88,6 +91,11 @@ export type WorkspaceGraphEdge = {
   target: string;
   relationship: string;
   reasoning: string;
+  provenance?: string;
+  confidence?: number;
+  evidence_level?: string;
+  evidence?: string;
+  evidence_snippets?: string[];
 };
 
 export type WorkspaceGap = {
@@ -150,11 +158,24 @@ export type WorkspaceEvidenceStatus = {
   insufficient: boolean;
   total_papers: number;
   real_paper_count: number;
+  direct_paper_count?: number;
+  adjacent_paper_count?: number;
   fallback_paper_count: number;
   fallback_ratio: number;
   covered_branch_count: number;
   candidate_branches: string[];
   message: string;
+};
+
+export type WorkspaceEvidenceSnapshot = {
+  snapshot_id: string;
+  version: string;
+  created_at: string;
+  topic: string;
+  stats: Record<string, unknown>;
+  retrieval_plan: Record<string, unknown>;
+  retrieval_outcome: Record<string, unknown>;
+  alignment_score: number;
 };
 
 export type WorkspaceKnowledgeHit = {
@@ -179,6 +200,9 @@ export type WorkspaceSourceTrace = {
   refresh_triggered: boolean;
   novel_paper_count: number;
   reused_paper_count: number;
+  direct_paper_count?: number;
+  adjacent_paper_count?: number;
+  low_relevance_filtered_count?: number;
   knowledge_hit_count: number;
   knowledge_hits: WorkspaceKnowledgeHit[];
   workspace_hint_count: number;
@@ -210,12 +234,14 @@ export type WorkspaceSnapshot = {
   topic: string;
   summary: string;
   papers: WorkspacePaper[];
+  analysis_paper_ids: string[];
   taxonomy: WorkspaceTaxonomy;
   graph_edges: WorkspaceGraphEdge[];
   gaps: WorkspaceGap[];
   ideas: WorkspaceIdea[];
   alignment_score: number;
   evidence_status: WorkspaceEvidenceStatus;
+  evidence_snapshot?: WorkspaceEvidenceSnapshot | null;
   source_trace?: WorkspaceSourceTrace | null;
   inherited_context?: WorkspaceInheritedContext | null;
   working_memory?: WorkspaceWorkingMemory | null;
@@ -223,6 +249,13 @@ export type WorkspaceSnapshot = {
     thought_trace: Array<Record<string, unknown>>;
     action_history: Array<Record<string, unknown>>;
     context_inputs: Array<Record<string, unknown>>;
+    run_status?: string;
+    termination_reason?: string;
+    degraded_reason?: string;
+    repair_count?: number;
+    max_repair_rounds?: number;
+    repair_stop_reason?: string;
+    repair_history?: Array<Record<string, unknown>>;
   } | null;
 };
 
@@ -269,6 +302,7 @@ export type DeleteConversationPayload = {
 
 export type RunTaskPayload = {
   task_id: string;
+  task_status: string;
   topic: string;
   alignment_score: number;
   trace_keys?: string[];

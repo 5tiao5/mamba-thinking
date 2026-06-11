@@ -2199,6 +2199,19 @@ body {
   min-height: 0;
 }
 
+@media (max-width: 1280px) {
+  .workspace-grid,
+  .workspace-insights-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+
+  .pane {
+    max-height: none;
+  }
+}
+
 .workspace-hero {
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 12px;

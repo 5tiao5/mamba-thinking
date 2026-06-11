@@ -154,6 +154,145 @@
   background: #fff4df;
 }
 
+.workspace-snapshot-card {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  border: 1px solid #cbdcf5;
+  border-radius: 12px;
+  background:
+    linear-gradient(120deg, rgba(47, 111, 237, 0.07), rgba(255, 255, 255, 0) 48%),
+    #f9fbff;
+}
+
+.workspace-snapshot-card > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.workspace-snapshot-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-snapshot-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.workspace-snapshot-heading > div:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.workspace-snapshot-heading strong {
+  color: #22324a;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.workspace-snapshot-summary-pills {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workspace-snapshot-toggle {
+  color: #2f6fed;
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.workspace-snapshot-toggle::after {
+  content: " +";
+}
+
+.workspace-snapshot-card[open] .workspace-snapshot-toggle::after {
+  content: " -";
+}
+
+.workspace-snapshot-body {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #dce8f7;
+  padding: 14px 16px 16px;
+}
+
+.workspace-snapshot-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workspace-snapshot-metrics div,
+.workspace-snapshot-provenance div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-snapshot-metrics div {
+  border: 1px solid #dce8f7;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 10px 12px;
+}
+
+.workspace-snapshot-metrics span,
+.workspace-snapshot-provenance span {
+  color: #6a7a90;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.workspace-snapshot-metrics strong {
+  color: #172033;
+  font-size: 1.08rem;
+}
+
+.workspace-snapshot-provenance {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 0.8fr)
+    minmax(150px, 0.7fr)
+    minmax(260px, 1.6fr)
+    minmax(110px, 0.5fr);
+  gap: 12px;
+  border: 1px dashed #c9d9ee;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 11px 12px;
+}
+
+.workspace-snapshot-provenance strong,
+.workspace-snapshot-provenance code {
+  overflow: hidden;
+  color: #34465f;
+  font-size: 0.79rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+}
+
+.workspace-snapshot-provenance code {
+  white-space: nowrap;
+}
+
+.workspace-snapshot-note {
+  margin: 0;
+  color: #5c6d84;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
 .workspace-rail {
   display: grid;
   gap: 12px;
@@ -206,6 +345,48 @@
 .workspace-main-column {
   display: grid;
   gap: 12px;
+}
+
+.workspace-evidence-switch {
+  display: inline-flex;
+  gap: 4px;
+  border: 1px solid #d7e6f7;
+  border-radius: 10px;
+  background: #f4f8fd;
+  padding: 3px;
+}
+
+.workspace-evidence-switch button {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 10px;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.workspace-evidence-switch button.workspace-evidence-switch-active {
+  background: #ffffff;
+  color: #1f5fe0;
+  box-shadow: 0 2px 7px rgba(34, 78, 145, 0.12);
+}
+
+.workspace-evidence-scope-note {
+  margin: 0 12px 10px;
+  border-left: 3px solid #8eb8ff;
+  background: #f5f9ff;
+  padding: 9px 11px;
+  color: #526783;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.workspace-kpi-card small {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 750;
 }
 
 .workspace-paper-meta-grid {
@@ -1312,6 +1493,21 @@
 
   .workspace-hero-notes {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-snapshot-card > summary {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .workspace-snapshot-heading {
+    display: grid;
+    align-items: flex-start;
+  }
+
+  .workspace-snapshot-metrics,
+  .workspace-snapshot-provenance {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workspace-note-card-header {

@@ -58,7 +58,11 @@ def auditor_node(state: ResearchState) -> ResearchState:
             status="skipped",
             note="Current mode skips LLM edge auditing.",
         )
-    elif any(edge.relationship.lower() in {"improves", "extends", "solves"} for edge in edges[:8]):
+    elif any(
+        edge.relationship.lower()
+        in {"improves", "improvement", "extends", "extension", "solves"}
+        for edge in edges[:8]
+    ):
         record_tool_event(
             state,
             tool_name="LLM edge auditor",

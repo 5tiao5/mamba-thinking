@@ -64,7 +64,9 @@ export function HistoryPage() {
         const latestTask = latestTaskByConversation.get(conversation.conversation_id);
         if (activeFilter !== "all") {
           const taskStatus = latestTask?.status ?? "created";
-          if (taskStatus !== activeFilter) {
+          const matchesCompleted =
+            activeFilter === "completed" && (taskStatus === "completed" || taskStatus === "degraded");
+          if (taskStatus !== activeFilter && !matchesCompleted) {
             return false;
           }
         }
@@ -144,7 +146,9 @@ export function HistoryPage() {
         </div>
         <div className="metric-cell">
           <div className="metric-label">已有结果</div>
-          <div className="metric-value">{tasks.filter((task) => task.status === "completed").length}</div>
+          <div className="metric-value">
+            {tasks.filter((task) => task.status === "completed" || task.status === "degraded").length}
+          </div>
         </div>
         <div className="metric-cell">
           <div className="metric-label">需要关注</div>
@@ -171,7 +175,9 @@ export function HistoryPage() {
               {filteredConversations.map((conversation) => {
                 const latestTask = latestTaskByConversation.get(conversation.conversation_id);
                 const conversationTasks = tasksByConversation.get(conversation.conversation_id) ?? [];
-                const completedCount = conversationTasks.filter((task) => task.status === "completed").length;
+                const completedCount = conversationTasks.filter(
+                  (task) => task.status === "completed" || task.status === "degraded",
+                ).length;
                 return (
                   <article className="insight-item history-record-item" key={conversation.conversation_id}>
                     <div className="item-heading">

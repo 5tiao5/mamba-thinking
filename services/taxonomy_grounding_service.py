@@ -183,6 +183,37 @@ def ground_taxonomy(
     }
 
 
+def assign_papers_to_taxonomy(
+    raw_taxonomy: Any,
+    papers: Sequence[Any],
+) -> Dict[str, List[str]]:
+    """Map each paper to grounded expert-taxonomy branch names.
+
+    This lightweight projection is used inside the agent pipeline before graph
+    construction. It intentionally preserves the paper's original source
+    category, such as ``cs.SE``, in a separate field.
+    """
+    normalized_input = _unwrap_taxonomy(raw_taxonomy)
+    branch_payloads = _normalize_branch_payloads(normalized_input)
+    branch_profiles = [_build_branch_profile(payload) for payload in branch_payloads]
+    branch_assignments = _assign_papers_to_branches(branch_profiles, papers)
+    branch_name_by_id = {
+        profile.branch_id: profile.name
+        for profile in branch_profiles
+    }
+
+    assignments: Dict[str, List[str]] = {
+        str(getattr(paper, "paper_id", "")): []
+        for paper in papers
+        if str(getattr(paper, "paper_id", "")).strip()
+    }
+    for branch_id, paper_ids in branch_assignments.items():
+        branch_name = branch_name_by_id.get(branch_id, branch_id)
+        for paper_id in paper_ids:
+            assignments.setdefault(paper_id, []).append(branch_name)
+    return assignments
+
+
 def _unwrap_taxonomy(raw_taxonomy: Any) -> Any:
     if isinstance(raw_taxonomy, dict) and "taxonomy" in raw_taxonomy:
         return raw_taxonomy["taxonomy"]

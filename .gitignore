@@ -57,6 +57,12 @@ ui/*.tsbuildinfo
 ui/vite.config.js
 ui/vite.config.d.ts
 
+# Browser / end-to-end test artifacts
+.playwright-cli/
+playwright-report/
+test-results/
+output/playwright/
+
 # Runtime outputs
 outputs/
 outputs_*/

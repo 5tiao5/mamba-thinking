@@ -6,12 +6,18 @@ import {
   retrievalStatusTone,
   shouldHighlightRetrievalStatus,
 } from "../../lib/groundingText";
-import type { WorkspaceEvidenceStatus, WorkspaceSourceTrace } from "../../types/api";
+import type {
+  WorkspaceEvidenceSnapshot,
+  WorkspaceEvidenceStatus,
+  WorkspaceSourceTrace,
+} from "../../types/api";
 import { StatusPill } from "../ui/StatusPill";
+import { WorkspaceEvidenceSnapshotCard } from "./WorkspaceEvidenceSnapshotCard";
 
 type WorkspaceSummarySectionProps = {
   topic?: string;
   paperCount: number;
+  analysisPaperCount: number;
   gapCount: number;
   ideaCount: number;
   alignmentScore: number;
@@ -20,6 +26,7 @@ type WorkspaceSummarySectionProps = {
   recommendation?: string;
   usesFallbackPapers: boolean;
   evidenceStatus?: WorkspaceEvidenceStatus;
+  evidenceSnapshot?: WorkspaceEvidenceSnapshot | null;
   sourceTrace?: WorkspaceSourceTrace | null;
 };
 
@@ -65,6 +72,7 @@ function cleanSummaryText(summary: string, options?: { suppressCoverageGap?: boo
 export function WorkspaceSummarySection({
   topic,
   paperCount,
+  analysisPaperCount,
   gapCount,
   ideaCount,
   alignmentScore,
@@ -73,6 +81,7 @@ export function WorkspaceSummarySection({
   recommendation,
   usesFallbackPapers,
   evidenceStatus,
+  evidenceSnapshot,
   sourceTrace,
 }: WorkspaceSummarySectionProps) {
   const isEvidenceInsufficient = evidenceStatus?.insufficient;
@@ -140,8 +149,9 @@ export function WorkspaceSummarySection({
 
       <div className="workspace-hero-side">
         <div className="workspace-kpi-card">
-          <span>论文线索</span>
+          <span>合格论文</span>
           <strong>{paperCount}</strong>
+          <small>核心分析 {analysisPaperCount} 篇</small>
         </div>
         <div className="workspace-kpi-card">
           <span>研究空白</span>
@@ -210,6 +220,8 @@ export function WorkspaceSummarySection({
           </div>
         </div>
       ) : null}
+
+      <WorkspaceEvidenceSnapshotCard snapshot={evidenceSnapshot} />
     </section>
   );
 }

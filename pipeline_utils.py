@@ -131,6 +131,28 @@ def balanced_mode(state: Optional[Dict[str, Any]] = None) -> bool:
     return _state_mode(state) == "balanced"
 
 
+def repair_round_budget(state: Optional[Dict[str, Any]] = None) -> int:
+    raw_value = (state or {}).get("max_repair_rounds")
+    if raw_value is None:
+        raw_value = os.environ.get("AGENT_MAX_REPAIR_ROUNDS", "2")
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 2
+    return max(0, min(value, 5))
+
+
+def repair_min_alignment_gain(state: Optional[Dict[str, Any]] = None) -> float:
+    raw_value = (state or {}).get("min_repair_alignment_gain")
+    if raw_value is None:
+        raw_value = os.environ.get("AGENT_MIN_ALIGNMENT_GAIN", "0.03")
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        value = 0.03
+    return max(0.0, min(value, 1.0))
+
+
 # ── State helpers ─────────────────────────────────────────────────────────────
 
 def initial_state(
@@ -166,6 +188,7 @@ def initial_state(
         previous_round_query_intent=dict(context.get("previous_round_query_intent", {}) or {}),
         max_results=max_results,
         search_queries=[],
+        evidence_pool={},
         paper_nodes={},
         review_texts=[],
         expert_taxonomy={},
@@ -190,6 +213,13 @@ def initial_state(
         graph_events=[],
         thought_trace=[],
         retry_count=0,
+        max_repair_rounds=repair_round_budget(),
+        min_repair_alignment_gain=repair_min_alignment_gain(),
+        repair_baseline={},
+        repair_history=[],
+        repair_stop_reason="",
+        degraded_reason="",
+        termination_reason="",
         retry_requested=False,
         correction_checked=False,
         needs_taxonomy_refresh=False,
@@ -437,15 +467,14 @@ def keyword_overlap(left: PaperNode, right: PaperNode) -> float:
 
 
 def infer_relationship(source: PaperNode, target: PaperNode) -> str:
-    """Infer the relationship direction: improves, extends, references, or compares."""
-    overlap = keyword_overlap(source, target)
-    if overlap >= 0.5:
-        return "extends"
-    if overlap >= 0.3:
-        return "improves"
-    if overlap >= 0.15:
-        return "compares"
-    return "references"
+    """Return the only relationship justified by lexical similarity alone.
+
+    Keyword overlap can discover a candidate connection, but it cannot prove
+    citation, comparison, extension, or improvement. Stronger relationship
+    types must be assigned by a later evidence-verification stage.
+    """
+    del source, target
+    return "related"
 
 
 def canonical(value: str) -> str:

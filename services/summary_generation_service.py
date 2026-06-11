@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -20,6 +20,7 @@ class SummaryGenerationInput:
     detected_gaps: List[Any]
     ideas: List[ResearchIdea]
     report_text: str
+    evidence_snapshot: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -44,6 +45,7 @@ Return valid JSON only in this format:
 
 Topic: {request.topic}
 Alignment score: {request.alignment_score}
+Evidence snapshot ID: {request.evidence_snapshot.get("snapshot_id", "")}
 Top gaps: {json.dumps([str(gap.get('id') or gap.get('gap_id')) if isinstance(gap, dict) else str(index) for index, gap in enumerate(request.detected_gaps[:4])], ensure_ascii=False)}
 Ideas: {json.dumps([{'idea_id': idea.idea_id, 'title': idea.title} for idea in request.ideas[:3]], ensure_ascii=False)}
 """
@@ -91,6 +93,8 @@ Ideas: {json.dumps([{'idea_id': idea.idea_id, 'title': idea.title} for idea in r
             },
             "recommendation": "Focus on the top gaps and refine the ideas into actionable research plans.",
             "source": "deterministic",
+            "evidence_snapshot_id": str(request.evidence_snapshot.get("snapshot_id", "") or ""),
+            "evidence_stats": dict(request.evidence_snapshot.get("stats", {}) or {}),
         }
         return summary
 

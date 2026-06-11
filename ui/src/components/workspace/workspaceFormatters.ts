@@ -117,24 +117,32 @@ export function coverageExplanation(score: number | undefined, paperCount: numbe
 export function relationshipTone(relationship: string) {
   const value = relationship.toLowerCase();
   if (value.includes("improve")) return "#2f6fed";
-  if (value.includes("reference")) return "#0f766e";
-  if (value.includes("compare")) return "#b45309";
+  if (value.includes("extension") || value.includes("extend")) return "#7c3aed";
+  if (value.includes("citation") || value.includes("reference")) return "#0f766e";
+  if (value.includes("compar")) return "#b45309";
+  if (value.includes("related")) return "#64748b";
   return "#64748b";
 }
 
 export function relationshipLabel(relationship: string) {
   const value = relationship.toLowerCase();
   if (value.includes("improve")) return "改进关系";
+  if (value.includes("extension") || value.includes("extend")) return "扩展关系";
+  if (value.includes("citation")) return "引用关系";
   if (value.includes("reference")) return "参考关系";
-  if (value.includes("compare")) return "对比关系";
+  if (value.includes("compar")) return "对比关系";
+  if (value.includes("related")) return "主题关联";
   return "关联关系";
 }
 
 export function relationshipBadgeLabel(relationship: string) {
   const value = relationship.toLowerCase();
   if (value.includes("improve")) return "IMPROVES";
+  if (value.includes("extension") || value.includes("extend")) return "EXTENDS";
+  if (value.includes("citation")) return "CITATION";
   if (value.includes("reference")) return "REFERENCES";
-  if (value.includes("compare")) return "COMPARES";
+  if (value.includes("compar")) return "COMPARES";
+  if (value.includes("related")) return "RELATED";
   return "RELATION";
 }
 
@@ -180,13 +188,22 @@ export function formatGraphEdgeHeadline(
   const label = relationshipLabel(relationship);
 
   if (label === "改进关系") {
-    return `${source} 对 ${target} 提供了改进线索`;
+    return `${target} 明确报告了对 ${source} 的改进`;
+  }
+  if (label === "扩展关系") {
+    return `${target} 明确扩展了 ${source}`;
+  }
+  if (label === "引用关系") {
+    return `${target} 明确引用了 ${source}`;
   }
   if (label === "参考关系") {
     return `${source} 与 ${target} 存在参考关联`;
   }
   if (label === "对比关系") {
     return `${source} 与 ${target} 形成对比关系`;
+  }
+  if (label === "主题关联") {
+    return `${source} 与 ${target} 主题相关，尚未确认直接演进关系`;
   }
   return `${source} 与 ${target} 存在关联`;
 }
@@ -229,14 +246,23 @@ export function formatGraphEdgeReasoningByRelationship(
         : "有一定重合"
       : "存在重合";
 
+  if (value.includes("citation")) {
+    return "目标论文的参考文献元数据中明确包含源论文，因此这是一条可追溯的引用关系。";
+  }
   if (value.includes("reference")) {
     return `这两篇论文在研究主题或关键词上${closeness}，可以作为同一方向的参考材料。`;
   }
-  if (value.includes("improve")) {
-    return "从当前证据看，前一篇论文的方法或结论对后一篇论文形成了推进线索。";
+  if (value.includes("related")) {
+    return `这两篇论文在研究主题或关键词上${closeness}；当前仅能确认主题关联，不能据此断言存在改进或扩展关系。`;
   }
-  if (value.includes("compare")) {
-    return "这两篇论文关注的问题相近，但切入方式不同，适合并排比较。";
+  if (value.includes("improve")) {
+    return "目标论文的摘要明确提到源论文，并报告了带有评测信号的改进。";
+  }
+  if (value.includes("extension") || value.includes("extend")) {
+    return "目标论文的摘要明确提到源论文，并说明其工作建立在该研究之上或对其进行了扩展。";
+  }
+  if (value.includes("compar")) {
+    return "目标论文的摘要明确提到源论文，并陈述了比较或对照关系。";
   }
 
   return formatGraphEdgeReasoning(reasoning, papers);

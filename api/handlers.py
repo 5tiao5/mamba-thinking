@@ -291,7 +291,7 @@ class ProductApiHandlers:
             metadata={
                 "kind": "task_result",
                 "task_id": workspace.task_id,
-                "task_status": "completed",
+                "task_status": task.status,
                 "topic": display_topic,
                 "alignment_score": workspace.alignment_score,
                 "paper_count": len(workspace.papers),
@@ -304,11 +304,13 @@ class ProductApiHandlers:
         )
 
         # Auto-save workspace summary as reusable knowledge
-        self._auto_save_workspace_knowledge(task=task, workspace=workspace)
+        if task.status in {"completed", "degraded"}:
+            self._auto_save_workspace_knowledge(task=task, workspace=workspace)
 
         return ok(
             {
                 "task_id": workspace.task_id,
+                "task_status": task.status,
                 "topic": display_topic,
                 "alignment_score": workspace.alignment_score,
                 "trace_keys": list(workspace.trace.keys()),
@@ -635,7 +637,19 @@ class ProductApiHandlers:
         a detailed template that reads like a research assistant finding,
         not a task log.
         """
-        return self._build_natural_assistant_message(task=task, workspace=workspace).strip()
+        content = self._build_natural_assistant_message(task=task, workspace=workspace).strip()
+        if task.status == "degraded":
+            return (
+                "本轮已完成分析，但补搜未继续带来有效增益，以下结论应视为证据受限结果。\n\n"
+                f"{content}"
+            )
+        if task.status == "step_limit_reached":
+            return (
+                "本轮在完成最终合成前达到控制器步数上限，工作台保留了部分结果供排查，"
+                "但这些内容不会自动沉淀为长期知识。\n\n"
+                f"{content}"
+            )
+        return content
 
     def _build_natural_assistant_message(self, *, task, workspace) -> str:
         """Generate a natural-language research assistant response.

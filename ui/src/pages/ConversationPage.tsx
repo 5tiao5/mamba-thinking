@@ -17,6 +17,8 @@ const taskStatusLabelMap: Record<string, string> = {
   pending: "待运行",
   running: "运行中",
   completed: "已完成",
+  degraded: "已完成（证据受限）",
+  step_limit_reached: "未完成（步数耗尽）",
   failed: "失败",
 };
 

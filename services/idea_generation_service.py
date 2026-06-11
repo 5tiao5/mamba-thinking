@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 from llm_client import call_openai_json, call_openai_text, has_openai_key
@@ -18,6 +18,7 @@ class IdeaGenerationInput:
     topic: str
     papers: List[Any]
     gaps: List[Any]
+    evidence_snapshot: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -70,6 +71,9 @@ Papers:
 
 Detected gaps:
 {json.dumps(gaps, ensure_ascii=False)}
+
+Frozen evidence snapshot:
+{json.dumps(request.evidence_snapshot, ensure_ascii=False)[:6000]}
 """
         if has_openai_key():
             live_status("Calling LLM to generate structured research ideas.")
@@ -229,7 +233,9 @@ Detected gaps:
         topic = str(request.topic or "当前主题")
         gaps = request.gaps
         gap_hint = (
-            self._humanize_gap_description(str(gaps[0].get("description", gaps[0])))
+            self._humanize_gap_description(
+                str(gaps[0].get("description", gaps[0].get("summary", gaps[0])))
+            )
             if isinstance(gaps[0], dict)
             else self._humanize_gap_description(str(gaps[0]))
         ) if gaps else "当前证据仍存在覆盖不足与关系不稳的问题"

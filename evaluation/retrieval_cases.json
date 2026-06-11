@@ -1,0 +1,270 @@
+{
+  "version": "1.0",
+  "description": "Human-authored retrieval contracts for Product Agent. Landmark papers are soft checks; concept coverage and constraints are hard checks.",
+  "cases": [
+    {
+      "id": "agent_tool_use_evaluation",
+      "category": "core_topic",
+      "topic": "AI Agent 工具使用可靠性评测",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "AI Agent tool use reliability evaluation",
+        "user_goal": "benchmark_evaluation",
+        "focus_terms": ["tool use", "reliability"],
+        "paper_scope": ["benchmark evaluation"]
+      },
+      "expectations": {
+        "min_real_papers": 3,
+        "min_direct_papers": 2,
+        "min_precision_at_k": 0.75,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "agent", "aliases": ["ai agent", "llm agent", "language agent", "agentic"]},
+          {"name": "tool_use", "aliases": ["tool use", "tool-using", "tool calling", "function calling", "api calling"]},
+          {"name": "evaluation", "aliases": ["benchmark", "evaluation", "reliability", "robustness", "failure mode"]}
+        ],
+        "landmark_titles": ["MCPAgentBench", "UniToolCall", "ToolBench", "Agent-SafetyBench"],
+        "forbidden_title_terms": ["monocular reconstruction", "wireless channel", "image segmentation"]
+      },
+      "rationale": "核心价值案例：既要搜到工具使用论文，也要覆盖评测或可靠性，而不是泛 Agent 论文。"
+    },
+    {
+      "id": "function_calling_robustness",
+      "category": "query_variant",
+      "topic": "function calling robustness benchmark for LLM agents",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "function calling robustness benchmark for LLM agents",
+        "user_goal": "benchmark_evaluation",
+        "focus_terms": ["function calling", "robustness"],
+        "paper_scope": ["benchmark"]
+      },
+      "expectations": {
+        "min_real_papers": 2,
+        "min_direct_papers": 1,
+        "min_precision_at_k": 0.7,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "agent", "aliases": ["llm agent", "language agent", "agentic", "large language model"]},
+          {"name": "calling", "aliases": ["function calling", "tool calling", "api calling", "tool use"]},
+          {"name": "quality", "aliases": ["robustness", "reliability", "benchmark", "evaluation", "failure"]}
+        ],
+        "landmark_titles": ["Berkeley Function-Calling Leaderboard", "ToolACE", "BFCL"],
+        "forbidden_title_terms": ["medical image", "autonomous driving"]
+      },
+      "rationale": "验证 tool use 的同义表达不会导致召回断裂。"
+    },
+    {
+      "id": "software_engineering_agents",
+      "category": "core_topic",
+      "topic": "AI Agent for Software Engineering",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "AI agents for software engineering",
+        "user_goal": "survey",
+        "focus_terms": ["software engineering agents"],
+        "paper_scope": ["evaluation benchmark"]
+      },
+      "expectations": {
+        "min_real_papers": 3,
+        "min_direct_papers": 2,
+        "min_precision_at_k": 0.7,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "agent", "aliases": ["ai agent", "llm agent", "language agent", "agentic"]},
+          {"name": "software_engineering", "aliases": ["software engineering", "code agent", "coding agent", "repository", "program repair"]},
+          {"name": "evaluation", "aliases": ["benchmark", "evaluation", "swe-bench", "reliability"]}
+        ],
+        "landmark_titles": ["SWE-agent", "SWE-bench", "AutoCodeRover", "OpenHands"],
+        "forbidden_title_terms": ["protein", "wireless", "robot navigation"]
+      },
+      "rationale": "项目长期主示例，必须避免被泛化成所有 AI Agent。"
+    },
+    {
+      "id": "agent_centric_methodology",
+      "category": "direction_expansion",
+      "topic": "Agent-Centric Software Development Methodologies",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "agent-centric software development methodologies",
+        "user_goal": "extend_context",
+        "focus_terms": ["agent-centric methodology", "AI agent teams"],
+        "paper_scope": ["software development process"]
+      },
+      "expectations": {
+        "min_real_papers": 2,
+        "min_direct_papers": 1,
+        "min_precision_at_k": 0.65,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "agent", "aliases": ["agent-centric", "ai agent", "agentic", "multi-agent"]},
+          {"name": "development", "aliases": ["software development", "software engineering", "development process", "methodology"]},
+          {"name": "team_process", "aliases": ["agent team", "collaboration", "workflow", "orchestration"]}
+        ],
+        "landmark_titles": ["Agentsway"],
+        "forbidden_title_terms": ["episodic memory", "travel planning"]
+      },
+      "rationale": "复现曾经把“继续展开方法论”错误引向记忆论文的问题。"
+    },
+    {
+      "id": "episodic_memory_se_agents",
+      "category": "direction_expansion",
+      "topic": "episodic memory in software engineering agents",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "episodic memory in software engineering agents",
+        "user_goal": "extend_context",
+        "focus_terms": ["episodic memory", "memory augmentation"],
+        "paper_scope": ["software engineering agents"]
+      },
+      "expectations": {
+        "min_real_papers": 2,
+        "min_direct_papers": 1,
+        "min_precision_at_k": 0.65,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "agent", "aliases": ["agent", "agentic"]},
+          {"name": "memory", "aliases": ["episodic memory", "agent memory", "memory augmentation", "long-term memory"]},
+          {"name": "software_engineering", "aliases": ["software engineering", "code agent", "coding agent", "repository"]}
+        ],
+        "landmark_titles": [],
+        "forbidden_title_terms": ["biological simulation", "medical diagnosis"]
+      },
+      "rationale": "用于区分明确的记忆研究与泛软件工程 Agent 论文。"
+    },
+    {
+      "id": "recent_two_years_code_agents",
+      "category": "time_constraint",
+      "topic": "近两年的代码 Agent 评测论文",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "code agent evaluation",
+        "user_goal": "narrow_literature_scope",
+        "focus_terms": ["code agent"],
+        "paper_scope": ["benchmark evaluation"],
+        "time_range": {"start_year": 2025, "end_year": 2026, "strict": true}
+      },
+      "expectations": {
+        "min_real_papers": 2,
+        "min_direct_papers": 1,
+        "min_precision_at_k": 0.7,
+        "min_concept_groups_per_paper": 2,
+        "year_range": {"start_year": 2025, "end_year": 2026},
+        "concept_groups": [
+          {"name": "agent", "aliases": ["agent", "agentic"]},
+          {"name": "code", "aliases": ["code agent", "coding agent", "software engineering", "repository"]},
+          {"name": "evaluation", "aliases": ["benchmark", "evaluation", "swe-bench", "reliability"]}
+        ],
+        "landmark_titles": [],
+        "forbidden_title_terms": ["robot", "wireless"]
+      },
+      "rationale": "复现“缩小到近两年”必须重新检索且严格遵守年份的问题。"
+    },
+    {
+      "id": "recent_three_years_code_agents",
+      "category": "time_constraint",
+      "topic": "扩展到近三年的代码 Agent 评测论文",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "code agent evaluation",
+        "user_goal": "extend_context",
+        "focus_terms": ["code agent"],
+        "paper_scope": ["benchmark evaluation"],
+        "time_range": {"start_year": 2024, "end_year": 2026, "strict": true}
+      },
+      "expectations": {
+        "min_real_papers": 3,
+        "min_direct_papers": 2,
+        "min_precision_at_k": 0.7,
+        "min_concept_groups_per_paper": 2,
+        "year_range": {"start_year": 2024, "end_year": 2026},
+        "concept_groups": [
+          {"name": "agent", "aliases": ["agent", "agentic"]},
+          {"name": "code", "aliases": ["code agent", "coding agent", "software engineering", "repository"]},
+          {"name": "evaluation", "aliases": ["benchmark", "evaluation", "swe-bench", "reliability"]}
+        ],
+        "landmark_titles": ["SWE-agent", "AutoCodeRover"],
+        "forbidden_title_terms": ["robot", "wireless"]
+      },
+      "rationale": "复现“扩展到近三年”不能只保留原论文不补搜的问题。"
+    },
+    {
+      "id": "multi_agent_se_workflow",
+      "category": "mixed_language",
+      "topic": "多 Agent 协作的软件工程 workflow 与评测",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "multi-agent collaboration for software engineering workflows",
+        "user_goal": "benchmark_evaluation",
+        "focus_terms": ["multi-agent collaboration", "workflow"],
+        "paper_scope": ["software engineering evaluation"]
+      },
+      "expectations": {
+        "min_real_papers": 2,
+        "min_direct_papers": 1,
+        "min_precision_at_k": 0.65,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "multi_agent", "aliases": ["multi-agent", "agent team", "agent collaboration"]},
+          {"name": "software_engineering", "aliases": ["software engineering", "code generation", "repository", "software development"]},
+          {"name": "workflow_quality", "aliases": ["workflow", "benchmark", "evaluation", "reliability"]}
+        ],
+        "landmark_titles": ["MetaGPT", "ChatDev"],
+        "forbidden_title_terms": ["biology", "traffic simulation"]
+      },
+      "rationale": "验证中英混输和多 Agent 主题不会退化成泛多智能体系统。"
+    },
+    {
+      "id": "research_assistant_rag",
+      "category": "adjacent_product_domain",
+      "topic": "RAG-based scientific research assistant with evidence citation",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "retrieval augmented scientific research assistant",
+        "user_goal": "survey",
+        "focus_terms": ["scientific literature", "evidence citation"],
+        "paper_scope": ["retrieval augmented generation"]
+      },
+      "expectations": {
+        "min_real_papers": 2,
+        "min_direct_papers": 1,
+        "min_precision_at_k": 0.65,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "retrieval", "aliases": ["retrieval augmented", "rag", "literature retrieval"]},
+          {"name": "research", "aliases": ["scientific research", "literature review", "research assistant"]},
+          {"name": "evidence", "aliases": ["citation", "evidence", "grounded generation", "attribution"]}
+        ],
+        "landmark_titles": ["PaperQA", "STORM"],
+        "forbidden_title_terms": ["recommendation system", "visual question answering"]
+      },
+      "rationale": "贴近产品自身定位，验证检索与证据引用主题。"
+    },
+    {
+      "id": "llm_agent_failure_modes",
+      "category": "safety_quality",
+      "topic": "failure modes and reliability evaluation of LLM agents",
+      "mode": "balanced",
+      "query_intent": {
+        "core_topic": "failure modes and reliability evaluation of LLM agents",
+        "user_goal": "benchmark_evaluation",
+        "focus_terms": ["failure modes", "reliability"],
+        "paper_scope": ["agent evaluation"]
+      },
+      "expectations": {
+        "min_real_papers": 3,
+        "min_direct_papers": 2,
+        "min_precision_at_k": 0.7,
+        "min_concept_groups_per_paper": 2,
+        "concept_groups": [
+          {"name": "agent", "aliases": ["llm agent", "language agent", "agentic"]},
+          {"name": "failure", "aliases": ["failure mode", "error", "risk", "safety"]},
+          {"name": "evaluation", "aliases": ["reliability", "benchmark", "evaluation", "robustness"]}
+        ],
+        "landmark_titles": ["Agent-SafetyBench", "R-Judge"],
+        "forbidden_title_terms": ["power grid", "wireless sensor"]
+      },
+      "rationale": "验证质量与安全方向不会只搜到一般能力榜单。"
+    }
+  ]
+}

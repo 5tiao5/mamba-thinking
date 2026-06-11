@@ -5,12 +5,14 @@ from tools import build_taxonomy
 
 from ..models import ResearchState
 from ...services.taxonomy_evidence_service import build_taxonomy_evidence_brief
+from ...services.taxonomy_grounding_service import assign_papers_to_taxonomy
 
 
 def taxonomy_node(state: ResearchState) -> ResearchState:
     """根据综述或摘要文本构建 taxonomy。"""
 
-    if state.get("expert_taxonomy"):
+    if state.get("expert_taxonomy") and not state.get("needs_taxonomy_refresh"):
+        _apply_paper_taxonomy_assignments(state)
         record_decision(
             state,
             stage="taxonomy",
@@ -34,6 +36,7 @@ def taxonomy_node(state: ResearchState) -> ResearchState:
 
     updated = dict(state)
     updated["expert_taxonomy"] = taxonomy
+    _apply_paper_taxonomy_assignments(updated)
     record_tool_event(
         updated,
         tool_name="Taxonomy builder",
@@ -52,3 +55,13 @@ def taxonomy_node(state: ResearchState) -> ResearchState:
     )
     updated.setdefault("logs", []).append("Taxonomy built from survey/paper text.")
     return updated
+
+
+def _apply_paper_taxonomy_assignments(state: ResearchState) -> None:
+    papers = state.get("paper_nodes", {})
+    assignments = assign_papers_to_taxonomy(
+        state.get("expert_taxonomy", {}),
+        list(papers.values()),
+    )
+    for paper_id, paper in papers.items():
+        paper.expert_taxonomy_branches = list(assignments.get(paper_id, []))

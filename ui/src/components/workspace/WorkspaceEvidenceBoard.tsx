@@ -4,6 +4,10 @@ import type { WorkspacePaper } from "../../types/api";
 
 type WorkspaceEvidenceBoardProps = {
   papers: WorkspacePaper[];
+  totalPaperCount: number;
+  analysisPaperCount: number;
+  viewMode: "analysis" | "extended";
+  onViewModeChange: (mode: "analysis" | "extended") => void;
   selectedPaperId: string;
   onSelectPaper: (paperId: string) => void;
   showRoundMarkers?: boolean;
@@ -76,21 +80,52 @@ function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; s
 
 export function WorkspaceEvidenceBoard({
   papers,
+  totalPaperCount,
+  analysisPaperCount,
+  viewMode,
+  onViewModeChange,
   selectedPaperId,
   onSelectPaper,
   showRoundMarkers = false,
 }: WorkspaceEvidenceBoardProps) {
   const selectedPaper = papers.find((paper) => paper.paper_id === selectedPaperId) ?? papers[0];
   const novelPaperCount = papers.filter((paper) => paper.is_new_this_round).length;
+  const visibleLabel = viewMode === "analysis" ? "核心分析论文" : "扩展证据库";
   const eyebrow =
     showRoundMarkers && papers.length
-      ? `${papers.length} 篇可见 · 新增 ${novelPaperCount} 篇`
-      : `${papers.length} 篇可见`;
+      ? `${visibleLabel} ${papers.length} 篇 · 新增 ${novelPaperCount} 篇`
+      : `${visibleLabel} ${papers.length} 篇`;
 
   return (
     <section className="workspace-main-column">
       <section className="pane">
-        <SectionHeader eyebrow={eyebrow} title="论文线索" />
+        <SectionHeader
+          actions={
+            <div className="workspace-evidence-switch" role="tablist" aria-label="论文证据范围">
+              <button
+                className={viewMode === "analysis" ? "workspace-evidence-switch-active" : ""}
+                onClick={() => onViewModeChange("analysis")}
+                type="button"
+              >
+                核心分析 {analysisPaperCount}
+              </button>
+              <button
+                className={viewMode === "extended" ? "workspace-evidence-switch-active" : ""}
+                onClick={() => onViewModeChange("extended")}
+                type="button"
+              >
+                扩展证据 {totalPaperCount}
+              </button>
+            </div>
+          }
+          eyebrow={eyebrow}
+          title="论文证据"
+        />
+        <div className="workspace-evidence-scope-note">
+          {viewMode === "analysis"
+            ? "这些论文参与了本轮 taxonomy、演进图、研究空白与结论生成。"
+            : "这里展示本轮检索到的全部合格论文；未进入核心集的论文用于补充阅读，不直接支撑主要结论。"}
+        </div>
         <div className="data-table-wrap pane-scroll">
           {papers.length ? (
             <table className="data-table">

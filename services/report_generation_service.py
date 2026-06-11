@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 from llm_client import call_openai_text, has_openai_key
@@ -21,6 +21,7 @@ class ReportGenerationInput:
     detected_gaps: List[Any]
     ideas: List[ResearchIdea]
     mermaid: str
+    evidence_snapshot: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -52,6 +53,8 @@ Writing requirements:
 
 Topic: {request.topic}
 Alignment score: {request.alignment_score}
+Evidence snapshot ID: {request.evidence_snapshot.get("snapshot_id", "")}
+Frozen evidence: {json.dumps(request.evidence_snapshot, ensure_ascii=False)[:8000]}
 Taxonomy: {json.dumps(request.expert_taxonomy, ensure_ascii=False)[:3000]}
 Audit reports: {json.dumps(request.audit_reports[:12], ensure_ascii=False)}
 Detected gaps: {json.dumps(request.detected_gaps[:12], ensure_ascii=False)}
@@ -81,6 +84,7 @@ Ideas: {json.dumps([{"idea_id": idea.idea_id, "title": idea.title} for idea in r
                 "alignment_score": request.alignment_score,
                 "ideas": [idea.idea_id for idea in request.ideas],
                 "mermaid": request.mermaid,
+                "evidence_snapshot_id": request.evidence_snapshot.get("snapshot_id", ""),
             },
             sort_keys=True,
             ensure_ascii=False,

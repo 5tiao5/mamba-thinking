@@ -58,6 +58,9 @@ class WorkspacePaperView(BaseModel):
     citation_count: int = 0
     url: str = ""
     is_new_this_round: bool = False
+    relevance_score: float = 0.0
+    relevance_tier: str = "candidate"
+    relevance_reasons: List[str] = Field(default_factory=list)
 
 
 class WorkspaceGraphEdgeView(BaseModel):
@@ -65,6 +68,11 @@ class WorkspaceGraphEdgeView(BaseModel):
     target: str
     relationship: str
     reasoning: str = ""
+    provenance: str = ""
+    confidence: float = 0.0
+    evidence_level: str = "candidate"
+    evidence: str = ""
+    evidence_snippets: List[str] = Field(default_factory=list)
 
 
 class WorkspaceGapView(BaseModel):
@@ -86,6 +94,13 @@ class WorkspaceTraceView(BaseModel):
     thought_trace: List[Dict[str, Any]] = Field(default_factory=list)
     action_history: List[Dict[str, Any]] = Field(default_factory=list)
     context_inputs: List[Dict[str, Any]] = Field(default_factory=list)
+    run_status: str = "completed"
+    termination_reason: str = ""
+    degraded_reason: str = ""
+    repair_count: int = 0
+    max_repair_rounds: int = 0
+    repair_stop_reason: str = ""
+    repair_history: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkspaceKnowledgeHitView(BaseModel):
@@ -110,6 +125,9 @@ class WorkspaceSourceTraceView(BaseModel):
     refresh_triggered: bool = False
     novel_paper_count: int = 0
     reused_paper_count: int = 0
+    direct_paper_count: int = 0
+    adjacent_paper_count: int = 0
+    low_relevance_filtered_count: int = 0
     knowledge_hit_count: int = 0
     knowledge_hits: List[WorkspaceKnowledgeHitView] = Field(default_factory=list)
     workspace_hint_count: int = 0
@@ -140,6 +158,8 @@ class WorkspaceEvidenceStatusView(BaseModel):
     insufficient: bool = False
     total_papers: int = 0
     real_paper_count: int = 0
+    direct_paper_count: int = 0
+    adjacent_paper_count: int = 0
     fallback_paper_count: int = 0
     fallback_ratio: float = 0.0
     covered_branch_count: int = 0
@@ -147,17 +167,30 @@ class WorkspaceEvidenceStatusView(BaseModel):
     message: str = ""
 
 
+class WorkspaceEvidenceSnapshotView(BaseModel):
+    snapshot_id: str = ""
+    version: str = "v1"
+    created_at: str = ""
+    topic: str = ""
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    retrieval_plan: Dict[str, Any] = Field(default_factory=dict)
+    retrieval_outcome: Dict[str, Any] = Field(default_factory=dict)
+    alignment_score: float = 0.0
+
+
 class WorkspaceSnapshotResponse(BaseModel):
     task_id: str
     topic: str
     summary: str = ""
     papers: List[WorkspacePaperView] = Field(default_factory=list)
+    analysis_paper_ids: List[str] = Field(default_factory=list)
     taxonomy: Dict[str, Any] = Field(default_factory=dict)
     graph_edges: List[WorkspaceGraphEdgeView] = Field(default_factory=list)
     gaps: List[WorkspaceGapView] = Field(default_factory=list)
     ideas: List[WorkspaceIdeaView] = Field(default_factory=list)
     alignment_score: float = 0.0
     evidence_status: WorkspaceEvidenceStatusView = Field(default_factory=WorkspaceEvidenceStatusView)
+    evidence_snapshot: Optional[WorkspaceEvidenceSnapshotView] = None
     source_trace: Optional[WorkspaceSourceTraceView] = None
     inherited_context: Optional[WorkspaceInheritedContextView] = None
     working_memory: Optional[WorkspaceWorkingMemoryView] = None

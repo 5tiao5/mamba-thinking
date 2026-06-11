@@ -30,7 +30,12 @@ class LLMAuditService:
                 gaps=[],
             )
 
-        improves_edges = [edge for edge in edges if edge.relationship.lower() in {"improves", "extends", "solves"}]
+        improves_edges = [
+            edge
+            for edge in edges
+            if edge.relationship.lower()
+            in {"improves", "improvement", "extends", "extension", "solves"}
+        ]
         if not improves_edges:
             return AuditResult(
                 score=1.0,
@@ -59,6 +64,8 @@ class LLMAuditService:
                         "target_title": target.title,
                         "target_abstract": target.abstract[:1200],
                         "relationship": edge.relationship,
+                        "provenance": edge.provenance,
+                        "evidence_snippets": list(edge.evidence_snippets[:2]),
                     }
                 )
 

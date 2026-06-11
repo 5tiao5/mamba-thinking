@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from observability import record_decision, record_tool_event
 from product_agent.services.idea_generation_service import IdeaGenerationInput, IdeaGenerationService
+from product_agent.services.evidence_snapshot_service import EvidenceSnapshotService
 from product_agent.services.report_generation_service import ReportGenerationInput, ReportGenerationService
 from product_agent.services.summary_generation_service import SummaryGenerationInput, SummaryGenerationService
 from product_agent.services.text_cleaning import clean_internal_context_text
@@ -23,12 +24,28 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     mermaid = build_mermaid_graph(papers, edges)
     logs = list(state.get("logs", []))
     context_grounding = _build_context_grounding(state)
+    evidence_snapshot = EvidenceSnapshotService().build(
+        topic=str(state.get("topic", "")),
+        papers=papers,
+        taxonomy=state.get("expert_taxonomy", {}),
+        edges=edges,
+        gaps=state.get("detected_gaps", []),
+        retrieval_plan=state.get("retrieval_plan", {}),
+        retrieval_outcome=state.get("retrieval_outcome", {}),
+        alignment_score=float(state.get("alignment_score", 0.0) or 0.0),
+        audit_reports=state.get("audit_reports", []),
+    )
+    snapshot_papers = list(evidence_snapshot.get("papers", []))
+    snapshot_gaps = list(evidence_snapshot.get("gaps", []))
+    snapshot_taxonomy = dict(evidence_snapshot.get("taxonomy", {}) or {})
+    snapshot_audits = list(evidence_snapshot.get("audit_reports", []))
 
     idea_input = IdeaGenerationInput(
         task_id=str(state.get("task_id", "")),
         topic=str(state.get("topic", "")),
-        papers=list(papers.values()),
-        gaps=state.get("detected_gaps", []),
+        papers=snapshot_papers,
+        gaps=snapshot_gaps,
+        evidence_snapshot=evidence_snapshot,
     )
     idea_output = IdeaGenerationService().run(idea_input)
     ideas = idea_output.ideas
@@ -37,11 +54,12 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     report_input = ReportGenerationInput(
         topic=str(state.get("topic", "")),
         alignment_score=float(state.get("alignment_score", 0.0) or 0.0),
-        expert_taxonomy=state.get("expert_taxonomy", {}),
-        audit_reports=state.get("audit_reports", []),
-        detected_gaps=state.get("detected_gaps", []),
+        expert_taxonomy=snapshot_taxonomy,
+        audit_reports=snapshot_audits,
+        detected_gaps=snapshot_gaps,
         ideas=ideas,
         mermaid=mermaid,
+        evidence_snapshot=evidence_snapshot,
     )
     report_output = ReportGenerationService().run(report_input)
     report_text = _append_context_grounding(report_output.report_text, context_grounding)
@@ -51,18 +69,27 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     summary_input = SummaryGenerationInput(
         topic=str(state.get("topic", "")),
         alignment_score=float(state.get("alignment_score", 0.0) or 0.0),
-        paper_nodes=list(papers.values()),
-        detected_gaps=state.get("detected_gaps", []),
+        paper_nodes=snapshot_papers,
+        detected_gaps=snapshot_gaps,
         ideas=ideas,
         report_text=report_text,
+        evidence_snapshot=evidence_snapshot,
     )
     summary_output = SummaryGenerationService().run(summary_input)
     summary = dict(summary_output.summary or {})
+    evidence_pool = state.get("evidence_pool") or papers
+    counts = dict(summary.get("counts", {}) or {})
+    counts["papers"] = len(evidence_pool)
+    counts["papers_retrieved"] = len(evidence_pool)
+    counts["papers_analyzed"] = len(papers)
+    summary["counts"] = counts
     summary["context_grounding"] = context_grounding
+    summary["evidence_snapshot"] = evidence_snapshot
     summary_source = summary_output.source
 
     updated = dict(state)
     updated["generated_ideas"] = ideas
+    updated["evidence_snapshot"] = evidence_snapshot
     updated["final_report"] = report_text
     updated["final_report_id"] = report_id
     updated["final_report_text"] = report_text
@@ -97,13 +124,20 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         updated,
         stage="synthesizer",
         decision=f"Generated {len(ideas)} ideas, final report, and structured summary.",
-        reason="Turn audited evidence into user-facing outputs for the workspace and report.",
+        reason=(
+            "Freeze audited evidence into one snapshot, then use it for all "
+            "user-facing outputs."
+        ),
         next_step="outputs",
     )
 
     logs.append(f"Synthesizer generated {len(ideas)} ideas via {idea_source}.")
     logs.append(f"Synthesizer generated report via {report_source}.")
     logs.append(f"Synthesizer generated summary via {summary_source}.")
+    logs.append(
+        "Synthesizer froze evidence snapshot "
+        f"{evidence_snapshot.get('snapshot_id', '')}."
+    )
     if context_grounding.get("knowledge_hit_count") or context_grounding.get("workspace_hint_count"):
         logs.append("Synthesizer attached context grounding metadata to report summary.")
     updated["logs"] = logs

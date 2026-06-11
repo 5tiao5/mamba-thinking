@@ -2,6 +2,8 @@ export type StatusTone = "neutral" | "info" | "success" | "warning" | "danger";
 
 export function taskStatusLabel(status?: string) {
   if (status === "completed") return "已完成";
+  if (status === "degraded") return "已完成（证据受限）";
+  if (status === "step_limit_reached") return "未完成（步数耗尽）";
   if (status === "running") return "生成中";
   if (status === "failed") return "生成失败";
   if (status === "created" || status === "pending") return "待生成";
@@ -11,6 +13,7 @@ export function taskStatusLabel(status?: string) {
 
 export function taskStatusTone(status?: string): StatusTone {
   if (status === "completed") return "success";
+  if (status === "degraded" || status === "step_limit_reached") return "warning";
   if (status === "running") return "info";
   if (status === "failed") return "danger";
   if (status === "created" || status === "pending") return "warning";

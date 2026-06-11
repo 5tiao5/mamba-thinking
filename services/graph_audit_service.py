@@ -11,7 +11,6 @@ from .audit_common import (
     OVERLAP_THRESHOLD,
     canonical,
     keyword_overlap,
-    paper_search_text,
 )
 
 if TYPE_CHECKING:
@@ -83,7 +82,9 @@ class GraphAuditService:
 
             same_category = canonical(source.taxonomy_category) == canonical(target.taxonomy_category)
             overlap = keyword_overlap(source, target)
-            if not same_category and overlap < OVERLAP_THRESHOLD:
+            provenance = getattr(edge, "provenance", "")
+            is_explicit_reference = provenance == "explicit_reference"
+            if not is_explicit_reference and not same_category and overlap < OVERLAP_THRESHOLD:
                 failed_checks += 1
                 reports.append(
                     AuditReport(
@@ -107,31 +108,50 @@ class GraphAuditService:
                 )
 
             relationship = edge.relationship.lower().strip()
-            if relationship in {"improves", "improve", "extends", "solves"}:
+            if relationship in {
+                "improves",
+                "improve",
+                "improvement",
+                "extends",
+                "extension",
+                "solves",
+            }:
                 total_checks += 1
-                evidence_text = paper_search_text(target)
-                has_claim = any(term in evidence_text for term in IMPROVEMENT_TERMS)
-                has_eval = any(term in evidence_text for term in EVALUATION_TERMS)
-                if not (has_claim and has_eval):
+                evidence_text = " ".join(getattr(edge, "evidence_snippets", []) or [])
+                provenance = str(getattr(edge, "provenance", "") or "")
+                has_direct_claim = "abstract_claim" in provenance and bool(evidence_text.strip())
+                is_improvement = relationship in {"improves", "improve", "improvement"}
+                has_claim = any(term in evidence_text.lower() for term in IMPROVEMENT_TERMS)
+                has_eval = any(term in evidence_text.lower() for term in EVALUATION_TERMS)
+                evidence_supported = has_direct_claim and (
+                    not is_improvement or (has_claim and has_eval)
+                )
+                if not evidence_supported:
                     failed_checks += 1
                     reports.append(
                         AuditReport(
                             type="graph",
                             severity="warning",
-                            description=f"关系边 {edge.source} -> {edge.target} 被标记为“改进”，但当前缺少清晰证据支撑。",
+                            description=(
+                                f"关系边 {edge.source} -> {edge.target} 被标记为 "
+                                f"{relationship}，但缺少直接摘要证据。"
+                            ),
                             affected_items=[edge.source, edge.target],
-                            suggestion="请核对目标论文是否真的在方法、实验或结果上改进了前作。",
+                            suggestion="补充直接证据，或将关系降级为 citation/related。",
                         )
                     )
                     gaps.append(
                         AuditGap(
                             type="graph",
                             severity="warning",
-                            description=f"“{edge.source}”到“{edge.target}”的改进关系缺少证据支持。",
+                            description=(
+                                f"强关系缺少直接证据：{edge.source} -> "
+                                f"{edge.target} ({relationship})。"
+                            ),
                             affected_items=[edge.source, edge.target],
                             actionable=True,
                             related_papers=[edge.source, edge.target],
-                            suggestion="补充摘要、实验或对比结果中的证据，或调整关系类型。",
+                            suggestion="补充直接证据，或调整关系类型。",
                         )
                     )
 

@@ -21,7 +21,10 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
     3. 增加引用来源与 evidence mapping
     """
 
-    papers = [_map_paper(paper) for paper in state.get("paper_nodes", {}).values()]
+    evidence_pool = state.get("evidence_pool") or state.get("paper_nodes", {})
+    analysis_nodes = state.get("paper_nodes", {})
+    papers = [_map_paper(paper) for paper in evidence_pool.values()]
+    analysis_papers = [_map_paper(paper) for paper in analysis_nodes.values()]
     gaps = [_map_gap(task_id, gap) for gap in state.get("detected_gaps", [])]
     gap_ids = {g.gap_id for g in gaps}
 
@@ -29,19 +32,35 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
     graph_edges = [_map_graph_edge(edge, gap_ids) for edge in state.get("evolution_graph", [])]
 
     # taxonomy normalization uses papers and gaps to build tree/coverage
-    taxonomy = _normalize_taxonomy(state.get("expert_taxonomy", {}), papers, gaps)
+    taxonomy = _normalize_taxonomy(
+        state.get("expert_taxonomy", {}),
+        analysis_papers,
+        gaps,
+    )
 
     # ideas mapping can infer related papers / derived gaps
-    ideas = [_map_idea(task_id, idea, papers, gaps) for idea in state.get("generated_ideas", [])]
+    ideas = [
+        _map_idea(task_id, idea, analysis_papers, gaps)
+        for idea in state.get("generated_ideas", [])
+    ]
 
     trace = _build_trace(state)
     evidence_status = _build_evidence_status(papers=papers, taxonomy=taxonomy)
+
+    summary_payload = dict(state.get("final_report_summary", {}) or {})
+    summary_payload["analysis_paper_ids"] = list(state.get("paper_nodes", {}).keys())
+    summary_payload["evidence_pool_count"] = len(evidence_pool)
+    summary_payload["analysis_paper_count"] = len(state.get("paper_nodes", {}))
+    evidence_snapshot = dict(state.get("evidence_snapshot", {}) or {})
+    if evidence_snapshot:
+        summary_payload["evidence_snapshot"] = evidence_snapshot
+        summary_payload["evidence_snapshot_id"] = evidence_snapshot.get("snapshot_id", "")
 
     return ResearchWorkspace(
         task_id=task_id,
         topic=clean_internal_context_text(topic, max_length=180) or topic,
         summary=_build_workspace_summary(topic=topic, state=state),
-        summary_payload=state.get("final_report_summary", {}),
+        summary_payload=summary_payload,
         papers=papers,
         taxonomy=taxonomy,
         graph_edges=graph_edges,
@@ -187,6 +206,13 @@ def _map_paper(paper: Any) -> PaperRecord:
         citation_count=int(payload.get("citation_count", 0) or 0),
         url=str(payload.get("url", "")),
         is_new_this_round=bool(payload.get("is_new_this_round", False)),
+        relevance_score=float(payload.get("relevance_score", 0.0) or 0.0),
+        relevance_tier=str(payload.get("relevance_tier", "candidate") or "candidate"),
+        relevance_reasons=[
+            str(item).strip()
+            for item in payload.get("relevance_reasons", [])
+            if str(item).strip()
+        ],
     )
 
 
@@ -227,6 +253,14 @@ def _map_graph_edge(raw_edge: Any, gap_ids: set) -> Dict[str, Any]:
     target = str(payload.get("target", ""))
     relationship = str(payload.get("relationship", ""))
     reasoning = str(payload.get("reasoning", ""))
+    provenance = str(payload.get("provenance", ""))
+    evidence_level = str(payload.get("evidence_level", "candidate"))
+    evidence = str(payload.get("evidence", ""))
+    evidence_snippets = [
+        str(item)
+        for item in payload.get("evidence_snippets", [])
+        if str(item).strip()
+    ]
     edge_id = str(payload.get("id") or payload.get("edge_id") or f"edge_{source}_{target}")
     metadata = {
         key: value
@@ -280,6 +314,10 @@ def _map_graph_edge(raw_edge: Any, gap_ids: set) -> Dict[str, Any]:
         "reasoning": reasoning,
         "type": edge_type,
         "confidence": confidence,
+        "provenance": provenance,
+        "evidence_level": evidence_level,
+        "evidence": evidence,
+        "evidence_snippets": evidence_snippets,
         "is_weak": is_weak,
         "is_gap_related": is_gap_related,
         "metadata": metadata,
@@ -389,6 +427,13 @@ def _build_trace(state: Dict[str, Any]) -> Dict[str, Any]:
         "decisions": list(state.get("decisions", [])),
         "tool_events": tools,
         "timeline": timeline,
+        "run_status": str(state.get("run_status", "running") or "running"),
+        "termination_reason": str(state.get("termination_reason", "") or ""),
+        "degraded_reason": str(state.get("degraded_reason", "") or ""),
+        "repair_count": int(state.get("retry_count", 0) or 0),
+        "max_repair_rounds": int(state.get("max_repair_rounds", 0) or 0),
+        "repair_stop_reason": str(state.get("repair_stop_reason", "") or ""),
+        "repair_history": list(state.get("repair_history", [])),
     }
 
 
@@ -402,6 +447,12 @@ def _build_evidence_status(
     real_paper_count = sum(
         1 for p in papers if getattr(p, "source", "") not in ("seed", "fallback")
     )
+    direct_paper_count = sum(
+        1 for p in papers if getattr(p, "relevance_tier", "") == "direct"
+    )
+    adjacent_paper_count = sum(
+        1 for p in papers if getattr(p, "relevance_tier", "") == "adjacent"
+    )
     fallback_paper_count = total_papers - real_paper_count
     fallback_ratio = round(fallback_paper_count / total_papers, 3) if total_papers > 0 else 0.0
 
@@ -412,6 +463,8 @@ def _build_evidence_status(
             "insufficient": True,
             "total_papers": total_papers,
             "real_paper_count": real_paper_count,
+            "direct_paper_count": direct_paper_count,
+            "adjacent_paper_count": adjacent_paper_count,
             "fallback_paper_count": fallback_paper_count,
             "fallback_ratio": fallback_ratio,
             "covered_branch_count": 0,
@@ -458,6 +511,8 @@ def _build_evidence_status(
         "insufficient": insufficient,
         "total_papers": total_papers,
         "real_paper_count": real_paper_count,
+        "direct_paper_count": direct_paper_count,
+        "adjacent_paper_count": adjacent_paper_count,
         "fallback_paper_count": fallback_paper_count,
         "fallback_ratio": fallback_ratio,
         "covered_branch_count": covered_branch_count,

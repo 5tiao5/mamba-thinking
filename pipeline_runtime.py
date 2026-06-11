@@ -5,8 +5,14 @@ from typing import Any, Dict
 
 def snapshot_counts(state: Dict[str, Any]) -> Dict[str, int]:
     papers = state.get("paper_nodes", {})
+    evidence_pool = state.get("evidence_pool", papers)
     return {
         "papers": len(papers) if isinstance(papers, dict) else len(list(papers)),
+        "evidence_pool": (
+            len(evidence_pool)
+            if isinstance(evidence_pool, dict)
+            else len(list(evidence_pool))
+        ),
         "edges": len(state.get("evolution_graph", [])),
         "gaps": len(state.get("detected_gaps", [])),
         "ideas": len(state.get("generated_ideas", [])),
@@ -35,6 +41,7 @@ def apply_post_action_updates(state: Dict[str, Any], action: str = "") -> None:
     # Clear retry_requested after one searcher re-run so controller doesn't loop
     if action == "searcher" and state.get("retry_requested"):
         state["retry_requested"] = False
+        state["correction_checked"] = False
     # Clear needs_* refresh flags after the corresponding action runs
     if action == "taxonomy":
         state["needs_taxonomy_refresh"] = False
