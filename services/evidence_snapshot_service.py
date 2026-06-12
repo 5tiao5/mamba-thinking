@@ -105,6 +105,8 @@ class EvidenceSnapshotService:
                 }
             ),
             "citation_count": int(payload.get("citation_count", 0) or 0),
+            "citation_count_known": bool(payload.get("citation_count_known", False)),
+            "citation_source": str(payload.get("citation_source", "") or ""),
             "confidence_score": round(float(payload.get("confidence_score", 0.0) or 0.0), 6),
             "is_new_this_round": bool(payload.get("is_new_this_round", False)),
         }
@@ -124,6 +126,19 @@ class EvidenceSnapshotService:
                 str(item).strip()[:800]
                 for item in list(payload.get("evidence_snippets", []) or [])[:3]
                 if str(item).strip()
+            ],
+            "evidence_details": [
+                {
+                    "source_type": str(item.get("source_type", "") or ""),
+                    "section": str(item.get("section", "") or "")[:120],
+                    "page": int(item.get("page", 0) or 0),
+                    "snippet": str(item.get("snippet", "") or "")[:800],
+                    "source_url": str(item.get("source_url", "") or "")[:500],
+                    "citation_label": str(item.get("citation_label", "") or "")[:40],
+                    "reference_entry": str(item.get("reference_entry", "") or "")[:800],
+                }
+                for item in list(payload.get("evidence_details", []) or [])[:3]
+                if isinstance(item, dict)
             ],
         }
 

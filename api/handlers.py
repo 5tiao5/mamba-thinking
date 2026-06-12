@@ -5,6 +5,7 @@ from typing import Any
 
 from product_agent.llm_client import call_openai_text
 from product_agent.schemas import (
+    BatchPdfImportResponse,
     ContinueConversationRequest,
     ContinueConversationResponse,
     CreateKnowledgeDocumentRequest,
@@ -15,12 +16,17 @@ from product_agent.schemas import (
     FollowUpTaskPreview,
     ImportPaperCandidateRequest,
     ListPaperImportCandidatesResponse,
+    ListResearchPapersResponse,
     PaperImportCandidateView,
+    PdfImportItemView,
+    ResearchPaperView,
     SearchPaperCandidatesRequest,
+    UpdateResearchPaperRequest,
     UpdateSkillRequest,
     UpdateToolRequest,
 )
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
+from product_agent.services.research_paper_service import ResearchPaperServiceError
 from product_agent.services.skill_service import SkillServiceError
 from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 
@@ -48,6 +54,8 @@ class ProductApiHandlers:
         tool_service,
         skill_service,
         knowledge_service,
+        research_paper_service,
+        pdf_import_service=None,
     ):
         self.conversation_service = conversation_service
         self.message_service = message_service
@@ -56,6 +64,8 @@ class ProductApiHandlers:
         self.tool_service = tool_service
         self.skill_service = skill_service
         self.knowledge_service = knowledge_service
+        self.research_paper_service = research_paper_service
+        self.pdf_import_service = pdf_import_service
 
     def create_conversation(self, request: CreateConversationRequest):
         """创建新会话。"""
@@ -507,7 +517,101 @@ class ProductApiHandlers:
             )
         except KeyError:
             return fail("paper_candidate_not_found", "Paper candidate does not exist or has expired.")
-        return ok(self._knowledge_payload(document))
+        payload = self._knowledge_payload(document)
+        if request.conversation_id:
+            paper = self.research_paper_service.add_document(
+                conversation_id=request.conversation_id,
+                document=document,
+                origin="user_import",
+            )
+            payload["research_paper"] = self._research_paper_payload(paper)
+        return ok(payload)
+
+    def import_research_pdfs(
+        self,
+        conversation_id: str,
+        uploads,
+        *,
+        status: str = "candidate",
+    ):
+        if self.conversation_service.get_conversation(conversation_id) is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+        if self.pdf_import_service is None:
+            return fail("pdf_import_unavailable", "PDF import service is not configured.")
+        try:
+            results = self.pdf_import_service.import_batch(
+                conversation_id=conversation_id,
+                uploads=uploads,
+                status=status,
+            )
+        except ResearchPaperServiceError as error:
+            return fail("research_paper_status_invalid", str(error))
+
+        items = []
+        for result in results:
+            document_payload = (
+                self._knowledge_payload(result.document)
+                if result.document is not None
+                else None
+            )
+            paper_payload = (
+                self._research_paper_payload(result.research_paper)
+                if result.research_paper is not None
+                else None
+            )
+            items.append(
+                PdfImportItemView(
+                    filename=result.filename,
+                    success=result.success,
+                    document=document_payload,
+                    research_paper=paper_payload,
+                    parsed_pages=result.parsed_pages,
+                    total_pages=result.total_pages,
+                    duplicate_replaced=result.duplicate_replaced,
+                    warnings=result.warnings or [],
+                    error_code=result.error_code,
+                    error_message=result.error_message,
+                )
+            )
+        response = BatchPdfImportResponse(
+            items=items,
+            imported_count=sum(1 for item in items if item.success),
+            failed_count=sum(1 for item in items if not item.success),
+        )
+        return ok(response.model_dump())
+
+    def list_research_papers(self, conversation_id: str, *, status: str | None = None):
+        if self.conversation_service.get_conversation(conversation_id) is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+        try:
+            papers = self.research_paper_service.list_papers(conversation_id, status=status)
+        except ResearchPaperServiceError as error:
+            return fail("research_paper_status_invalid", str(error))
+        response = ListResearchPapersResponse(
+            items=[ResearchPaperView(**self._research_paper_payload(item)) for item in papers],
+            total=len(papers),
+        )
+        return ok(response.model_dump())
+
+    def update_research_paper(
+        self,
+        conversation_id: str,
+        paper_entry_id: str,
+        request: UpdateResearchPaperRequest,
+    ):
+        if self.conversation_service.get_conversation(conversation_id) is None:
+            return fail("conversation_not_found", "Conversation does not exist.")
+        try:
+            paper = self.research_paper_service.update_status(
+                conversation_id=conversation_id,
+                paper_entry_id=paper_entry_id,
+                status=request.status,
+            )
+        except KeyError:
+            return fail("research_paper_not_found", "Research paper does not exist in this conversation.")
+        except ResearchPaperServiceError as error:
+            return fail("research_paper_status_invalid", str(error))
+        return ok(self._research_paper_payload(paper))
 
     def delete_knowledge_document(self, document_id: str):
         deleted = self.knowledge_service.delete_document(document_id)
@@ -613,6 +717,22 @@ class ProductApiHandlers:
             venue=candidate.venue,
             is_exact_match=candidate.is_exact_match,
         )
+
+    @staticmethod
+    def _research_paper_payload(paper) -> dict[str, Any]:
+        return {
+            "paper_entry_id": paper.paper_entry_id,
+            "conversation_id": paper.conversation_id,
+            "document_id": paper.document_id,
+            "canonical_key": paper.canonical_key,
+            "title": paper.title,
+            "origin": paper.origin,
+            "status": paper.status,
+            "source_url": paper.source_url,
+            "metadata": dict(paper.metadata),
+            "created_at": paper.created_at.isoformat(),
+            "updated_at": paper.updated_at.isoformat(),
+        }
 
     @staticmethod
     def _workspace_source_trace_payload(snapshot) -> dict[str, Any]:

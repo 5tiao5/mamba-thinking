@@ -575,20 +575,38 @@ class ResearchService:
         }
 
     def _previous_round_context_for_task(self, task: ResearchTask) -> dict[str, Any]:
-        previous_tasks = [
-            item
-            for item in self.task_repository.list_all()
-            if item.conversation_id == task.conversation_id
-            and item.task_id != task.task_id
-            and str(getattr(item, "status", "")).lower() in {"completed", "degraded"}
-        ]
+        current_created_at = _datetime_order_value(
+            getattr(task, "created_at", None)
+        )
+        previous_tasks = sorted(
+            [
+                item
+                for item in self.task_repository.list_all()
+                if item.conversation_id == task.conversation_id
+                and item.task_id != task.task_id
+                and _datetime_order_value(getattr(item, "created_at", None))
+                < current_created_at
+            ],
+            key=lambda item: (
+                _datetime_order_value(getattr(item, "created_at", None)),
+                _datetime_order_value(getattr(item, "updated_at", None)),
+            ),
+            reverse=True,
+        )
         if not previous_tasks:
             return {"task_id": "", "paper_ids": [], "query_intent": {}}
 
-        previous_task = previous_tasks[0]
-        workspace = self.workspace_repository.get_by_task(previous_task.task_id)
-        if workspace is None:
-            return {"task_id": previous_task.task_id, "paper_ids": [], "query_intent": {}}
+        previous_task = None
+        workspace = None
+        for candidate in previous_tasks:
+            candidate_workspace = self.workspace_repository.get_by_task(candidate.task_id)
+            if candidate_workspace is None:
+                continue
+            previous_task = candidate
+            workspace = candidate_workspace
+            break
+        if previous_task is None or workspace is None:
+            return {"task_id": "", "paper_ids": [], "query_intent": {}}
 
         paper_ids = [str(getattr(paper, "paper_id", "")).strip() for paper in workspace.papers if str(getattr(paper, "paper_id", "")).strip()]
         query_intent = {}
@@ -630,4 +648,12 @@ class ResearchService:
             return self.working_memory_service.get_conversation_memory(conversation_id)
         except Exception:
             return None
+
+
+def _datetime_order_value(value: Any) -> float:
+    if not isinstance(value, datetime):
+        return float("-inf")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
 

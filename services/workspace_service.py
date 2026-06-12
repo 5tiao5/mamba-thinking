@@ -101,6 +101,8 @@ class WorkspaceService:
                     source=paper.source,
                     taxonomy_category=paper.taxonomy_category,
                     citation_count=paper.citation_count,
+                    citation_count_known=bool(getattr(paper, "citation_count_known", False)),
+                    citation_source=str(getattr(paper, "citation_source", "") or ""),
                     url=paper.url,
                     is_new_this_round=bool(getattr(paper, "is_new_this_round", False)),
                     relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
@@ -268,6 +270,8 @@ class WorkspaceService:
                     source=paper.source,
                     taxonomy_category=paper.taxonomy_category,
                     citation_count=paper.citation_count,
+                    citation_count_known=bool(getattr(paper, "citation_count_known", False)),
+                    citation_source=str(getattr(paper, "citation_source", "") or ""),
                     url=paper.url,
                     is_new_this_round=False,
                     relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
@@ -284,6 +288,15 @@ class WorkspaceService:
                     target=str(edge.get("target", "")),
                     relationship=str(edge.get("relationship", "")),
                     reasoning=str(edge.get("reasoning", "")),
+                    provenance=str(edge.get("provenance", "")),
+                    confidence=float(edge.get("confidence", 0.0) or 0.0),
+                    evidence_level=str(edge.get("evidence_level", "candidate")),
+                    evidence=str(edge.get("evidence", "")),
+                    evidence_snippets=[
+                        str(item)
+                        for item in edge.get("evidence_snippets", [])
+                        if str(item).strip()
+                    ],
                 )
                 for edge in synthetic_workspace.graph_edges
             ],
@@ -605,16 +618,40 @@ def _workspace_analysis_paper_ids(workspace) -> list[str]:
 
 
 def _merge_workspace_graph_edges(workspaces: list) -> list[dict]:
-    merged: dict[tuple[str, str, str], dict] = {}
+    merged: dict[tuple[str, str], dict] = {}
     for workspace in workspaces:
         for edge in workspace.graph_edges:
             key = (
                 str(edge.get("source", "")),
                 str(edge.get("target", "")),
-                str(edge.get("relationship", "")),
             )
-            merged[key] = edge
+            existing = merged.get(key)
+            if existing is None or _graph_edge_strength(edge) > _graph_edge_strength(existing):
+                merged[key] = edge
     return list(merged.values())
+
+
+def _graph_edge_strength(edge: dict) -> tuple[int, float]:
+    relationship = str(edge.get("relationship", "") or "").strip().lower()
+    evidence_level = str(edge.get("evidence_level", "") or "").strip().lower()
+    relationship_rank = {
+        "related": 1,
+        "complements": 2,
+        "scope_extension": 3,
+        "addresses": 3,
+        "comparison": 4,
+        "citation": 5,
+        "extension": 6,
+        "improvement": 7,
+    }
+    evidence_rank = {
+        "candidate": 1,
+        "inferred": 2,
+        "supported": 3,
+        "confirmed": 4,
+    }
+    combined_rank = relationship_rank.get(relationship, 1) + evidence_rank.get(evidence_level, 0)
+    return combined_rank, float(edge.get("confidence", 0.0) or 0.0)
 
 
 def _merge_workspace_gaps(workspaces: list) -> list:
@@ -637,8 +674,16 @@ def _merge_workspace_ideas(workspaces: list) -> list:
 
 def _merge_workspace_taxonomy(workspaces: list) -> dict:
     branches_by_id: dict[str, dict] = {}
-    coverage_accumulator: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"paper_count": 0.0, "gap_count": 0.0, "coverage_score_sum": 0.0, "coverage_samples": 0.0}
+    coverage_accumulator: dict[str, dict] = defaultdict(
+        lambda: {
+            "paper_count_fallback": 0,
+            "gap_count_fallback": 0,
+            "paper_ids": set(),
+            "gap_ids": set(),
+            "coverage_score_sum": 0.0,
+            "coverage_samples": 0.0,
+            "evidence_tier": "",
+        }
     )
 
     for workspace in workspaces:
@@ -651,17 +696,50 @@ def _merge_workspace_taxonomy(workspaces: list) -> dict:
             if existing is None:
                 branches_by_id[branch_id] = dict(branch)
             else:
-                existing["paper_count"] = max(int(existing.get("paper_count", 0) or 0), int(branch.get("paper_count", 0) or 0))
+                matched_paper_ids = _merge_string_ids(
+                    existing.get("matched_paper_ids", []),
+                    branch.get("matched_paper_ids", []),
+                )
+                matched_gap_ids = _merge_string_ids(
+                    existing.get("matched_gap_ids", []),
+                    branch.get("matched_gap_ids", []),
+                )
+                existing["matched_paper_ids"] = matched_paper_ids
+                existing["matched_gap_ids"] = matched_gap_ids
+                existing["paper_count"] = (
+                    len(matched_paper_ids)
+                    if matched_paper_ids
+                    else max(
+                        int(existing.get("paper_count", 0) or 0),
+                        int(branch.get("paper_count", 0) or 0),
+                    )
+                )
 
         coverage = taxonomy.get("coverage", {}) or {}
         for branch_id, entry in coverage.items():
             if not isinstance(entry, dict):
                 continue
             accumulator = coverage_accumulator[str(branch_id)]
-            accumulator["paper_count"] += float(entry.get("paper_count", 0) or 0)
-            accumulator["gap_count"] += float(entry.get("gap_count", 0) or 0)
+            accumulator["paper_count_fallback"] = max(
+                accumulator["paper_count_fallback"],
+                int(entry.get("paper_count", 0) or 0),
+            )
+            accumulator["gap_count_fallback"] = max(
+                accumulator["gap_count_fallback"],
+                int(entry.get("gap_count", 0) or 0),
+            )
+            accumulator["paper_ids"].update(
+                _merge_string_ids(entry.get("matched_paper_ids", []))
+            )
+            accumulator["gap_ids"].update(
+                _merge_string_ids(entry.get("matched_gap_ids", []))
+            )
             accumulator["coverage_score_sum"] += float(entry.get("coverage_score", 0.0) or 0.0)
             accumulator["coverage_samples"] += 1.0
+            accumulator["evidence_tier"] = _stronger_evidence_tier(
+                accumulator["evidence_tier"],
+                str(entry.get("evidence_tier", "") or ""),
+            )
 
     merged_branches = sorted(
         branches_by_id.values(),
@@ -672,11 +750,32 @@ def _merge_workspace_taxonomy(workspaces: list) -> dict:
     merged_coverage: dict[str, dict] = {}
     for branch_id, accumulator in coverage_accumulator.items():
         samples = accumulator["coverage_samples"] or 1.0
+        matched_paper_ids = sorted(accumulator["paper_ids"])
+        matched_gap_ids = sorted(accumulator["gap_ids"])
         merged_coverage[branch_id] = {
-            "paper_count": int(round(accumulator["paper_count"])),
-            "gap_count": int(round(accumulator["gap_count"])),
+            "paper_count": len(matched_paper_ids) or accumulator["paper_count_fallback"],
+            "gap_count": len(matched_gap_ids) or accumulator["gap_count_fallback"],
             "coverage_score": round(accumulator["coverage_score_sum"] / samples, 3),
+            "evidence_tier": accumulator["evidence_tier"] or "candidate",
+            "matched_paper_ids": matched_paper_ids,
+            "matched_gap_ids": matched_gap_ids,
         }
+
+    for branch in merged_branches:
+        branch_id = str(branch.get("branch_id", "") or "")
+        coverage = merged_coverage.get(branch_id, {})
+        matched_paper_ids = _merge_string_ids(
+            branch.get("matched_paper_ids", []),
+            coverage.get("matched_paper_ids", []),
+        )
+        matched_gap_ids = _merge_string_ids(
+            branch.get("matched_gap_ids", []),
+            coverage.get("matched_gap_ids", []),
+        )
+        branch["matched_paper_ids"] = matched_paper_ids
+        branch["matched_gap_ids"] = matched_gap_ids
+        if matched_paper_ids:
+            branch["paper_count"] = len(matched_paper_ids)
 
     return {
         "branches": merged_branches,
@@ -687,6 +786,26 @@ def _merge_workspace_taxonomy(workspaces: list) -> dict:
             "source_workspace_count": len(workspaces),
         },
     }
+
+
+def _merge_string_ids(*groups) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for value in list(group or []):
+            normalized = str(value).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+    return merged
+
+
+def _stronger_evidence_tier(current: str, candidate: str) -> str:
+    rank = {"": 0, "candidate": 1, "weak": 2, "moderate": 3, "strong": 4}
+    current_key = str(current or "").strip().lower()
+    candidate_key = str(candidate or "").strip().lower()
+    return candidate_key if rank.get(candidate_key, 0) > rank.get(current_key, 0) else current_key
 
 
 def _merge_workspace_trace(workspaces: list, tasks: list) -> dict:

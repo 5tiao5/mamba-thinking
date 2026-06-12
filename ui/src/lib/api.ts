@@ -1,4 +1,5 @@
 import type {
+  BatchPdfImportPayload,
   ContinueConversationPayload,
   ConversationDetailItem,
   CreateSkillPayload,
@@ -10,6 +11,8 @@ import type {
   ConversationResponsePayload,
   ConversationSummaryItem,
   MessageItem,
+  ResearchPaperItem,
+  ResearchPaperStatus,
   ResearchTaskDetailItem,
   ResearchTaskSummaryItem,
   RunTaskPayload,
@@ -281,6 +284,40 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  listResearchPapers: (conversationId: string, status?: ResearchPaperStatus) => {
+    const search = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request<ApiResponse<{ items: ResearchPaperItem[]; total: number }>>(
+      `/conversations/${conversationId}/papers${search}`
+    );
+  },
+  updateResearchPaper: (
+    conversationId: string,
+    paperEntryId: string,
+    status: ResearchPaperStatus
+  ) =>
+    request<ApiResponse<ResearchPaperItem>>(
+      `/conversations/${conversationId}/papers/${paperEntryId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }
+    ),
+  importResearchPdfs: (
+    conversationId: string,
+    files: File[],
+    status: ResearchPaperStatus = "candidate"
+  ) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+    return request<ApiResponse<BatchPdfImportPayload>>(
+      `/conversations/${conversationId}/papers/import-pdfs?status=${encodeURIComponent(status)}`,
+      {
+        method: "POST",
+        headers: {},
+        body: formData,
+      }
+    );
+  },
   deleteKnowledgeDocument: (documentId: string) =>
     request<ApiResponse<{ document_id: string; deleted: boolean }>>(`/knowledge/documents/${documentId}`, {
       method: "DELETE",

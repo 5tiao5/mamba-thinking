@@ -8,6 +8,7 @@ from unittest.mock import patch
 from product_agent.models import PaperNode
 from product_agent.research_agent.nodes.searcher import searcher_node
 from product_agent.research_agent.retrieval_plan import build_retrieval_plan
+from product_agent.services.query_intent import derive_query_intent
 from product_agent.tools import (
     _build_arxiv_recall_query,
     _build_arxiv_search_query,
@@ -17,6 +18,57 @@ from product_agent.tools import (
 
 
 class RetrievalQueryFamilyTests(unittest.TestCase):
+    def test_failure_recovery_follow_up_prioritizes_delta_queries(self) -> None:
+        intent = derive_query_intent(
+            raw_user_request="缩小到近三年的论文，重点分析工具调用失败后的恢复能力，并补充新的相关论文",
+            task_topic="AI Agent 工具使用评测 - 缩小到近三年的论文",
+            conversation_topic="AI Agent 工具使用的评测方法，重点关注工具选择、函数调用和失败恢复",
+            knowledge_scope="shared",
+            reference_year=2026,
+        )
+
+        plan = build_retrieval_plan(
+            topic=intent.core_topic,
+            query_intent=intent.to_dict(),
+            mode="balanced",
+        )
+
+        self.assertIn("failure recovery", intent.request_focus_terms)
+        self.assertEqual(
+            plan.strict_queries[:2],
+            [
+                "LLM agent tool use failure recovery evaluation",
+                "tool calling error recovery robustness benchmark",
+            ],
+        )
+        self.assertEqual(plan.filters["year_range"]["start_year"], 2023)
+
+    def test_cost_latency_follow_up_prioritizes_comparison_queries(self) -> None:
+        intent = derive_query_intent(
+            raw_user_request="继续展开成本和延迟评测方向，比较它与任务成功率评测的区别",
+            task_topic="AI Agent 工具使用评测 - 成本和延迟评测",
+            conversation_topic="AI Agent 工具使用的评测方法，重点关注工具选择、函数调用和失败恢复",
+            knowledge_scope="shared",
+        )
+
+        plan = build_retrieval_plan(
+            topic=intent.core_topic,
+            query_intent=intent.to_dict(),
+            mode="balanced",
+        )
+
+        self.assertEqual(intent.user_goal, "compare")
+        self.assertIn("cost efficiency", intent.request_focus_terms)
+        self.assertIn("latency", intent.request_focus_terms)
+        self.assertIn("task success rate", intent.request_focus_terms)
+        self.assertEqual(
+            plan.strict_queries[:2],
+            [
+                "LLM agent tool use cost latency task success rate evaluation",
+                "tool calling efficiency versus task success benchmark",
+            ],
+        )
+
     def test_arxiv_query_does_not_wrap_the_entire_request_as_one_phrase(self) -> None:
         compiled = _build_arxiv_search_query(
             "AI Agent tool-use reliability evaluation benchmarks"

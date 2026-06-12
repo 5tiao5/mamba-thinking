@@ -46,6 +46,10 @@ def build_retrieval_plan(
     intent = dict(query_intent or {})
     clean_topic = " ".join(str(intent.get("core_topic", "") or topic).split()).strip() or str(topic).strip()
     user_goal = " ".join(str(intent.get("user_goal", "follow_up")).split()).strip() or "follow_up"
+    raw_user_request = " ".join(str(intent.get("raw_user_request", "") or "").split()).strip()
+    request_focus_terms = _clean_items(
+        list(intent.get("request_focus_terms", []) or [])[:4]
+    )
     focus_terms = _clean_items(list(intent.get("focus_terms", []) or [])[:3])
     paper_scope = _clean_items(list(intent.get("paper_scope", []) or [])[:3])
     rerank_signals = _dedupe([*focus_terms, *paper_scope])
@@ -55,7 +59,19 @@ def build_retrieval_plan(
         focus_terms=focus_terms,
         paper_scope=paper_scope,
     )
-    strict_queries = [*family_strict, clean_topic]
+    is_follow_up = bool(
+        raw_user_request
+        and _normalize_query_text(raw_user_request) != _normalize_query_text(clean_topic)
+    )
+    priority_queries = (
+        _follow_up_priority_queries(
+            request_focus_terms=request_focus_terms,
+            user_goal=user_goal,
+        )
+        if is_follow_up
+        else []
+    )
+    strict_queries = [*priority_queries, *family_strict, clean_topic]
     for focus in focus_terms[:2]:
         strict_queries.append(f"{clean_topic} {focus}")
     for scope in paper_scope[:2]:
@@ -88,6 +104,52 @@ def build_retrieval_plan(
         rerank_signals=rerank_signals,
         strategy_note=strategy_note,
     )
+
+
+def _follow_up_priority_queries(
+    *,
+    request_focus_terms: list[str],
+    user_goal: str,
+) -> list[str]:
+    focuses = {item.casefold() for item in request_focus_terms}
+    queries: list[str] = []
+
+    if "failure recovery" in focuses:
+        queries.extend(
+            [
+                "LLM agent tool use failure recovery evaluation",
+                "tool calling error recovery robustness benchmark",
+            ]
+        )
+
+    efficiency_focuses = {
+        "cost efficiency",
+        "latency",
+        "task success rate",
+    }
+    if focuses & efficiency_focuses:
+        queries.extend(
+            [
+                "LLM agent tool use cost latency task success rate evaluation",
+                "tool calling efficiency versus task success benchmark",
+            ]
+        )
+
+    if "tool selection" in focuses and not queries:
+        queries.append("LLM agent tool selection function calling evaluation")
+
+    if not queries and request_focus_terms:
+        compact = " ".join(
+            term
+            for term in request_focus_terms[:3]
+            if _english_search_terms(term)
+        )
+        if compact:
+            queries.append(f"LLM agent {compact} evaluation")
+
+    if user_goal == "compare" and len(queries) > 2:
+        return _dedupe(queries)[:2]
+    return _dedupe(queries)
 
 
 def _academic_query_family(
@@ -289,6 +351,10 @@ def _english_search_terms(text: str) -> str:
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle.casefold() in text for needle in needles)
+
+
+def _normalize_query_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").casefold()).strip()
 
 
 def relevance_query(plan: dict[str, Any] | RetrievalPlan, *, fallback_topic: str = "") -> str:

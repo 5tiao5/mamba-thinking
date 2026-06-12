@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type PropsWithChildren } from "react";
 
 import { api, toErrorMessage } from "../../lib/api";
 import { DEMO_CONVERSATION_ID, DEMO_WORKSPACE_TASK_ID } from "../../lib/demoData";
@@ -20,6 +20,7 @@ import type {
 } from "../../types/api";
 import { AssistantMessageContent } from "../chat/AssistantMessageContent";
 import { MessageSourceTrace } from "../chat/MessageSourceTrace";
+import { ResearchPaperPanel } from "../research/ResearchPaperPanel";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { StatusPill } from "../ui/StatusPill";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
@@ -31,20 +32,20 @@ const modeOptions = [
 ];
 
 const knowledgeScopeOptions: Array<{ value: KnowledgeScope; label: string }> = [
-  { value: "conversation_only", label: "仅会话" },
-  { value: "shared", label: "共享知识" },
+  { value: "conversation_only", label: "仅当前研究" },
+  { value: "shared", label: "当前研究 + 全局" },
   { value: "none", label: "关闭增强" },
 ];
 
 function knowledgeScopeLabel(scope: KnowledgeScope) {
   switch (scope) {
     case "conversation_only":
-      return "仅当前会话知识";
+      return "仅当前研究知识";
     case "none":
       return "不启用知识增强";
     case "shared":
     default:
-      return "当前会话 + 共享知识";
+      return "当前研究 + 全局知识";
   }
 }
 
@@ -110,6 +111,11 @@ export function AppShell({ children }: PropsWithChildren) {
   const [runMode, setRunMode] = useState("balanced");
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("shared");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [paperPanelOpen, setPaperPanelOpen] = useState(false);
+  const [pendingResearchFiles, setPendingResearchFiles] = useState<File[]>([]);
+  const [pendingFileStatus, setPendingFileStatus] = useState(
+    "可选：先加入 PDF，创建研究后会自动导入，但不会立即生成结果。"
+  );
   const [toolDialogOpen, setToolDialogOpen] = useState(false);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
@@ -273,6 +279,7 @@ export function AppShell({ children }: PropsWithChildren) {
   useEffect(() => {
     setLatestFollowUpTask(null);
     setLatestFollowUpTaskScope("shared");
+    setPaperPanelOpen(false);
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -326,24 +333,72 @@ export function AppShell({ children }: PropsWithChildren) {
 
   async function createConversationFromSidebar() {
     if (!newTopic.trim()) return;
-    const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     setCreatingConversation(true);
     try {
       const response = await api.createConversation({
         topic: newTopic.trim(),
         title: newTitle.trim() || undefined,
       });
+      let creationMessage = "研究已创建。现在可以生成结果，也可以先补充你的要求。";
+      if (pendingResearchFiles.length) {
+        setPendingFileStatus(`研究已创建，正在导入 ${pendingResearchFiles.length} 篇 PDF...`);
+        try {
+          const imported = await api.importResearchPdfs(
+            response.data.conversation_id,
+            pendingResearchFiles
+          );
+          creationMessage = `研究已创建，成功导入 ${imported.data.imported_count} 篇 PDF`;
+          if (imported.data.failed_count) {
+            creationMessage += `，另有 ${imported.data.failed_count} 篇导入失败`;
+          }
+          creationMessage += "。你可以检查论文池后再生成结果。";
+        } catch (error) {
+          creationMessage = `研究已创建，但 PDF 导入失败：${toErrorMessage(error)}`;
+        }
+      }
       setCreateDialogOpen(false);
-      setAskStatus("研究已创建。现在可以生成结果，也可以先补充你的要求。");
+      setPendingResearchFiles([]);
+      setPendingFileStatus("可选：先加入 PDF，创建研究后会自动导入，但不会立即生成结果。");
+      setAskStatus(creationMessage);
       await loadHistory();
-      setAskStatus(`结果已生成，本轮使用「${scopeLabel}」。可以继续追问来调整方向。`);
-      setAskStatus("研究已创建。现在可以生成结果，也可以先补充你的要求。");
       navigate(`/conversation?conversation_id=${encodeURIComponent(response.data.conversation_id)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
     } finally {
       setCreatingConversation(false);
     }
+  }
+
+  function closeCreateDialog() {
+    setCreateDialogOpen(false);
+    setPendingResearchFiles([]);
+    setPendingFileStatus("可选：先加入 PDF，创建研究后会自动导入，但不会立即生成结果。");
+  }
+
+  function removePendingResearchFile(file: File) {
+    const next = pendingResearchFiles.filter((item) => item !== file);
+    setPendingResearchFiles(next);
+    setPendingFileStatus(
+      next.length
+        ? `已选择 ${next.length} 篇 PDF，创建研究后自动导入。`
+        : "可选：先加入 PDF，创建研究后会自动导入，但不会立即生成结果。"
+    );
+  }
+
+  function selectPendingResearchFiles(event: ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.target.files ?? []);
+    const pdfs = selected.filter(
+      (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+    );
+    const withinLimit = pdfs.filter((file) => file.size <= 20 * 1024 * 1024).slice(0, 10);
+    setPendingResearchFiles(withinLimit);
+
+    const rejected = selected.length - withinLimit.length;
+    setPendingFileStatus(
+      rejected
+        ? `已选择 ${withinLimit.length} 篇；${rejected} 个文件因格式、大小或数量限制未加入。`
+        : `已选择 ${withinLimit.length} 篇 PDF，创建研究后自动导入。`
+    );
   }
 
   async function generateResearchResult() {
@@ -932,6 +987,12 @@ export function AppShell({ children }: PropsWithChildren) {
                 ) : null}
 
                 <div className="unified-composer">
+                  {paperPanelOpen && activeConversationId !== DEMO_CONVERSATION_ID ? (
+                    <ResearchPaperPanel
+                      conversationId={activeConversationId}
+                      onStatusChange={setAskStatus}
+                    />
+                  ) : null}
                   <textarea
                     className="input textarea ask-textarea"
                     onChange={(event) => setAskContent(event.target.value)}
@@ -940,6 +1001,26 @@ export function AppShell({ children }: PropsWithChildren) {
                   />
                   <div className="unified-composer-footer">
                     <div className="composer-left-tools">
+                      <button
+                        className={
+                          paperPanelOpen
+                            ? "tool-icon-button tool-icon-button-active"
+                            : "tool-icon-button"
+                        }
+                        disabled={!activeConversationId || activeConversationId === DEMO_CONVERSATION_ID}
+                        onClick={() => setPaperPanelOpen((current) => !current)}
+                        aria-expanded={paperPanelOpen}
+                        aria-label="本研究论文"
+                        title="上传或管理本研究论文"
+                        type="button"
+                      >
+                        <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                          <path d="M7 3h7l4 4v14H7z" />
+                          <path d="M14 3v5h5" />
+                          <path d="M10 13h5" />
+                          <path d="M10 17h5" />
+                        </svg>
+                      </button>
                       <button
                         className="tool-icon-button"
                         onClick={openToolDialog}
@@ -1105,7 +1186,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 <div className="section-eyebrow">新建研究</div>
                 <h2>新建研究</h2>
               </div>
-              <button className="ghost-button" onClick={() => setCreateDialogOpen(false)} type="button">
+              <button className="ghost-button" onClick={closeCreateDialog} type="button">
                 关闭
               </button>
             </div>
@@ -1127,8 +1208,43 @@ export function AppShell({ children }: PropsWithChildren) {
                 value={newTitle}
               />
             </label>
+            <section className="new-research-paper-picker">
+              <div>
+                <strong>先加入论文（可选）</strong>
+                <p>支持最多 10 篇 PDF，单篇不超过 20 MB。创建后先进入论文池，不会自动生成结果。</p>
+              </div>
+              <label className="secondary-button new-research-file-button">
+                选择 PDF
+                <input
+                  accept="application/pdf,.pdf"
+                  hidden
+                  multiple
+                  onChange={selectPendingResearchFiles}
+                  type="file"
+                />
+              </label>
+              <div className="new-research-file-status" role="status">
+                {pendingFileStatus}
+              </div>
+              {pendingResearchFiles.length ? (
+                <div className="new-research-file-list">
+                  {pendingResearchFiles.map((file) => (
+                    <span key={`${file.name}-${file.size}`}>
+                      {file.name}
+                      <button
+                        aria-label={`移除 ${file.name}`}
+                        onClick={() => removePendingResearchFile(file)}
+                        type="button"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </section>
             <div className="button-row">
-              <button className="secondary-button" onClick={() => setCreateDialogOpen(false)} type="button">
+              <button className="secondary-button" onClick={closeCreateDialog} type="button">
                 取消
               </button>
               <button
@@ -1137,7 +1253,13 @@ export function AppShell({ children }: PropsWithChildren) {
                 onClick={createConversationFromSidebar}
                 type="button"
               >
-                {creatingConversation ? "创建中" : "创建研究"}
+                {creatingConversation
+                  ? pendingResearchFiles.length
+                    ? "创建并导入中"
+                    : "创建中"
+                  : pendingResearchFiles.length
+                    ? `创建研究并导入 ${pendingResearchFiles.length} 篇`
+                    : "创建研究"}
               </button>
             </div>
           </div>

@@ -48,6 +48,41 @@ _PAPER_SCOPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _DOMAIN_FOCUS_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "failure recovery",
+        (
+            "failure recovery",
+            "error recovery",
+            "recover from failure",
+            "失败恢复",
+            "故障恢复",
+            "错误恢复",
+            "恢复能力",
+        ),
+    ),
+    (
+        "cost efficiency",
+        (
+            "cost efficiency",
+            "cost-aware",
+            "cost aware",
+            "token cost",
+            "api cost",
+            "成本",
+            "预算",
+        ),
+    ),
+    ("latency", ("latency", "response time", "延迟", "时延", "响应时间")),
+    (
+        "task success rate",
+        (
+            "task success rate",
+            "success rate",
+            "任务成功率",
+            "成功率",
+        ),
+    ),
+    ("tool selection", ("tool selection", "工具选择")),
     ("tool use", ("tool use", "tool usage", "tool-using", "\u5de5\u5177\u4f7f\u7528", "\u5de5\u5177\u8c03\u7528")),
     ("tool calling", ("tool calling", "api calling", "function calling", "\u51fd\u6570\u8c03\u7528", "api \u8c03\u7528")),
     ("benchmark evaluation", ("benchmark", "evaluation", "\u8bc4\u6d4b", "\u57fa\u51c6")),
@@ -152,6 +187,7 @@ class QueryIntent:
     core_topic: str
     user_goal: str
     knowledge_scope: str
+    request_focus_terms: list[str] = field(default_factory=list)
     focus_terms: list[str] = field(default_factory=list)
     paper_scope: list[str] = field(default_factory=list)
     soft_hints: list[str] = field(default_factory=list)
@@ -166,6 +202,7 @@ class QueryIntent:
             "core_topic": self.core_topic,
             "user_goal": self.user_goal,
             "knowledge_scope": self.knowledge_scope,
+            "request_focus_terms": list(self.request_focus_terms),
             "focus_terms": list(self.focus_terms),
             "paper_scope": list(self.paper_scope),
             "soft_hints": list(self.soft_hints),
@@ -210,12 +247,13 @@ def derive_query_intent(
         if part
     ).strip()
 
-    focus_terms = _dedupe(
+    request_focus_terms = _dedupe(
         [
-            *_domain_focus_terms(combined_text),
+            *_domain_focus_terms(clean_request),
             *_quoted_or_acronym_terms(clean_request),
         ]
     )
+    focus_terms = _dedupe([*request_focus_terms, *_domain_focus_terms(combined_text)])
     paper_scope = _dedupe(_matching_labels(combined_text, _PAPER_SCOPE_PATTERNS))
     time_range = _extract_time_range(clean_request or combined_text, reference_year=reference_year)
     user_goal = _infer_user_goal(clean_request or combined_text, time_range=time_range, paper_scope=paper_scope)
@@ -229,6 +267,7 @@ def derive_query_intent(
         core_topic=core_topic,
         user_goal=user_goal,
         knowledge_scope=knowledge_scope or "shared",
+        request_focus_terms=request_focus_terms[:4],
         focus_terms=focus_terms[:4],
         paper_scope=paper_scope[:4],
         soft_hints=soft_hints[:4],

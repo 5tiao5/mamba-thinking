@@ -56,6 +56,8 @@ class WorkspacePaperView(BaseModel):
     source: str = ""
     taxonomy_category: str = ""
     citation_count: int = 0
+    citation_count_known: bool = False
+    citation_source: str = ""
     url: str = ""
     is_new_this_round: bool = False
     relevance_score: float = 0.0
@@ -73,6 +75,7 @@ class WorkspaceGraphEdgeView(BaseModel):
     evidence_level: str = "candidate"
     evidence: str = ""
     evidence_snippets: List[str] = Field(default_factory=list)
+    evidence_details: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkspaceGapView(BaseModel):

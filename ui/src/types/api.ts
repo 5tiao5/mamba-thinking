@@ -79,6 +79,8 @@ export type WorkspacePaper = {
   source: string;
   taxonomy_category: string;
   citation_count: number;
+  citation_count_known?: boolean;
+  citation_source?: string;
   url: string;
   is_new_this_round: boolean;
   relevance_score?: number;
@@ -96,6 +98,17 @@ export type WorkspaceGraphEdge = {
   evidence_level?: string;
   evidence?: string;
   evidence_snippets?: string[];
+  evidence_details?: Array<{
+    source_type?: string;
+    section?: string;
+    page?: number;
+    snippet?: string;
+    source_url?: string;
+    source_paper_id?: string;
+    target_paper_id?: string;
+    citation_label?: string;
+    reference_entry?: string;
+  }>;
 };
 
 export type WorkspaceGap = {
@@ -352,6 +365,41 @@ export type PaperImportCandidateItem = {
   is_exact_match: boolean;
 };
 
+export type ResearchPaperStatus = "candidate" | "core" | "excluded";
+
+export type ResearchPaperItem = {
+  paper_entry_id: string;
+  conversation_id: string;
+  document_id: string;
+  canonical_key: string;
+  title: string;
+  origin: "user_import" | "user_upload" | "system_search" | string;
+  status: ResearchPaperStatus;
+  source_url: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SearchPaperCandidatesPayload = {
   items: PaperImportCandidateItem[];
+};
+
+export type PdfImportItem = {
+  filename: string;
+  success: boolean;
+  document?: KnowledgeDocumentItem | null;
+  research_paper?: ResearchPaperItem | null;
+  parsed_pages: number;
+  total_pages: number;
+  duplicate_replaced: boolean;
+  warnings: string[];
+  error_code: string;
+  error_message: string;
+};
+
+export type BatchPdfImportPayload = {
+  items: PdfImportItem[];
+  imported_count: number;
+  failed_count: number;
 };

@@ -76,6 +76,8 @@ class PaperRecord:
     source: str = ""
     taxonomy_category: str = ""
     citation_count: int = 0
+    citation_count_known: bool = False
+    citation_source: str = ""
     url: str = ""
     is_new_this_round: bool = False
     relevance_score: float = 0.0
@@ -208,4 +210,21 @@ class KnowledgeDocument:
     content: str = ""
     tags: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ConversationResearchPaper:
+    """A paper asset retained by one long-running research conversation."""
+
+    paper_entry_id: str
+    conversation_id: str
+    document_id: str
+    canonical_key: str
+    title: str
+    origin: str = "user_import"
+    status: str = "candidate"
+    source_url: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
 

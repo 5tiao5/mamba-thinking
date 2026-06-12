@@ -1,0 +1,8 @@
+# Backend API and schema validation
+fastapi>=0.116.1,<1.0
+uvicorn>=0.35.0,<1.0
+pydantic>=2.12.4,<3.0
+python-multipart>=0.0.20,<1.0
+
+# Open-access paper PDF parsing
+PyMuPDF>=1.27.2,<2.0

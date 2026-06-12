@@ -135,7 +135,11 @@ export function HomePage() {
                 <span className="field-label">任务模式</span>
                 <SegmentedControl label="任务模式" onChange={setMode} options={modeOptions} value={mode} />
               </div>
-              <ToggleSwitch checked={useSharedKnowledge} label="使用共享知识" onChange={setUseSharedKnowledge} />
+              <ToggleSwitch
+                checked={useSharedKnowledge}
+                label="使用当前研究与全局知识"
+                onChange={setUseSharedKnowledge}
+              />
             </div>
             <div className="button-row">
               <button className="primary-button" disabled={loading} onClick={handleCreateConversation} type="button">

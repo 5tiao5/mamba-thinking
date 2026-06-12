@@ -83,6 +83,14 @@ function wrapTitle(title: string, maxCharsPerLine = 14, maxLines = 2) {
   return lines.slice(0, maxLines);
 }
 
+function evidenceLevelLabel(level?: string) {
+  const normalized = (level || "").toLowerCase();
+  if (normalized === "confirmed") return "已证实";
+  if (normalized === "supported") return "文本支持";
+  if (normalized === "inferred") return "有依据推断";
+  return "候选关系";
+}
+
 export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanvasProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [activeRelationships, setActiveRelationships] = useState<string[]>([]);
@@ -200,7 +208,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
             type="button"
           >
             <span className="graph-legend-swatch" style={{ backgroundColor: relationshipTone(relationship) }} />
-            {relationship} · {count}
+            {relationshipLabel(relationship)} · {count}
           </button>
         ))}
         {activeRelationships.length ? (
@@ -326,9 +334,19 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
               {selectedEdges.length ? (
                 selectedEdges.map((edge, index) => (
                   <div className="graph-node-detail-item" key={`${edge.source}-${edge.target}-${index}`}>
-                    <strong>{relationshipBadgeLabel(cleanDisplayText(edge.relationship, 80))}</strong>
+                    <div className="workspace-paper-title-row">
+                      <strong>{relationshipBadgeLabel(cleanDisplayText(edge.relationship, 80))}</strong>
+                      <span className="message-source-trace-chip">
+                        {evidenceLevelLabel(edge.evidence_level)}
+                      </span>
+                    </div>
                     <span>{formatGraphEdgeHeadline(edge.relationship, edge.source, edge.target, papers)}</span>
                     <small>{formatGraphEdgeReasoningByRelationship(edge.relationship, edge.reasoning, papers)}</small>
+                    {edge.evidence_snippets?.slice(0, 2).map((snippet, snippetIndex) => (
+                      <small className="fine-print" key={`${edge.source}-${edge.target}-evidence-${snippetIndex}`}>
+                        {cleanDisplayText(snippet, 220)}
+                      </small>
+                    ))}
                   </div>
                 ))
               ) : (

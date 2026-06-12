@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from product_agent.domain import ResearchIdea
+from product_agent.domain import PaperRecord, ResearchIdea
 from product_agent.models import EvolutionEdge, PaperNode
+from product_agent.repositories.sqlite_store import SQLiteWorkspaceRepository
 from product_agent.research_agent.nodes.synthesizer import synthesizer_node
 from product_agent.services.evidence_snapshot_service import EvidenceSnapshotService
 from product_agent.services.idea_generation_service import IdeaGenerationOutput
 from product_agent.services.report_generation_service import ReportGenerationOutput
 from product_agent.services.summary_generation_service import SummaryGenerationOutput
 from product_agent.services.workspace_mapper import workspace_from_agent_state
-from product_agent.services.workspace_service import WorkspaceService
+from product_agent.services.workspace_service import (
+    WorkspaceService,
+    _merge_workspace_graph_edges,
+    _merge_workspace_taxonomy,
+)
 
 
 class _WorkspaceRepository:
@@ -23,6 +29,117 @@ class _WorkspaceRepository:
 
 
 class EvidenceSnapshotTests(unittest.TestCase):
+    def test_workspace_persistence_keeps_relevance_metadata(self) -> None:
+        paper = PaperRecord(
+            paper_id="paper-a",
+            title="Relevant Paper",
+            relevance_score=0.91,
+            relevance_tier="direct",
+            relevance_reasons=["tool_use:title:tool use"],
+        )
+
+        payload = SQLiteWorkspaceRepository._paper_to_dict(paper)
+
+        self.assertEqual(payload["relevance_score"], 0.91)
+        self.assertEqual(payload["relevance_tier"], "direct")
+        self.assertEqual(
+            payload["relevance_reasons"],
+            ["tool_use:title:tool use"],
+        )
+
+    def test_conversation_graph_prefers_confirmed_relation_for_same_pair(self) -> None:
+        weak = SimpleNamespace(
+            graph_edges=[
+                {
+                    "source": "paper-a",
+                    "target": "paper-b",
+                    "relationship": "related",
+                    "evidence_level": "inferred",
+                    "confidence": 0.62,
+                }
+            ]
+        )
+        strong = SimpleNamespace(
+            graph_edges=[
+                {
+                    "source": "paper-a",
+                    "target": "paper-b",
+                    "relationship": "citation",
+                    "evidence_level": "confirmed",
+                    "confidence": 1.0,
+                }
+            ]
+        )
+
+        merged = _merge_workspace_graph_edges([weak, strong])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["relationship"], "citation")
+
+    def test_conversation_taxonomy_preserves_deduplicated_matched_paper_ids(self) -> None:
+        first = SimpleNamespace(
+            taxonomy={
+                "branches": [
+                    {
+                        "branch_id": "benchmark-design",
+                        "name": "Benchmark Design",
+                        "paper_count": 2,
+                        "matched_paper_ids": ["paper-a", "paper-b"],
+                    }
+                ],
+                "coverage": {
+                    "benchmark-design": {
+                        "paper_count": 2,
+                        "gap_count": 1,
+                        "coverage_score": 0.75,
+                        "evidence_tier": "moderate",
+                        "matched_paper_ids": ["paper-a", "paper-b"],
+                        "matched_gap_ids": ["gap-a"],
+                    }
+                },
+            }
+        )
+        second = SimpleNamespace(
+            taxonomy={
+                "branches": [
+                    {
+                        "branch_id": "benchmark-design",
+                        "name": "Benchmark Design",
+                        "paper_count": 2,
+                        "matched_paper_ids": ["paper-b", "paper-c"],
+                    }
+                ],
+                "coverage": {
+                    "benchmark-design": {
+                        "paper_count": 2,
+                        "gap_count": 1,
+                        "coverage_score": 0.85,
+                        "evidence_tier": "strong",
+                        "matched_paper_ids": ["paper-b", "paper-c"],
+                        "matched_gap_ids": ["gap-b"],
+                    }
+                },
+            }
+        )
+
+        merged = _merge_workspace_taxonomy([first, second])
+        branch = merged["branches"][0]
+        coverage = merged["coverage"]["benchmark-design"]
+
+        self.assertEqual(
+            set(branch["matched_paper_ids"]),
+            {"paper-a", "paper-b", "paper-c"},
+        )
+        self.assertEqual(branch["paper_count"], 3)
+        self.assertEqual(
+            set(coverage["matched_paper_ids"]),
+            {"paper-a", "paper-b", "paper-c"},
+        )
+        self.assertEqual(set(coverage["matched_gap_ids"]), {"gap-a", "gap-b"})
+        self.assertEqual(coverage["paper_count"], 3)
+        self.assertEqual(coverage["gap_count"], 2)
+        self.assertEqual(coverage["evidence_tier"], "strong")
+
     def test_workspace_exposes_full_evidence_pool_not_only_analysis_set(self) -> None:
         state = self._state()
         state["evidence_pool"] = {

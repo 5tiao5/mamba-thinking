@@ -6,6 +6,7 @@ from typing import Any
 
 from product_agent.domain import (
     Conversation,
+    ConversationResearchPaper,
     ConversationWorkingMemory,
     GapRecord,
     KnowledgeDocument,
@@ -389,8 +390,13 @@ class SQLiteWorkspaceRepository:
             "source": paper.source,
             "taxonomy_category": paper.taxonomy_category,
             "citation_count": paper.citation_count,
+            "citation_count_known": bool(getattr(paper, "citation_count_known", False)),
+            "citation_source": str(getattr(paper, "citation_source", "") or ""),
             "url": paper.url,
             "is_new_this_round": bool(getattr(paper, "is_new_this_round", False)),
+            "relevance_score": float(getattr(paper, "relevance_score", 0.0) or 0.0),
+            "relevance_tier": str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
+            "relevance_reasons": list(getattr(paper, "relevance_reasons", []) or []),
         }
 
     @staticmethod
@@ -573,6 +579,107 @@ class SQLiteKnowledgeRepository:
             content=row["content"],
             tags=list(_load_json(row["tags_json"]) or []),
             metadata=dict(_load_json(row["metadata_json"]) or {}),
+        )
+
+
+class SQLiteResearchPaperRepository:
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def save(self, paper: ConversationResearchPaper) -> ConversationResearchPaper:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO conversation_research_papers (
+                    paper_entry_id, conversation_id, document_id, canonical_key,
+                    title, origin, status, source_url, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(paper_entry_id) DO UPDATE SET
+                    document_id = excluded.document_id,
+                    canonical_key = excluded.canonical_key,
+                    title = excluded.title,
+                    origin = excluded.origin,
+                    status = excluded.status,
+                    source_url = excluded.source_url,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    paper.paper_entry_id,
+                    paper.conversation_id,
+                    paper.document_id,
+                    paper.canonical_key,
+                    paper.title,
+                    paper.origin,
+                    paper.status,
+                    paper.source_url,
+                    _dump_json(paper.metadata),
+                    _dump_datetime(paper.created_at),
+                    _dump_datetime(paper.updated_at),
+                ),
+            )
+            connection.commit()
+        return paper
+
+    def get(self, paper_entry_id: str) -> ConversationResearchPaper | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM conversation_research_papers WHERE paper_entry_id = ?",
+                (paper_entry_id,),
+            ).fetchone()
+        return self._row_to_entity(row) if row else None
+
+    def get_by_conversation_and_key(
+        self,
+        conversation_id: str,
+        canonical_key: str,
+    ) -> ConversationResearchPaper | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM conversation_research_papers
+                WHERE conversation_id = ? AND canonical_key = ?
+                """,
+                (conversation_id, canonical_key),
+            ).fetchone()
+        return self._row_to_entity(row) if row else None
+
+    def list_by_conversation(self, conversation_id: str) -> list[ConversationResearchPaper]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM conversation_research_papers
+                WHERE conversation_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [self._row_to_entity(row) for row in rows]
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM conversation_research_papers WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            connection.commit()
+        return cursor.rowcount
+
+    @staticmethod
+    def _row_to_entity(row) -> ConversationResearchPaper:
+        return ConversationResearchPaper(
+            paper_entry_id=row["paper_entry_id"],
+            conversation_id=row["conversation_id"],
+            document_id=row["document_id"],
+            canonical_key=row["canonical_key"],
+            title=row["title"],
+            origin=row["origin"],
+            status=row["status"],
+            source_url=row["source_url"],
+            metadata=dict(_load_json(row["metadata_json"]) or {}),
+            created_at=_load_datetime(row["created_at"]),
+            updated_at=_load_datetime(row["updated_at"]),
         )
 
 

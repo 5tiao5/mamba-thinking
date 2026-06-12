@@ -296,7 +296,7 @@ class NoopReranker:
 
 class KnowledgeService:
     """
-    共享知识与后续 RAG 的统一入口。
+    研究私有知识、全局共享知识与后续 RAG 的统一入口。
 
     TODO(iter3-knowledge-service):
     当前定位:
@@ -392,6 +392,7 @@ class KnowledgeService:
         metadata: Dict[str, Any] = {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "source_type": "workspace_summary",
+            "visibility": "conversation" if conversation_id else "shared",
         }
         if conversation_id:
             metadata["conversation_id"] = conversation_id
@@ -423,7 +424,11 @@ class KnowledgeService:
         index_immediately: bool = True
     ) -> KnowledgeDocument:
         """Save a user-imported knowledge document for later retrieval and grounding."""
-        metadata = {"created_at": datetime.now(timezone.utc).isoformat(), "source_type": "user_import"}
+        metadata = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_type": "user_import",
+            "visibility": "conversation" if conversation_id else "shared",
+        }
         if source_url:
             metadata["source_url"] = source_url
         if conversation_id:
@@ -870,7 +875,16 @@ class KnowledgeService:
         knowledge_scope: str = "shared",
         conversation_id: str | None = None,
     ) -> list[KnowledgeHit]:
-        """Retrieve structured knowledge hits for context assembly."""
+        """
+        Retrieve structured knowledge hits for context assembly.
+
+        Scope semantics:
+        - none: disable knowledge retrieval
+        - conversation_only: only documents owned by the current conversation
+        - shared: current conversation documents plus explicitly global documents
+
+        Documents owned by another conversation are never visible.
+        """
         normalized_scope = self._normalize_knowledge_scope(knowledge_scope)
         if normalized_scope == "none":
             return []
@@ -1157,8 +1171,9 @@ class KnowledgeService:
             if document is None:
                 continue
 
-            if knowledge_scope == "conversation_only" and not self._document_matches_conversation(
+            if not self._document_visible_for_scope(
                 document,
+                knowledge_scope=knowledge_scope,
                 conversation_id=conversation_id,
             ):
                 continue
@@ -1273,12 +1288,14 @@ class KnowledgeService:
         conversation_id: str | None,
     ) -> list[tuple[float, KnowledgeDocument]]:
         normalized_scope = self._normalize_knowledge_scope(knowledge_scope)
-        if normalized_scope != "conversation_only":
-            return scored_docs
         return [
             (score, doc)
             for score, doc in scored_docs
-            if self._document_matches_conversation(doc, conversation_id=conversation_id)
+            if self._document_visible_for_scope(
+                doc,
+                knowledge_scope=normalized_scope,
+                conversation_id=conversation_id,
+            )
         ]
 
     @staticmethod
@@ -1290,6 +1307,29 @@ class KnowledgeService:
     def _document_scope(self, document: KnowledgeDocument, *, conversation_id: str | None) -> str:
         return "conversation" if self._document_matches_conversation(document, conversation_id=conversation_id) else "shared"
 
+    def _document_visible_for_scope(
+        self,
+        document: KnowledgeDocument,
+        *,
+        knowledge_scope: str,
+        conversation_id: str | None,
+    ) -> bool:
+        normalized_scope = self._normalize_knowledge_scope(knowledge_scope)
+        if normalized_scope == "none":
+            return False
+
+        owner_conversation_id = self._document_conversation_id(document)
+        if normalized_scope == "conversation_only":
+            return bool(
+                conversation_id
+                and owner_conversation_id
+                and owner_conversation_id == conversation_id
+            )
+
+        # "shared" means global knowledge plus the active research corpus.
+        # A private document from another conversation must never leak in.
+        return not owner_conversation_id or owner_conversation_id == conversation_id
+
     def _document_matches_conversation(
         self,
         document: KnowledgeDocument,
@@ -1299,15 +1339,18 @@ class KnowledgeService:
         if not conversation_id:
             return False
 
-        metadata_conversation_id = str(document.metadata.get("conversation_id", "") or "")
-        if metadata_conversation_id and metadata_conversation_id == conversation_id:
-            return True
+        return self._document_conversation_id(document) == conversation_id
+
+    def _document_conversation_id(self, document: KnowledgeDocument) -> str:
+        metadata_conversation_id = str(document.metadata.get("conversation_id", "") or "").strip()
+        if metadata_conversation_id:
+            return metadata_conversation_id
 
         if not document.source_task_id or self.task_repository is None:
-            return False
+            return ""
 
         task = self.task_repository.get(document.source_task_id)
-        return bool(task and task.conversation_id == conversation_id)
+        return str(task.conversation_id).strip() if task else ""
 
     @staticmethod
     def _build_document_excerpt(document: KnowledgeDocument, *, max_chars: int) -> str:

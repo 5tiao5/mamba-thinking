@@ -10,6 +10,7 @@ from product_agent.repositories import (
     InMemoryWorkingMemoryRepository,
     InMemoryKnowledgeRepository,
     InMemoryMessageRepository,
+    InMemoryResearchPaperRepository,
     InMemoryResearchTaskRepository,
     InMemoryWorkspaceRepository,
     SQLiteConversationRepository,
@@ -18,6 +19,7 @@ from product_agent.repositories import (
     SQLiteWorkingMemoryRepository,
     SQLiteKnowledgeRepository,
     SQLiteMessageRepository,
+    SQLiteResearchPaperRepository,
     SQLiteResearchTaskRepository,
     SQLiteVectorStore,
     SQLiteWorkspaceRepository,
@@ -26,6 +28,8 @@ from product_agent.services.knowledge_service import HashEmbedder
 from product_agent.services.conversation_service import ConversationService
 from product_agent.services.knowledge_service import KnowledgeService
 from product_agent.services.message_service import MessageService
+from product_agent.services.pdf_import_service import PdfImportService
+from product_agent.services.research_paper_service import ResearchPaperService
 from product_agent.services.research_service import ResearchService
 from product_agent.services.skill_service import SkillService
 from product_agent.services.tool_service import ToolService
@@ -62,6 +66,7 @@ class AppContainer:
             self.workspace_repository = SQLiteWorkspaceRepository(self.database)
             self.working_memory_repository = SQLiteWorkingMemoryRepository(self.database)
             self.knowledge_repository = SQLiteKnowledgeRepository(self.database)
+            self.research_paper_repository = SQLiteResearchPaperRepository(self.database)
         else:
             self.database = None
             self.conversation_repository = InMemoryConversationRepository()
@@ -70,6 +75,7 @@ class AppContainer:
             self.workspace_repository = InMemoryWorkspaceRepository()
             self.working_memory_repository = InMemoryWorkingMemoryRepository()
             self.knowledge_repository = InMemoryKnowledgeRepository()
+            self.research_paper_repository = InMemoryResearchPaperRepository()
 
         self.tool_registry = ToolRegistry()
         self.skill_registry = SkillRegistry()
@@ -82,12 +88,14 @@ class AppContainer:
             task_repository=self.task_repository,
             workspace_repository=self.workspace_repository,
             working_memory_repository=self.working_memory_repository,
+            research_paper_repository=self.research_paper_repository,
         )
         self.message_service = MessageService(
             repository=self.message_repository,
             conversation_repository=self.conversation_repository,
         )
         self.working_memory_service = WorkingMemoryService(self.working_memory_repository)
+        self.research_paper_service = ResearchPaperService(self.research_paper_repository)
 
         # ✅ 先创建 knowledge_service（被 research_service 依赖）
         # SQLite mode: 注入持久化向量存储和确定性哈希嵌入器
@@ -106,6 +114,11 @@ class AppContainer:
                 task_repository=self.task_repository,
                 async_indexing=True,
             )
+
+        self.pdf_import_service = PdfImportService(
+            knowledge_service=self.knowledge_service,
+            research_paper_service=self.research_paper_service,
+        )
 
         # ✅ 先创建 tool_service 和 skill_service（被 research_service 依赖）
         self.tool_service = ToolService(self.tool_registry)
@@ -147,6 +160,35 @@ class AppContainer:
                 tool_id="semantic_scholar",
                 display_name="Semantic Scholar",
                 description="Fetches paper metadata and optional reference enrichment.",
+            )
+        )
+        self.tool_registry.register(
+            ToolDescriptor(
+                tool_id="paper_resolver",
+                display_name="Paper Resolver",
+                description=(
+                    "Resolves a title, DOI, arXiv ID, or paper URL into a "
+                    "canonical paper identity and open-access location."
+                ),
+                config={
+                    "accepted_inputs": ["title", "doi", "arxiv_id", "url"],
+                    "metadata_sources": ["arxiv", "openalex"],
+                },
+            )
+        )
+        self.tool_registry.register(
+            ToolDescriptor(
+                tool_id="fulltext_fetcher",
+                display_name="Open Full-text Fetcher",
+                description=(
+                    "Downloads an open-access paper PDF and extracts page-aware, "
+                    "section-aware text for downstream evidence verification."
+                ),
+                config={
+                    "parser": "pymupdf",
+                    "default_max_pages": 40,
+                    "default_max_pdf_mb": 20,
+                },
             )
         )
         self.skill_registry.register(

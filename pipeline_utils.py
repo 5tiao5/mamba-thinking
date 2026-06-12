@@ -354,6 +354,9 @@ def merge_paper(papers: Dict[str, PaperNode], paper: PaperNode) -> None:
         # Keep higher citation count
         if paper.citation_count > existing.citation_count:
             existing.citation_count = paper.citation_count
+        if getattr(paper, "citation_count_known", False):
+            existing.citation_count_known = True
+            existing.citation_source = getattr(paper, "citation_source", "") or existing.citation_source
         # Merge references
         existing_refs = set(existing.references)
         for ref in paper.references:

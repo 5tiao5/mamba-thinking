@@ -204,6 +204,8 @@ def _map_paper(paper: Any) -> PaperRecord:
         source=str(payload.get("source", "")),
         taxonomy_category=str(payload.get("taxonomy_category", "")),
         citation_count=int(payload.get("citation_count", 0) or 0),
+        citation_count_known=bool(payload.get("citation_count_known", False)),
+        citation_source=str(payload.get("citation_source", "")),
         url=str(payload.get("url", "")),
         is_new_this_round=bool(payload.get("is_new_this_round", False)),
         relevance_score=float(payload.get("relevance_score", 0.0) or 0.0),
@@ -260,6 +262,11 @@ def _map_graph_edge(raw_edge: Any, gap_ids: set) -> Dict[str, Any]:
         str(item)
         for item in payload.get("evidence_snippets", [])
         if str(item).strip()
+    ]
+    evidence_details = [
+        dict(item)
+        for item in payload.get("evidence_details", [])
+        if isinstance(item, dict)
     ]
     edge_id = str(payload.get("id") or payload.get("edge_id") or f"edge_{source}_{target}")
     metadata = {
@@ -318,6 +325,7 @@ def _map_graph_edge(raw_edge: Any, gap_ids: set) -> Dict[str, Any]:
         "evidence_level": evidence_level,
         "evidence": evidence,
         "evidence_snippets": evidence_snippets,
+        "evidence_details": evidence_details,
         "is_weak": is_weak,
         "is_gap_related": is_gap_related,
         "metadata": metadata,

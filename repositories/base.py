@@ -4,6 +4,7 @@ from typing import Protocol
 
 from product_agent.domain import (
     Conversation,
+    ConversationResearchPaper,
     ConversationWorkingMemory,
     KnowledgeDocument,
     MessageRecord,
@@ -93,4 +94,25 @@ class WorkingMemoryRepository(Protocol):
         ...
 
     def delete(self, conversation_id: str) -> bool:
+        ...
+
+
+class ResearchPaperRepository(Protocol):
+    def save(self, paper: ConversationResearchPaper) -> ConversationResearchPaper:
+        ...
+
+    def get(self, paper_entry_id: str) -> ConversationResearchPaper | None:
+        ...
+
+    def get_by_conversation_and_key(
+        self,
+        conversation_id: str,
+        canonical_key: str,
+    ) -> ConversationResearchPaper | None:
+        ...
+
+    def list_by_conversation(self, conversation_id: str) -> list[ConversationResearchPaper]:
+        ...
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
         ...

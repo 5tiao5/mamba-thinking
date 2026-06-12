@@ -128,6 +128,100 @@ class EvolutionGraphTests(unittest.TestCase):
         self.assertEqual(edge.evidence_level, "candidate")
         self.assertLess(edge.confidence, 0.4)
 
+    def test_similarity_graph_is_sparse_instead_of_all_to_all(self) -> None:
+        papers = {
+            f"paper-{index}": paper(
+                f"paper-{index}",
+                title=f"Agent Tool Benchmark {index}",
+                year=str(2020 + index),
+                keywords=["agent", "tool", "benchmark"],
+                category="Agent Evaluation",
+            )
+            for index in range(8)
+        }
+
+        result = evolution_node(
+            {
+                "topic": "agent tool evaluation",
+                "mode": "balanced",
+                "paper_nodes": papers,
+            }
+        )
+
+        self.assertLessEqual(len(result["evolution_graph"]), len(papers))
+
+    def test_failure_analysis_to_recovery_method_is_marked_as_addresses(self) -> None:
+        analysis = paper(
+            "paper-a",
+            title="Failure Analysis for Tool-Using Agents",
+            year="2025",
+            keywords=["agent", "tool use", "failure"],
+            abstract=(
+                "We investigate how LLM agents fail during tool use and "
+                "characterize recurrent failure modes."
+            ),
+        )
+        response = paper(
+            "paper-b",
+            title="Recovery Diagnostics for Tool-Using Agents",
+            year="2026",
+            keywords=["agent", "tool use", "recovery"],
+            abstract=(
+                "We propose structured diagnostics and a recovery policy to "
+                "improve reliability after tool calling failures."
+            ),
+        )
+
+        result = evolution_node(
+            {
+                "topic": "agent tool use failure recovery",
+                "mode": "balanced",
+                "paper_nodes": {
+                    analysis.paper_id: analysis,
+                    response.paper_id: response,
+                },
+            }
+        )
+
+        edge = result["evolution_graph"][0]
+        self.assertEqual(edge.relationship, "addresses")
+        self.assertEqual(edge.provenance, "landscape_profile")
+        self.assertEqual(edge.evidence_level, "inferred")
+
+    def test_later_benchmark_with_new_dimension_is_scope_extension(self) -> None:
+        earlier = paper(
+            "paper-a",
+            title="Tool Agent Benchmark",
+            year="2024",
+            keywords=["agent", "tool use", "benchmark"],
+            abstract="We introduce a benchmark for evaluating tool-using LLM agents.",
+        )
+        later = paper(
+            "paper-b",
+            title="Trajectory Tool Agent Benchmark",
+            year="2025",
+            keywords=["agent", "tool use", "benchmark", "trajectory"],
+            abstract=(
+                "We introduce a trajectory-level benchmark for evaluating tool-using "
+                "LLM agents with execution traces."
+            ),
+        )
+
+        result = evolution_node(
+            {
+                "topic": "agent tool use evaluation",
+                "mode": "balanced",
+                "paper_nodes": {
+                    earlier.paper_id: earlier,
+                    later.paper_id: later,
+                },
+            }
+        )
+
+        edge = result["evolution_graph"][0]
+        self.assertEqual(edge.relationship, "scope_extension")
+        self.assertIn("target_added_dimensions", edge.evidence_snippets[-1])
+
     def test_evidence_contract_survives_workspace_mapping(self) -> None:
         result = evolution_node(
             {

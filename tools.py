@@ -272,6 +272,8 @@ def search_semantic_scholar(query: str, max_results: int = 10) -> List[PaperNode
                 publish_date=year,
                 source="semantic_scholar",
                 citation_count=item.get("citationCount", 0),
+                citation_count_known=item.get("citationCount") is not None,
+                citation_source="semantic_scholar",
                 url=item.get("url") or f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
                 doi=doi,
             )
@@ -288,39 +290,120 @@ def enrich_paper_references(
 
     Returns (enriched_count, linked_references).
     """
-    enriched = 0
-    linked = 0
+    enriched, linked, _ = enrich_paper_metadata(papers, max_papers=max_papers)
+    return enriched, linked
+
+
+def enrich_paper_metadata(
+    papers: Dict[str, PaperNode], max_papers: int = 6
+) -> Tuple[int, int, int]:
+    """Batch-fetch citation counts and references for the analysis set.
+
+    Returns ``(enriched_count, linked_references, citation_counts_fetched)``.
+    A missing API result remains explicitly unknown rather than being presented
+    as a real zero citation count.
+    """
     paper_items = [
         paper
         for paper in papers.values()
         if (paper.source or "").lower() not in {"seed", "fallback"}
     ][:max_papers]
+    if not paper_items:
+        return 0, 0, 0
+
+    enriched = 0
+    linked = 0
+    citation_counts_fetched = 0
     local_aliases = _local_paper_aliases(papers)
+    metadata_items = _fetch_s2_metadata_batch(paper_items)
 
-    for paper in paper_items:
-        if paper.references:
+    for paper, metadata in zip(paper_items, metadata_items):
+        if not isinstance(metadata, dict):
             continue
-        try:
-            references = _fetch_s2_references(paper)
-            if references:
-                normalized_refs: List[str] = []
-                linked_for_paper = set()
-                for reference in references:
-                    local_paper_id = _match_local_reference(reference, local_aliases)
-                    if local_paper_id:
-                        normalized_refs.append(local_paper_id)
-                        linked_for_paper.add(local_paper_id)
-                    else:
-                        external_id = _preferred_reference_id(reference)
-                        if external_id:
-                            normalized_refs.append(external_id)
-                paper.references = list(dict.fromkeys(normalized_refs))
-                enriched += 1
-                linked += len(linked_for_paper)
-        except Exception:
-            continue
+        enriched += 1
+        citation_count = metadata.get("citationCount")
+        if citation_count is not None:
+            paper.citation_count = max(int(citation_count or 0), 0)
+            paper.citation_count_known = True
+            paper.citation_source = "semantic_scholar"
+            citation_counts_fetched += 1
 
-    return enriched, linked
+        references = _metadata_references(metadata)
+        normalized_refs: List[str] = []
+        linked_for_paper = set()
+        for reference in references:
+            local_paper_id = _match_local_reference(reference, local_aliases)
+            if local_paper_id and local_paper_id != paper.paper_id:
+                normalized_refs.append(local_paper_id)
+                linked_for_paper.add(local_paper_id)
+            else:
+                external_id = _preferred_reference_id(reference)
+                if external_id:
+                    normalized_refs.append(external_id)
+        paper.references = list(dict.fromkeys([*paper.references, *normalized_refs]))
+        linked += len(linked_for_paper)
+
+    return enriched, linked, citation_counts_fetched
+
+
+def _fetch_s2_metadata_batch(papers: List[PaperNode]) -> List[Dict[str, Any] | None]:
+    identifiers: List[str] = []
+    for paper in papers:
+        candidates = _semantic_scholar_identifiers(paper)
+        identifiers.append(candidates[0] if candidates else str(paper.paper_id or "").strip())
+
+    return _request_s2_metadata_batch(identifiers)
+
+
+def _request_s2_metadata_batch(
+    identifiers: List[str],
+) -> List[Dict[str, Any] | None]:
+    if not identifiers:
+        return []
+    url = (
+        "https://api.semanticscholar.org/graph/v1/paper/batch"
+        "?fields=paperId,citationCount,externalIds,references.paperId,references.externalIds"
+    )
+    request = urllib.request.Request(
+        url,
+        data=json.dumps({"ids": identifiers}).encode("utf-8"),
+        headers={**_semantic_scholar_headers(), "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400 and len(identifiers) > 1:
+            midpoint = len(identifiers) // 2
+            return [
+                *_request_s2_metadata_batch(identifiers[:midpoint]),
+                *_request_s2_metadata_batch(identifiers[midpoint:]),
+            ]
+        if exc.code == 400:
+            return [None]
+        raise
+    if not isinstance(payload, list):
+        return [None] * len(identifiers)
+    return [item if isinstance(item, dict) else None for item in payload[: len(identifiers)]] + [
+        None
+    ] * max(len(identifiers) - len(payload), 0)
+
+
+def _metadata_references(metadata: Dict[str, Any]) -> List[Dict[str, str]]:
+    references: List[Dict[str, str]] = []
+    for cited in metadata.get("references", []) or []:
+        if not isinstance(cited, dict):
+            continue
+        ext = cited.get("externalIds", {}) or {}
+        reference = {
+            "s2": str(cited.get("paperId", "") or "").strip(),
+            "arxiv": str(ext.get("ArXiv", "") or "").strip(),
+            "doi": str(ext.get("DOI", "") or "").strip(),
+        }
+        if any(reference.values()):
+            references.append(reference)
+    return references
 
 
 def _fetch_s2_references(paper: PaperNode) -> List[Dict[str, str]]:
@@ -363,7 +446,11 @@ def _semantic_scholar_identifiers(paper: PaperNode) -> List[str]:
         identifiers.append(f"ARXIV:{arxiv_id}")
 
     paper_id = str(paper.paper_id or "").strip()
-    if paper_id and paper_id != arxiv_id:
+    if (
+        paper_id
+        and _normalize_paper_identifier(paper_id)
+        != _normalize_paper_identifier(arxiv_id)
+    ):
         identifiers.append(paper_id)
     return list(dict.fromkeys(identifiers))
 
@@ -372,11 +459,16 @@ def _paper_arxiv_id(paper: PaperNode) -> str:
     source = str(paper.source or "").lower()
     paper_id = str(paper.paper_id or "").strip()
     if source == "arxiv" and paper_id:
-        return paper_id
+        return re.sub(r"v\d+$", "", paper_id, flags=re.IGNORECASE)
     match = re.search(r"arxiv\.org/(?:abs|pdf)/([^?#/]+)", str(paper.url or ""), flags=re.IGNORECASE)
     if not match:
         return ""
-    return match.group(1).removesuffix(".pdf")
+    return re.sub(
+        r"v\d+$",
+        "",
+        match.group(1).removesuffix(".pdf"),
+        flags=re.IGNORECASE,
+    )
 
 
 def _local_paper_aliases(papers: Dict[str, PaperNode]) -> Dict[str, str]:
@@ -426,7 +518,10 @@ def _normalize_paper_identifier(value: str) -> str:
     normalized = re.sub(r"^(?:arxiv|doi):\s*", "", normalized)
     normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", normalized)
     normalized = re.sub(r"^https?://arxiv\.org/(?:abs|pdf)/", "", normalized)
-    return normalized.removesuffix(".pdf").strip()
+    normalized = normalized.removesuffix(".pdf").strip()
+    if re.fullmatch(r"\d{4}\.\d{4,5}v\d+", normalized):
+        normalized = re.sub(r"v\d+$", "", normalized)
+    return normalized
 
 
 # ── Taxonomy Builder ─────────────────────────────────────────────────────────

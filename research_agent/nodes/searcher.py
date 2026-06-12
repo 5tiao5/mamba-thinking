@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import difflib
+import math
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from observability import StageTimer, record_decision, record_error_event, record_tool_event
@@ -16,7 +18,7 @@ from pipeline_utils import (
     tool_name,
 )
 from tools import (
-    enrich_paper_references,
+    enrich_paper_metadata,
     search_papers,
     search_papers_recall,
     search_semantic_scholar,
@@ -381,57 +383,99 @@ def searcher_node(state: ResearchState) -> ResearchState:
     if len(papers) < before_dedup_count:
         working.setdefault("logs", []).append(f"Searcher collected {len(papers)} papers after title dedup.")
     evidence_pool = dict(papers)
-    analysis_papers = _select_papers_for_analysis(
+    analysis_shortlist = _select_analysis_shortlist(
         evidence_pool,
+        state=state,
+        max_results=max_results,
+    )
+    known_shortlist_count = sum(
+        1
+        for paper in analysis_shortlist.values()
+        if getattr(paper, "citation_count_known", False)
+    )
+
+    citation_enrichment_enabled = os.environ.get("CITATION_ENRICHMENT", "1") != "0"
+    if citation_enrichment_enabled and not fast_mode(state) and analysis_shortlist:
+        timer = StageTimer()
+        try:
+            enriched_count, linked_references, citation_counts_fetched = enrich_paper_metadata(
+                analysis_shortlist,
+                max_papers=len(analysis_shortlist),
+            )
+            known_shortlist_count = sum(
+                1
+                for paper in analysis_shortlist.values()
+                if getattr(paper, "citation_count_known", False)
+            )
+            record_tool_event(
+                working,
+                tool_name="Semantic Scholar citation enrichment",
+                input_summary=f"shortlist_papers={len(analysis_shortlist)}",
+                status="success" if enriched_count else "fallback",
+                output_count=linked_references,
+                duration_sec=timer.elapsed(),
+                note=(
+                    f"enriched_papers={enriched_count}; "
+                    f"citation_counts={citation_counts_fetched}; "
+                    f"linked_local_references={linked_references}; "
+                    f"mode={'balanced' if balanced_mode(state) else 'full'}; "
+                    "batch_request=true; failure_is_non_blocking"
+                ),
+            )
+            if linked_references:
+                working.setdefault("logs", []).append(
+                    f"Citation enrichment linked {linked_references} local references "
+                    f"and fetched {citation_counts_fetched} citation counts."
+                )
+            elif enriched_count:
+                working.setdefault("logs", []).append(
+                    f"Citation enrichment fetched metadata for {enriched_count} papers, "
+                    "but none cited another paper in the current analysis set."
+                )
+            else:
+                working.setdefault("logs", []).append(
+                    "Citation enrichment returned no usable metadata; citation counts "
+                    "remain unknown and graph construction stays conservative."
+                )
+        except Exception as exc:
+            record_tool_event(
+                working,
+                tool_name="Semantic Scholar citation enrichment",
+                input_summary=f"shortlist_papers={len(analysis_shortlist)}",
+                status="failed",
+                duration_sec=timer.elapsed(),
+                note=str(exc),
+            )
+            record_error_event(
+                working,
+                stage="searcher",
+                error_type="CitationEnrichmentError",
+                message=str(exc),
+                recovery=(
+                    "Continue with arXiv metadata, mark citation counts as unknown, "
+                    "and keep graph relationships conservative."
+                ),
+            )
+    elif not citation_enrichment_enabled and not fast_mode(state):
+        record_tool_event(
+            working,
+            tool_name="Semantic Scholar citation enrichment",
+            input_summary=f"shortlist_papers={len(analysis_shortlist)}",
+            status="skipped",
+            note="Explicitly disabled with CITATION_ENRICHMENT=0.",
+        )
+
+    analysis_papers = _select_papers_for_analysis(
+        analysis_shortlist,
         state=state,
         max_results=max_results,
     )
     if len(analysis_papers) < len(evidence_pool):
         working.setdefault("logs", []).append(
-            f"Searcher retained all {len(evidence_pool)} qualifying papers in the "
-            f"evidence pool and selected {len(analysis_papers)} for deep analysis."
-        )
-
-    citation_enrichment_enabled = os.environ.get("CITATION_ENRICHMENT", "1") != "0"
-    if citation_enrichment_enabled and not fast_mode(state) and not balanced_mode(state) and analysis_papers:
-        timer = StageTimer()
-        enriched_count, linked_references = enrich_paper_references(
-            analysis_papers,
-            max_papers=min(6, len(analysis_papers)),
-        )
-        record_tool_event(
-            working,
-            tool_name="Semantic Scholar citation enrichment",
-            input_summary=f"papers={len(analysis_papers)}",
-            status="success" if enriched_count or linked_references else "fallback",
-            output_count=linked_references,
-            duration_sec=timer.elapsed(),
-            note=(
-                f"enriched_papers={enriched_count}; "
-                "full_mode_default=true; failure_is_non_blocking"
-            ),
-        )
-        if linked_references:
-            working.setdefault("logs", []).append(
-                f"Citation enrichment linked {linked_references} local references across {enriched_count} papers."
-            )
-        elif enriched_count:
-            working.setdefault("logs", []).append(
-                f"Citation enrichment fetched references for {enriched_count} papers, "
-                "but none pointed to another paper in the current evidence set."
-            )
-        else:
-            working.setdefault("logs", []).append(
-                "Citation enrichment returned no usable metadata; graph construction "
-                "will continue with conservative related edges."
-            )
-    elif not citation_enrichment_enabled and not fast_mode(state) and not balanced_mode(state):
-        record_tool_event(
-            working,
-            tool_name="Semantic Scholar citation enrichment",
-            input_summary=f"papers={len(analysis_papers)}",
-            status="skipped",
-            note="Explicitly disabled with CITATION_ENRICHMENT=0.",
+            f"Searcher retained all {len(evidence_pool)} qualifying papers, enriched "
+            f"{known_shortlist_count}/{len(analysis_shortlist)} shortlist papers, and "
+            f"selected {len(analysis_papers)} for deep analysis using relevance, "
+            "age-normalized influence, and recency slots."
         )
 
     novel_paper_count = _count_novel_papers(evidence_pool, previous_round_paper_ids)
@@ -468,6 +512,13 @@ def searcher_node(state: ResearchState) -> ResearchState:
     retrieval_outcome["adjacent_paper_count"] = tier_counts["adjacent"]
     retrieval_outcome["evidence_pool_count"] = len(evidence_pool)
     retrieval_outcome["analysis_paper_count"] = len(analysis_papers)
+    retrieval_outcome["analysis_shortlist_count"] = len(analysis_shortlist)
+    retrieval_outcome["citation_enriched_shortlist_count"] = known_shortlist_count
+    retrieval_outcome["analysis_selection_strategy"] = (
+        "relevance_core+age_normalized_impact+recent_paper"
+        if not fast_mode(state)
+        else "relevance_core"
+    )
     retrieval_outcome["low_relevance_filtered_count"] = low_relevance_filtered_total
     _refine_outcome_for_relevance(retrieval_outcome)
     working["retrieval_outcome"] = retrieval_outcome
@@ -892,6 +943,12 @@ def _deduplicate_papers_by_title(
             keep_paper.abstract = remove_paper.abstract
         if remove_paper.citation_count > keep_paper.citation_count:
             keep_paper.citation_count = remove_paper.citation_count
+        if getattr(remove_paper, "citation_count_known", False):
+            keep_paper.citation_count_known = True
+            keep_paper.citation_source = (
+                getattr(remove_paper, "citation_source", "")
+                or keep_paper.citation_source
+            )
 
         existing_kw = {k.lower() for k in keep_paper.keywords}
         for kw in remove_paper.keywords:
@@ -932,6 +989,23 @@ def _paper_metadata_quality(paper: PaperNode) -> int:
     return score
 
 
+def _select_analysis_shortlist(
+    papers: Dict[str, PaperNode],
+    *,
+    state: ResearchState,
+    max_results: int,
+) -> Dict[str, PaperNode]:
+    if fast_mode(state):
+        target_count = min(max_results, 3)
+    else:
+        target_count = min(len(papers), max(max_results * 2, 12))
+    if len(papers) <= target_count:
+        return papers
+
+    ordered = sorted(papers.values(), key=_relevance_priority, reverse=True)
+    return {paper.paper_id: paper for paper in ordered[:target_count]}
+
+
 def _select_papers_for_analysis(
     papers: Dict[str, PaperNode],
     *,
@@ -945,30 +1019,96 @@ def _select_papers_for_analysis(
     if len(papers) <= target_count:
         return papers
 
+    relevance_order = sorted(papers.values(), key=_relevance_priority, reverse=True)
+    if fast_mode(state) or target_count < 4:
+        return {
+            paper.paper_id: paper
+            for paper in relevance_order[:target_count]
+        }
+
+    impact_slots = 2 if target_count >= 6 else 1
+    recent_slots = 1
+    relevance_slots = max(target_count - impact_slots - recent_slots, 1)
+    selected: list[PaperNode] = relevance_order[:relevance_slots]
+    selected_ids = {paper.paper_id for paper in selected}
+
+    impact_candidates = sorted(
+        (
+            paper
+            for paper in papers.values()
+            if paper.paper_id not in selected_ids
+            and getattr(paper, "citation_count_known", False)
+        ),
+        key=_impact_priority,
+        reverse=True,
+    )
+    for paper in impact_candidates[:impact_slots]:
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+
+    recent_candidates = sorted(
+        (
+            paper
+            for paper in papers.values()
+            if paper.paper_id not in selected_ids
+        ),
+        key=_recent_priority,
+        reverse=True,
+    )
+    for paper in recent_candidates[:recent_slots]:
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+
+    for paper in relevance_order:
+        if len(selected) >= target_count:
+            break
+        if paper.paper_id in selected_ids:
+            continue
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+
+    return {paper.paper_id: paper for paper in selected[:target_count]}
+
+
+def _relevance_priority(paper: PaperNode) -> tuple[int, float, int, int]:
     tier_priority = {
         "direct": 3,
         "adjacent": 2,
         "candidate": 1,
         "background": 0,
     }
+    title_reason_count = sum(
+        1
+        for reason in list(getattr(paper, "relevance_reasons", []) or [])
+        if ":title:" in str(reason)
+    )
+    year = _paper_year(getattr(paper, "publish_date", "")) or 0
+    return (
+        tier_priority.get(str(getattr(paper, "relevance_tier", "candidate")), 1),
+        float(getattr(paper, "relevance_score", 0.0) or 0.0),
+        title_reason_count,
+        year,
+    )
 
-    def priority(paper: PaperNode) -> tuple[int, float, int, int, int]:
-        title_reason_count = sum(
-            1
-            for reason in list(getattr(paper, "relevance_reasons", []) or [])
-            if ":title:" in str(reason)
-        )
-        year = _paper_year(getattr(paper, "publish_date", "")) or 0
-        return (
-            tier_priority.get(str(getattr(paper, "relevance_tier", "candidate")), 1),
-            float(getattr(paper, "relevance_score", 0.0) or 0.0),
-            title_reason_count,
-            int(getattr(paper, "citation_count", 0) or 0),
-            year,
-        )
 
-    ordered = sorted(papers.values(), key=priority, reverse=True)
-    return {paper.paper_id: paper for paper in ordered[:target_count]}
+def _impact_priority(paper: PaperNode) -> tuple[int, float, float]:
+    tier_rank = _relevance_priority(paper)[0]
+    citations = max(int(getattr(paper, "citation_count", 0) or 0), 0)
+    year = _paper_year(getattr(paper, "publish_date", ""))
+    current_year = datetime.now(timezone.utc).year
+    age = max(current_year - year + 1, 1) if year else 4
+    age_normalized_impact = math.log1p(citations) / math.sqrt(age)
+    return (
+        tier_rank,
+        age_normalized_impact,
+        float(getattr(paper, "relevance_score", 0.0) or 0.0),
+    )
+
+
+def _recent_priority(paper: PaperNode) -> tuple[int, int, float]:
+    relevance = _relevance_priority(paper)
+    year = _paper_year(getattr(paper, "publish_date", "")) or 0
+    return relevance[0], year, relevance[1]
 
 
 def _source_diversity_report(papers: Dict[str, PaperNode]) -> str:

@@ -12,13 +12,18 @@ from .conversation import (
 )
 from .message import CreateMessageRequest, ListMessagesResponse, MessageView
 from .knowledge import (
+    BatchPdfImportResponse,
     CreateKnowledgeDocumentRequest,
     ImportPaperCandidateRequest,
     KnowledgeDocumentView,
     ListKnowledgeDocumentsResponse,
     ListPaperImportCandidatesResponse,
+    ListResearchPapersResponse,
     PaperImportCandidateView,
+    PdfImportItemView,
+    ResearchPaperView,
     SearchPaperCandidatesRequest,
+    UpdateResearchPaperRequest,
 )
 from .research import (
     CreateResearchTaskRequest,
@@ -56,10 +61,15 @@ __all__ = [
     "MessageView",
     "ListMessagesResponse",
     "CreateKnowledgeDocumentRequest",
+    "BatchPdfImportResponse",
     "SearchPaperCandidatesRequest",
     "PaperImportCandidateView",
+    "PdfImportItemView",
     "ListPaperImportCandidatesResponse",
     "ImportPaperCandidateRequest",
+    "ResearchPaperView",
+    "ListResearchPapersResponse",
+    "UpdateResearchPaperRequest",
     "KnowledgeDocumentView",
     "ListKnowledgeDocumentsResponse",
     "CreateResearchTaskRequest",

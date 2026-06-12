@@ -118,6 +118,9 @@ export function relationshipTone(relationship: string) {
   const value = relationship.toLowerCase();
   if (value.includes("improve")) return "#2f6fed";
   if (value.includes("extension") || value.includes("extend")) return "#7c3aed";
+  if (value.includes("scope_extension")) return "#7c3aed";
+  if (value.includes("addresses")) return "#dc2626";
+  if (value.includes("complements")) return "#0891b2";
   if (value.includes("citation") || value.includes("reference")) return "#0f766e";
   if (value.includes("compar")) return "#b45309";
   if (value.includes("related")) return "#64748b";
@@ -127,6 +130,9 @@ export function relationshipTone(relationship: string) {
 export function relationshipLabel(relationship: string) {
   const value = relationship.toLowerCase();
   if (value.includes("improve")) return "改进关系";
+  if (value.includes("scope_extension")) return "评测范围扩展";
+  if (value.includes("addresses")) return "问题响应";
+  if (value.includes("complements")) return "互补视角";
   if (value.includes("extension") || value.includes("extend")) return "扩展关系";
   if (value.includes("citation")) return "引用关系";
   if (value.includes("reference")) return "参考关系";
@@ -138,6 +144,9 @@ export function relationshipLabel(relationship: string) {
 export function relationshipBadgeLabel(relationship: string) {
   const value = relationship.toLowerCase();
   if (value.includes("improve")) return "IMPROVES";
+  if (value.includes("scope_extension")) return "EXPANDS SCOPE";
+  if (value.includes("addresses")) return "ADDRESSES";
+  if (value.includes("complements")) return "COMPLEMENTS";
   if (value.includes("extension") || value.includes("extend")) return "EXTENDS";
   if (value.includes("citation")) return "CITATION";
   if (value.includes("reference")) return "REFERENCES";
@@ -185,8 +194,18 @@ export function formatGraphEdgeHeadline(
 ) {
   const source = formatPaperReference(sourceId, papers);
   const target = formatPaperReference(targetId, papers);
+  const normalizedRelationship = relationship.toLowerCase();
   const label = relationshipLabel(relationship);
 
+  if (normalizedRelationship.includes("addresses")) {
+    return `${target} 针对 ${source} 所呈现的问题提供响应方案`;
+  }
+  if (normalizedRelationship.includes("scope_extension")) {
+    return `${target} 在 ${source} 的研究主题上增加了新的评测维度`;
+  }
+  if (normalizedRelationship.includes("complements")) {
+    return `${source} 与 ${target} 提供互补的研究视角`;
+  }
   if (label === "改进关系") {
     return `${target} 明确报告了对 ${source} 的改进`;
   }

@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from product_agent.domain import (
     Conversation,
+    ConversationResearchPaper,
     ConversationWorkingMemory,
     KnowledgeDocument,
     MessageRecord,
@@ -173,3 +174,44 @@ class InMemoryWorkingMemoryRepository:
             return False
         del self._items[conversation_id]
         return True
+
+
+class InMemoryResearchPaperRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, ConversationResearchPaper] = {}
+
+    def save(self, paper: ConversationResearchPaper) -> ConversationResearchPaper:
+        stored = deepcopy(paper)
+        self._items[paper.paper_entry_id] = stored
+        return deepcopy(stored)
+
+    def get(self, paper_entry_id: str) -> ConversationResearchPaper | None:
+        item = self._items.get(paper_entry_id)
+        return deepcopy(item) if item else None
+
+    def get_by_conversation_and_key(
+        self,
+        conversation_id: str,
+        canonical_key: str,
+    ) -> ConversationResearchPaper | None:
+        for item in self._items.values():
+            if item.conversation_id == conversation_id and item.canonical_key == canonical_key:
+                return deepcopy(item)
+        return None
+
+    def list_by_conversation(self, conversation_id: str) -> list[ConversationResearchPaper]:
+        items = [
+            item for item in self._items.values()
+            if item.conversation_id == conversation_id
+        ]
+        items.sort(key=lambda item: item.updated_at, reverse=True)
+        return [deepcopy(item) for item in items]
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
+        paper_ids = [
+            paper_id for paper_id, item in self._items.items()
+            if item.conversation_id == conversation_id
+        ]
+        for paper_id in paper_ids:
+            del self._items[paper_id]
+        return len(paper_ids)

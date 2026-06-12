@@ -83,8 +83,14 @@ class GraphAuditService:
             same_category = canonical(source.taxonomy_category) == canonical(target.taxonomy_category)
             overlap = keyword_overlap(source, target)
             provenance = getattr(edge, "provenance", "")
-            is_explicit_reference = provenance == "explicit_reference"
-            if not is_explicit_reference and not same_category and overlap < OVERLAP_THRESHOLD:
+            is_explicit_reference = "explicit_reference" in provenance
+            is_landscape_relation = provenance == "landscape_profile"
+            if (
+                not is_explicit_reference
+                and not is_landscape_relation
+                and not same_category
+                and overlap < OVERLAP_THRESHOLD
+            ):
                 failed_checks += 1
                 reports.append(
                     AuditReport(
@@ -119,7 +125,9 @@ class GraphAuditService:
                 total_checks += 1
                 evidence_text = " ".join(getattr(edge, "evidence_snippets", []) or [])
                 provenance = str(getattr(edge, "provenance", "") or "")
-                has_direct_claim = "abstract_claim" in provenance and bool(evidence_text.strip())
+                has_direct_claim = (
+                    "abstract_claim" in provenance or "fulltext_claim" in provenance
+                ) and bool(evidence_text.strip())
                 is_improvement = relationship in {"improves", "improve", "improvement"}
                 has_claim = any(term in evidence_text.lower() for term in IMPROVEMENT_TERMS)
                 has_eval = any(term in evidence_text.lower() for term in EVALUATION_TERMS)

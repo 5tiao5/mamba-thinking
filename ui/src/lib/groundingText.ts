@@ -17,9 +17,9 @@ export function knowledgeScopeLabel(scope?: KnowledgeScope) {
     case "none":
       return "未启用知识增强";
     case "conversation_only":
-      return "仅当前会话知识";
+      return "仅当前研究知识";
     case "shared":
-      return "共享知识已启用";
+      return "当前研究 + 全局知识";
     default:
       return "知识范围未标注";
   }

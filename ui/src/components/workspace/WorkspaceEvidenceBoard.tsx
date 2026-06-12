@@ -29,6 +29,10 @@ function noveltyToneClass(paper: WorkspacePaper) {
   return paper.is_new_this_round ? "message-source-trace-chip-info" : "";
 }
 
+function citationLabel(paper: WorkspacePaper) {
+  return paper.citation_count_known ? String(paper.citation_count) : "未获取";
+}
+
 function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; showRoundMarkers?: boolean }) {
   if (!paper) {
     return <div className="empty-state">选择一篇论文后，这里会显示来源、年份、分类和外链。</div>;
@@ -56,7 +60,7 @@ function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; s
         </div>
         <div className="workspace-paper-meta-item">
           <span>引用</span>
-          <strong>{paper.citation_count}</strong>
+          <strong>{citationLabel(paper)}</strong>
         </div>
         <div className="workspace-paper-meta-item">
           <span>分类</span>
@@ -157,7 +161,7 @@ export function WorkspaceEvidenceBoard({
                     <td>{sourceLabel(paper.source)}</td>
                     <td>{paper.publish_date || "-"}</td>
                     <td>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</td>
-                    <td>{paper.citation_count}</td>
+                    <td>{citationLabel(paper)}</td>
                     <td>
                       {paper.url ? (
                         <a className="inline-link" href={paper.url} rel="noreferrer" target="_blank">

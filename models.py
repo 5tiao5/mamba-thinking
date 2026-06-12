@@ -16,6 +16,8 @@ class PaperNode:
     taxonomy_category: str = ""
     expert_taxonomy_branches: List[str] = field(default_factory=list)
     citation_count: int = 0
+    citation_count_known: bool = False
+    citation_source: str = ""
     url: str = ""
     doi: str = ""
     references: List[str] = field(default_factory=list)
@@ -38,6 +40,8 @@ class PaperNode:
             "taxonomy_category": self.taxonomy_category,
             "expert_taxonomy_branches": self.expert_taxonomy_branches,
             "citation_count": self.citation_count,
+            "citation_count_known": self.citation_count_known,
+            "citation_source": self.citation_source,
             "url": self.url,
             "doi": self.doi,
             "references": self.references,
@@ -62,6 +66,7 @@ class EvolutionEdge:
     confidence: float = 0.0
     evidence_level: str = "candidate"
     evidence_snippets: List[str] = field(default_factory=list)
+    evidence_details: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -75,6 +80,7 @@ class EvolutionEdge:
             "confidence": self.confidence,
             "evidence_level": self.evidence_level,
             "evidence_snippets": self.evidence_snippets,
+            "evidence_details": self.evidence_details,
         }
 
 

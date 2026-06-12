@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -58,3 +58,48 @@ class ImportPaperCandidateRequest(BaseModel):
     conversation_id: Optional[str] = Field(default=None, max_length=100)
     notes: Optional[str] = Field(default=None, max_length=4000)
     tags: List[str] = Field(default_factory=list)
+
+
+PaperPoolStatus = Literal["candidate", "core", "excluded"]
+
+
+class ResearchPaperView(BaseModel):
+    paper_entry_id: str
+    conversation_id: str
+    document_id: str
+    canonical_key: str
+    title: str
+    origin: str
+    status: PaperPoolStatus
+    source_url: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+
+class ListResearchPapersResponse(BaseModel):
+    items: List[ResearchPaperView] = Field(default_factory=list)
+    total: int = 0
+
+
+class UpdateResearchPaperRequest(BaseModel):
+    status: PaperPoolStatus
+
+
+class PdfImportItemView(BaseModel):
+    filename: str
+    success: bool
+    document: Optional[KnowledgeDocumentView] = None
+    research_paper: Optional[ResearchPaperView] = None
+    parsed_pages: int = 0
+    total_pages: int = 0
+    duplicate_replaced: bool = False
+    warnings: List[str] = Field(default_factory=list)
+    error_code: str = ""
+    error_message: str = ""
+
+
+class BatchPdfImportResponse(BaseModel):
+    items: List[PdfImportItemView] = Field(default_factory=list)
+    imported_count: int = 0
+    failed_count: int = 0

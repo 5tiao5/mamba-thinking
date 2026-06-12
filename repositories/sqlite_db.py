@@ -84,6 +84,28 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS conversation_research_papers (
+        paper_entry_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        canonical_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(conversation_id, canonical_key),
+        FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
+        FOREIGN KEY (document_id) REFERENCES knowledge_documents(document_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_conversation_research_papers_conversation
+    ON conversation_research_papers(conversation_id, updated_at DESC)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS vector_chunks (
         chunk_id TEXT PRIMARY KEY,
         document_id TEXT NOT NULL,
