@@ -142,6 +142,7 @@ class AppContainer:
             workspace_service=self.workspace_service,
             message_service=self.message_service,
             knowledge_service=self.knowledge_service,
+            research_paper_service=self.research_paper_service,
             working_memory_service=self.working_memory_service,
             skill_service=self.skill_service,
         )

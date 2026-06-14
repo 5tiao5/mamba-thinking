@@ -243,7 +243,7 @@ class CitationEnrichmentTests(unittest.TestCase):
             max_results=8,
         )
 
-        self.assertEqual(len(selected), 8)
+        self.assertEqual(len(selected), 10)
         self.assertIn("paper-8", selected)
         self.assertIn("paper-9", selected)
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import re
 from collections import defaultdict
 from typing import Dict, List
 
@@ -51,17 +53,37 @@ class TaxonomyAuditService:
         for branch in taxonomy:
             category_key = canonical(branch.name)
             direct_matches = category_index.get(category_key, [])
+            grounded_matches = [
+                paper_id
+                for paper_id, paper in papers.items()
+                if any(
+                    canonical(assigned_branch) == category_key
+                    for assigned_branch in getattr(
+                        paper, "expert_taxonomy_branches", []
+                    )
+                )
+            ]
             semantic_matches = [
                 paper_id
                 for paper_id, text in paper_texts.items()
                 if contains_phrase(text, branch.name) or contains_phrase(text, branch.description)
             ]
-            matched_papers = sorted(set(direct_matches + semantic_matches))
+            matched_papers = sorted(
+                set(direct_matches + grounded_matches + semantic_matches)
+            )
 
             concept_hits = []
             missing_concepts = []
+            concept_texts = [
+                paper_texts[paper_id]
+                for paper_id in matched_papers
+                if paper_id in paper_texts
+            ]
             for concept in branch.required_concepts:
-                if any(contains_phrase(text, concept) for text in paper_texts.values()):
+                if any(
+                    self._supports_concept(text, concept)
+                    for text in concept_texts
+                ):
                     concept_hits.append(concept)
                 else:
                     missing_concepts.append(concept)
@@ -139,3 +161,42 @@ class TaxonomyAuditService:
             reports=reports,
             gaps=gaps,
         )
+
+    @staticmethod
+    def _supports_concept(text: str, concept: str) -> bool:
+        if contains_phrase(text, concept):
+            return True
+
+        concept_tokens = TaxonomyAuditService._concept_tokens(concept)
+        if not concept_tokens:
+            return False
+        text_tokens = TaxonomyAuditService._concept_tokens(text)
+        shared_count = len(concept_tokens & text_tokens)
+        required_count = 1 if len(concept_tokens) == 1 else max(
+            2, math.ceil(len(concept_tokens) * 0.66)
+        )
+        return shared_count >= required_count
+
+    @staticmethod
+    def _concept_tokens(value: str) -> set[str]:
+        generic = {
+            "and",
+            "for",
+            "from",
+            "with",
+            "via",
+            "the",
+            "based",
+            "method",
+            "methods",
+            "approach",
+            "approaches",
+        }
+        tokens = set()
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9]{1,}", canonical(value)):
+            normalized = token[:-1] if len(token) > 4 and token.endswith("s") else token
+            if normalized in {"mllm", "mllms"}:
+                normalized = "llm"
+            if len(normalized) >= 3 and normalized not in generic:
+                tokens.add(normalized)
+        return tokens

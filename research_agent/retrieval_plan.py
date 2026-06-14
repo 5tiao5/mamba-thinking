@@ -10,23 +10,29 @@ from .query_decomposition import build_search_queries
 @dataclass
 class RetrievalPlan:
     topic: str
+    topic_anchor: str = ""
     user_goal: str = "follow_up"
+    focus_facets: list[dict[str, Any]] = field(default_factory=list)
     strict_queries: list[str] = field(default_factory=list)
     broad_queries: list[str] = field(default_factory=list)
     recall_queries: list[str] = field(default_factory=list)
     filters: dict[str, Any] = field(default_factory=dict)
     rerank_signals: list[str] = field(default_factory=list)
+    query_coverage: dict[str, Any] = field(default_factory=dict)
     strategy_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "topic": self.topic,
+            "topic_anchor": self.topic_anchor,
             "user_goal": self.user_goal,
+            "focus_facets": [dict(facet) for facet in self.focus_facets],
             "strict_queries": list(self.strict_queries),
             "broad_queries": list(self.broad_queries),
             "recall_queries": list(self.recall_queries),
             "filters": dict(self.filters),
             "rerank_signals": list(self.rerank_signals),
+            "query_coverage": dict(self.query_coverage),
             "strategy_note": self.strategy_note,
         }
 
@@ -38,6 +44,7 @@ def build_retrieval_plan(
     *,
     topic: str,
     query_intent: dict[str, Any] | None,
+    evidence_queries: list[str] | None = None,
     workspace_queries: list[str] | None = None,
     knowledge_queries: list[str] | None = None,
     recent_queries: list[str] | None = None,
@@ -47,33 +54,89 @@ def build_retrieval_plan(
     clean_topic = " ".join(str(intent.get("core_topic", "") or topic).split()).strip() or str(topic).strip()
     user_goal = " ".join(str(intent.get("user_goal", "follow_up")).split()).strip() or "follow_up"
     raw_user_request = " ".join(str(intent.get("raw_user_request", "") or "").split()).strip()
-    request_focus_terms = _clean_items(
-        list(intent.get("request_focus_terms", []) or [])[:4]
+    focus_facets = _clean_focus_facets(intent.get("focus_facets", []))
+    facet_labels = [
+        str(facet.get("label", ""))
+        for facet in focus_facets
+        if str(facet.get("label", "")).strip()
+    ]
+    facet_search_terms = _clean_items(
+        [
+            term
+            for facet in focus_facets
+            for term in list(facet.get("search_terms", []) or [])
+        ]
     )
-    focus_terms = _clean_items(list(intent.get("focus_terms", []) or [])[:3])
+    facet_queries = _clean_items(
+        [
+            query
+            for facet in focus_facets
+            for query in list(facet.get("query_candidates", []) or [])
+        ]
+    )
+    request_focus_terms = _clean_items(
+        [
+            *facet_labels,
+            *list(intent.get("request_focus_terms", []) or []),
+        ][:6]
+    )
+    focus_terms = _clean_items(
+        [
+            *facet_labels,
+            *list(intent.get("focus_terms", []) or []),
+        ][:6]
+    )
     paper_scope = _clean_items(list(intent.get("paper_scope", []) or [])[:3])
-    rerank_signals = _dedupe([*focus_terms, *paper_scope])
+    rerank_signals = _dedupe([*facet_search_terms, *focus_terms, *paper_scope])
 
     family_strict, family_broad, family_recall = _academic_query_family(
         clean_topic,
         focus_terms=focus_terms,
         paper_scope=paper_scope,
     )
+    topic_alias_queries = _topic_alias_queries(clean_topic)
+    topic_anchor = _topic_search_anchor(clean_topic, topic_alias_queries)
+    for facet in focus_facets:
+        candidates = [
+            _anchor_query(query, topic_anchor)
+            for query in list(facet.get("query_candidates", []) or [])
+            if str(query).strip()
+        ]
+        if candidates:
+            facet["query_candidates"] = candidates
+    facet_queries = _clean_items(
+        [
+            query
+            for facet in focus_facets
+            for query in list(facet.get("query_candidates", []) or [])
+        ]
+    )
+    grounded_evidence_queries = _clean_items(list(evidence_queries or []))
     is_follow_up = bool(
         raw_user_request
         and _normalize_query_text(raw_user_request) != _normalize_query_text(clean_topic)
     )
     priority_queries = (
         _follow_up_priority_queries(
+            topic_anchor=topic_anchor,
             request_focus_terms=request_focus_terms,
             user_goal=user_goal,
         )
         if is_follow_up
         else []
     )
-    strict_queries = [*priority_queries, *family_strict, clean_topic]
+    strict_queries = [
+        *priority_queries,
+        *facet_queries,
+        *topic_alias_queries[:1],
+        *grounded_evidence_queries[:2],
+        *topic_alias_queries[1:],
+        *family_strict,
+        clean_topic,
+    ]
     for focus in focus_terms[:2]:
-        strict_queries.append(f"{clean_topic} {focus}")
+        if _english_search_terms(focus):
+            strict_queries.append(f"{clean_topic} {focus}")
     for scope in paper_scope[:2]:
         strict_queries.append(f"{clean_topic} {scope}")
     if focus_terms and paper_scope:
@@ -91,13 +154,21 @@ def build_retrieval_plan(
     strategy_note = _strategy_note(user_goal=user_goal, filters=filters, rerank_signals=rerank_signals)
     return RetrievalPlan(
         topic=clean_topic,
+        topic_anchor=topic_anchor,
         user_goal=user_goal,
+        focus_facets=focus_facets,
         strict_queries=_dedupe(strict_queries),
         broad_queries=_dedupe(broad_queries),
         recall_queries=_dedupe(
             [
                 *family_recall,
-                *_compact_recall_queries(focus_terms, paper_scope),
+                *[
+                    _anchor_query(query, topic_anchor)
+                    for query in _compact_recall_queries(
+                        [*facet_search_terms, *focus_terms],
+                        paper_scope,
+                    )
+                ],
             ]
         )[:4],
         filters=filters,
@@ -108,6 +179,7 @@ def build_retrieval_plan(
 
 def _follow_up_priority_queries(
     *,
+    topic_anchor: str,
     request_focus_terms: list[str],
     user_goal: str,
 ) -> list[str]:
@@ -115,12 +187,20 @@ def _follow_up_priority_queries(
     queries: list[str] = []
 
     if "failure recovery" in focuses:
-        queries.extend(
-            [
-                "LLM agent tool use failure recovery evaluation",
-                "tool calling error recovery robustness benchmark",
-            ]
-        )
+        if _is_agent_tool_anchor(topic_anchor):
+            queries.extend(
+                [
+                    "LLM agent tool use failure recovery evaluation",
+                    "tool calling error recovery robustness benchmark",
+                ]
+            )
+        else:
+            queries.extend(
+                [
+                    f"{topic_anchor} failure recovery evaluation",
+                    f"{topic_anchor} error recovery robustness benchmark",
+                ]
+            )
 
     efficiency_focuses = {
         "cost efficiency",
@@ -128,15 +208,23 @@ def _follow_up_priority_queries(
         "task success rate",
     }
     if focuses & efficiency_focuses:
-        queries.extend(
-            [
-                "LLM agent tool use cost latency task success rate evaluation",
-                "tool calling efficiency versus task success benchmark",
-            ]
-        )
+        if _is_agent_tool_anchor(topic_anchor):
+            queries.extend(
+                [
+                    "LLM agent tool use cost latency task success rate evaluation",
+                    "tool calling efficiency versus task success benchmark",
+                ]
+            )
+        else:
+            queries.extend(
+                [
+                    f"{topic_anchor} cost latency task success rate evaluation",
+                    f"{topic_anchor} efficiency versus task success benchmark",
+                ]
+            )
 
     if "tool selection" in focuses and not queries:
-        queries.append("LLM agent tool selection function calling evaluation")
+        queries.append(f"{topic_anchor} tool selection function calling evaluation")
 
     if not queries and request_focus_terms:
         compact = " ".join(
@@ -145,7 +233,8 @@ def _follow_up_priority_queries(
             if _english_search_terms(term)
         )
         if compact:
-            queries.append(f"LLM agent {compact} evaluation")
+            suffix = " evaluation" if user_goal == "benchmark_evaluation" else ""
+            queries.append(f"{topic_anchor} {compact}{suffix}")
 
     if user_goal == "compare" and len(queries) > 2:
         return _dedupe(queries)[:2]
@@ -323,6 +412,81 @@ def _academic_query_family(
     return _dedupe(strict)[:4], _dedupe(broad)[:5], _dedupe(recall)[:4]
 
 
+def _topic_alias_queries(topic: str) -> list[str]:
+    """Provide deterministic English anchors for common Chinese research topics."""
+
+    compact = re.sub(r"\s+", "", str(topic or "")).casefold()
+    queries: list[str] = []
+    if (
+        "agent" in compact
+        and (
+            "\u5de5\u5177\u4f7f\u7528" in compact
+            or "\u5de5\u5177\u8c03\u7528" in compact
+            or "tooluse" in compact
+            or "toolcalling" in compact
+        )
+    ):
+        queries.extend(
+            [
+                "LLM agent tool use",
+                "tool calling language agents",
+            ]
+        )
+    elif "大模型" in compact and "多模态" in compact:
+        queries.extend(
+            [
+                "multimodal large language model fusion",
+                "vision language multimodal fusion",
+            ]
+        )
+    elif "多模态" in compact and "融合" in compact:
+        queries.extend(
+            [
+                "multimodal fusion",
+                "adaptive multimodal fusion",
+            ]
+        )
+    return _dedupe(queries)
+
+
+def _topic_search_anchor(topic: str, aliases: list[str] | None = None) -> str:
+    candidates = list(aliases or _topic_alias_queries(topic))
+    if candidates:
+        return candidates[0]
+    english_topic = _english_search_terms(topic)
+    return english_topic or " ".join(str(topic).split()).strip()
+
+
+def _is_agent_tool_anchor(topic_anchor: str) -> bool:
+    lowered = str(topic_anchor or "").casefold()
+    return "agent" in lowered and ("tool" in lowered or "function calling" in lowered)
+
+
+def _anchor_query(query: str, topic_anchor: str) -> str:
+    clean_query = " ".join(str(query).split()).strip()
+    clean_anchor = " ".join(str(topic_anchor).split()).strip()
+    if not clean_query or not clean_anchor:
+        return clean_query or clean_anchor
+    query_tokens = set(_english_search_terms(clean_query).split())
+    anchor_tokens = set(_english_search_terms(clean_anchor).split())
+    distinctive_anchor_tokens = anchor_tokens - {
+        "large",
+        "language",
+        "model",
+        "models",
+        "method",
+        "methods",
+        "evaluation",
+    }
+    overlap = query_tokens & distinctive_anchor_tokens
+    if clean_anchor.casefold() in clean_query.casefold() or (
+        "multimodal" in overlap
+        or len(overlap) >= 2
+    ):
+        return clean_query
+    return f"{clean_anchor} {clean_query}"
+
+
 def _compact_recall_queries(
     focus_terms: list[str],
     paper_scope: list[str],
@@ -361,7 +525,12 @@ def relevance_query(plan: dict[str, Any] | RetrievalPlan, *, fallback_topic: str
     payload = plan.to_dict() if isinstance(plan, RetrievalPlan) else dict(plan or {})
     topic = " ".join(str(payload.get("topic", "") or fallback_topic).split()).strip()
     rerank_signals = _clean_items(list(payload.get("rerank_signals", []) or [])[:3])
-    return " ".join(_dedupe([topic, *rerank_signals])).strip() or topic or fallback_topic
+    strict_queries = _clean_items(list(payload.get("strict_queries", []) or [])[:2])
+    return (
+        " ".join(_dedupe([topic, *strict_queries, *rerank_signals])).strip()
+        or topic
+        or fallback_topic
+    )
 
 
 def summarize_retrieval_plan(plan: dict[str, Any] | RetrievalPlan) -> str:
@@ -422,6 +591,48 @@ def _clean_items(items: list[Any]) -> list[str]:
         seen.add(key)
         cleaned.append(text)
     return cleaned
+
+
+def _clean_focus_facets(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    facets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        label = " ".join(str(item.get("label", "")).split()).strip()
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        facets.append(
+            _copy_focus_facet_fields(item, {
+                "label": label,
+                "kind": str(item.get("kind", "research_dimension") or "research_dimension"),
+                "source": str(item.get("source", "explicit_user") or "explicit_user"),
+                "required": bool(item.get("required", True)),
+            })
+        )
+    return facets[:6]
+
+
+def _copy_focus_facet_fields(
+    source: dict[str, Any],
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    search_terms = _clean_items(list(source.get("search_terms", []) or []))[:2]
+    query_candidates = _clean_items(list(source.get("query_candidates", []) or []))[:2]
+    expansion_source = " ".join(str(source.get("expansion_source", "")).split()).strip()
+    if search_terms:
+        target["search_terms"] = search_terms
+    if query_candidates:
+        target["query_candidates"] = query_candidates
+    if expansion_source:
+        target["expansion_source"] = expansion_source
+    return target
 
 
 def _dedupe(items: list[str]) -> list[str]:

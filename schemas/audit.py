@@ -68,6 +68,7 @@ class AuditGap:
     affected_items: List[str]
     actionable: bool = False
     related_papers: List[str] = field(default_factory=list)
+    evidence: List[str] = field(default_factory=list)
     suggestion: Optional[str] = None
     id: str | None = None
     confidence: Optional[float] = None
@@ -75,6 +76,7 @@ class AuditGap:
     def __post_init__(self):
         self.affected_items = [_stringify_affected_item(item) for item in self.affected_items]
         self.related_papers = [_stringify_affected_item(item) for item in self.related_papers]
+        self.evidence = [_stringify_affected_item(item) for item in self.evidence]
         if self.id is None:
             self.id = _make_gap_id(self.type, self.affected_items)
 
@@ -87,6 +89,7 @@ class AuditGap:
             "affected_items": self.affected_items,
             "actionable": self.actionable,
             "related_papers": self.related_papers,
+            "evidence": self.evidence,
             "suggestion": self.suggestion,
             "confidence": self.confidence,
         }

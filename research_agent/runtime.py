@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Tuple
 
-from observability import record_decision
-from pipeline_runtime import (
+from product_agent.observability import record_decision
+from product_agent.pipeline_runtime import (
     apply_post_action_updates,
     record_action_observation,
     record_action_start,
     snapshot_counts,
 )
-from pipeline_utils import ProgressPrinter, progress_summary
+from product_agent.pipeline_utils import ProgressPrinter, progress_summary
 
 from .controller import controller_node
 from .models import ResearchState

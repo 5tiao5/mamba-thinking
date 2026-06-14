@@ -2318,6 +2318,88 @@ body {
   text-align: center;
 }
 
+.research-mode-fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.research-mode-fieldset legend {
+  margin-bottom: 7px;
+  color: #25344a;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.research-mode-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.research-mode-card {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid #d7e5f6;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 11px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.research-mode-card:hover {
+  border-color: #9abcf2;
+  background: #f8fbff;
+}
+
+.research-mode-card-active {
+  border-color: #2d65e8;
+  background: #f1f6ff;
+  box-shadow: 0 0 0 2px rgba(45, 101, 232, 0.09);
+}
+
+.research-mode-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.research-mode-card > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.research-mode-card strong {
+  color: #1f2c43;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.research-mode-card em {
+  border-radius: 999px;
+  background: #dce9ff;
+  color: #245bcc;
+  padding: 2px 6px;
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.research-mode-card p {
+  margin: 0;
+  color: #66778d;
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+
 .new-research-paper-picker {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

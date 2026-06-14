@@ -37,6 +37,10 @@ class EvidenceSnapshotService:
         gap_items = [self._gap_payload(gap, index) for index, gap in enumerate(gaps)]
         gap_items.sort(key=lambda item: item["gap_id"])
         branch_items = self._taxonomy_branches(taxonomy, paper_items)
+        branch_items = self._apply_required_facet_contract(
+            branch_items,
+            self._json_object(retrieval_outcome),
+        )
         audit_items = [
             self._audit_payload(report, index)
             for index, report in enumerate(audit_reports)
@@ -46,6 +50,39 @@ class EvidenceSnapshotService:
         fallback_paper_count = sum(
             1 for paper in paper_items if paper["source"].lower() in fallback_sources
         )
+        direct_paper_ids = [
+            paper["paper_id"]
+            for paper in paper_items
+            if paper["relevance_tier"] == "direct"
+            and paper["source"].lower() not in fallback_sources
+        ]
+        adjacent_paper_ids = [
+            paper["paper_id"]
+            for paper in paper_items
+            if paper["relevance_tier"] == "adjacent"
+            and paper["source"].lower() not in fallback_sources
+        ]
+        conclusion_contract = {
+            "policy": "direct_evidence_required",
+            "claimable_paper_ids": direct_paper_ids,
+            "context_only_paper_ids": adjacent_paper_ids,
+            "branch_contracts": [
+                {
+                    "name": branch["name"],
+                    "evidence_status": branch["evidence_status"],
+                    "claimable_paper_ids": list(
+                        branch.get("claimable_paper_ids", [])
+                    ),
+                    "required_facet_evidence_level": str(
+                        branch.get("required_facet_evidence_level", "")
+                    ),
+                }
+                for branch in branch_items
+            ],
+            "recommendations_allowed": bool(direct_paper_ids),
+            "definitive_claims_allowed": bool(direct_paper_ids),
+            "adjacent_evidence_role": "background_or_hypothesis_only",
+        }
         evidence_level_counts = self._count_by(edge_items, "evidence_level")
         relationship_counts = self._count_by(edge_items, "relationship")
 
@@ -59,6 +96,7 @@ class EvidenceSnapshotService:
             "audit_reports": audit_items,
             "retrieval_plan": self._json_object(retrieval_plan),
             "retrieval_outcome": self._json_object(retrieval_outcome),
+            "conclusion_contract": conclusion_contract,
             "alignment_score": round(float(alignment_score or 0.0), 6),
             "audit_report_count": len(audit_items),
         }
@@ -73,6 +111,8 @@ class EvidenceSnapshotService:
                 "paper_count": len(paper_items),
                 "real_paper_count": len(paper_items) - fallback_paper_count,
                 "fallback_paper_count": fallback_paper_count,
+                "direct_paper_count": len(direct_paper_ids),
+                "adjacent_paper_count": len(adjacent_paper_ids),
                 "new_paper_count": sum(1 for paper in paper_items if paper["is_new_this_round"]),
                 "taxonomy_branch_count": len(branch_items),
                 "grounded_taxonomy_branch_count": sum(
@@ -109,6 +149,18 @@ class EvidenceSnapshotService:
             "citation_source": str(payload.get("citation_source", "") or ""),
             "confidence_score": round(float(payload.get("confidence_score", 0.0) or 0.0), 6),
             "is_new_this_round": bool(payload.get("is_new_this_round", False)),
+            "relevance_score": round(
+                float(payload.get("relevance_score", 0.0) or 0.0),
+                6,
+            ),
+            "relevance_tier": str(
+                payload.get("relevance_tier", "") or "candidate"
+            ).casefold(),
+            "relevance_reasons": [
+                str(item).strip()
+                for item in list(payload.get("relevance_reasons", []) or [])[:12]
+                if str(item).strip()
+            ],
         }
 
     def _edge_payload(self, edge: Any) -> Dict[str, Any]:
@@ -149,13 +201,16 @@ class EvidenceSnapshotService:
                 payload.get("summary", payload.get("description", ""))
                 or ""
             ).strip()
+            raw_evidence = payload.get("evidence", []) or payload.get(
+                "related_papers", []
+            )
             return {
                 "gap_id": str(payload.get("id") or payload.get("gap_id") or f"gap_{index}"),
                 "summary": summary,
                 "severity": str(payload.get("severity", "") or "medium"),
                 "evidence": [
                     str(item).strip()[:800]
-                    for item in list(payload.get("evidence", []) or [])[:5]
+                    for item in list(raw_evidence)[:5]
                     if str(item).strip()
                 ],
             }
@@ -173,6 +228,8 @@ class EvidenceSnapshotService:
     ) -> List[Dict[str, Any]]:
         raw = self._json_object(taxonomy)
         definitions: Dict[str, Dict[str, Any]] = {}
+        gap_ids_by_branch: Dict[str, List[str]] = {}
+        paper_ids_by_branch: Dict[str, List[str]] = {}
         taxonomy_map = raw.get("taxonomy", {})
         if isinstance(taxonomy_map, dict):
             for name, definition in taxonomy_map.items():
@@ -188,6 +245,16 @@ class EvidenceSnapshotService:
                         if str(item).strip()
                     ],
                 }
+                gap_ids_by_branch[normalized_name] = [
+                    str(item).strip()
+                    for item in list(payload.get("matched_gap_ids", []) or [])
+                    if str(item).strip()
+                ]
+                paper_ids_by_branch[normalized_name] = [
+                    str(item).strip()
+                    for item in list(payload.get("matched_paper_ids", []) or [])
+                    if str(item).strip()
+                ]
 
         branches = raw.get("branches", [])
         if isinstance(branches, list):
@@ -208,6 +275,78 @@ class EvidenceSnapshotService:
                         ],
                     },
                 )
+                gap_ids_by_branch[normalized_name] = list(
+                    dict.fromkeys(
+                        [
+                            *gap_ids_by_branch.get(normalized_name, []),
+                            *[
+                                str(item).strip()
+                                for item in list(
+                                    branch.get("matched_gap_ids", []) or []
+                                )
+                                if str(item).strip()
+                            ],
+                        ]
+                    )
+                )
+                paper_ids_by_branch[normalized_name] = list(
+                    dict.fromkeys(
+                        [
+                            *paper_ids_by_branch.get(normalized_name, []),
+                            *[
+                                str(item).strip()
+                                for item in list(
+                                    branch.get("matched_paper_ids", []) or []
+                                )
+                                if str(item).strip()
+                            ],
+                        ]
+                    )
+                )
+
+        coverage = raw.get("coverage", {})
+        if isinstance(coverage, dict):
+            branch_names_by_id = {
+                str(branch.get("branch_id", "") or ""): str(
+                    branch.get("name", "") or ""
+                ).strip()
+                for branch in list(raw.get("branches", []) or [])
+                if isinstance(branch, dict)
+            }
+            for branch_id, entry in coverage.items():
+                if not isinstance(entry, dict):
+                    continue
+                branch_name = branch_names_by_id.get(str(branch_id), "")
+                if not branch_name:
+                    continue
+                gap_ids_by_branch[branch_name] = list(
+                    dict.fromkeys(
+                        [
+                            *gap_ids_by_branch.get(branch_name, []),
+                            *[
+                                str(item).strip()
+                                for item in list(
+                                    entry.get("matched_gap_ids", []) or []
+                                )
+                                if str(item).strip()
+                            ],
+                        ]
+                    )
+                )
+                paper_ids_by_branch[branch_name] = list(
+                    dict.fromkeys(
+                        [
+                            *paper_ids_by_branch.get(branch_name, []),
+                            *[
+                                str(item).strip()
+                                for item in list(
+                                    entry.get("matched_paper_ids", []) or []
+                                )
+                                if str(item).strip()
+                            ],
+                        ]
+                    )
+                )
 
         for paper in papers:
             for name in paper["expert_taxonomy_branches"]:
@@ -216,19 +355,174 @@ class EvidenceSnapshotService:
             if category:
                 definitions.setdefault(category, {"description": "", "required_concepts": []})
 
-        return [
-            {
+        result: List[Dict[str, Any]] = []
+        for name in sorted(definitions):
+            explicit_paper_ids = set(paper_ids_by_branch.get(name, []))
+            branch_papers = [
+                paper
+                for paper in papers
+                if paper["paper_id"] in explicit_paper_ids
+                or name in paper["expert_taxonomy_branches"]
+                or name == paper["taxonomy_category"]
+            ]
+            direct_ids = [
+                paper["paper_id"]
+                for paper in branch_papers
+                if paper["relevance_tier"] == "direct"
+            ]
+            adjacent_ids = [
+                paper["paper_id"]
+                for paper in branch_papers
+                if paper["relevance_tier"] == "adjacent"
+            ]
+            evidence_status = (
+                "grounded"
+                if direct_ids
+                else "exploratory"
+                if adjacent_ids
+                else "unsupported"
+            )
+            result.append({
                 "name": name,
                 **definitions[name],
-                "paper_ids": [
-                    paper["paper_id"]
-                    for paper in papers
-                    if name in paper["expert_taxonomy_branches"]
-                    or name == paper["taxonomy_category"]
-                ],
-            }
-            for name in sorted(definitions)
+                "paper_ids": [paper["paper_id"] for paper in branch_papers],
+                "direct_paper_ids": direct_ids,
+                "adjacent_paper_ids": adjacent_ids,
+                "claimable_paper_ids": direct_ids,
+                "matched_gap_ids": gap_ids_by_branch.get(name, []),
+                "evidence_status": evidence_status,
+            })
+        return result
+
+    def _apply_required_facet_contract(
+        self,
+        branches: List[Dict[str, Any]],
+        retrieval_outcome: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        coverage = retrieval_outcome.get("facet_evidence_coverage", {})
+        facets = coverage.get("facets", []) if isinstance(coverage, dict) else []
+        required_facets = [
+            facet
+            for facet in facets
+            if isinstance(facet, dict) and bool(facet.get("required", False))
         ]
+        if not required_facets:
+            return branches
+
+        for branch in branches:
+            branch_text = self._normalized_match_text(
+                " ".join(
+                    [
+                        str(branch.get("name", "")),
+                        str(branch.get("description", "")),
+                        " ".join(branch.get("required_concepts", []) or []),
+                    ]
+                )
+            )
+            scored_facets = [
+                (self._facet_branch_match_score(facet, branch_text), facet)
+                for facet in required_facets
+            ]
+            best_score = max(
+                (score for score, _facet in scored_facets),
+                default=0.0,
+            )
+            matching_facets = [
+                facet
+                for score, facet in scored_facets
+                if score > 0 and score == best_score
+            ]
+            if not matching_facets:
+                continue
+
+            levels = {
+                str(facet.get("evidence_level", "") or "").casefold()
+                for facet in matching_facets
+            }
+            branch["required_facet_evidence_level"] = self._weakest_facet_level(
+                levels
+            )
+            direct_facet_paper_ids = {
+                str(paper.get("paper_id", "") or "")
+                for facet in matching_facets
+                for paper in list(facet.get("matched_papers", []) or [])
+                if isinstance(paper, dict)
+                and str(paper.get("match_type", "") or "").casefold() == "direct"
+                and str(paper.get("paper_id", "") or "")
+            }
+            branch_direct_ids = set(branch.get("direct_paper_ids", []) or [])
+            branch["claimable_paper_ids"] = sorted(
+                branch_direct_ids & direct_facet_paper_ids
+            )
+            if branch["claimable_paper_ids"]:
+                branch["evidence_status"] = "grounded"
+            elif branch.get("paper_ids"):
+                branch["evidence_status"] = "exploratory"
+            else:
+                branch["evidence_status"] = "unsupported"
+        return branches
+
+    def _facet_branch_match_score(
+        self,
+        facet: Dict[str, Any],
+        branch_text: str,
+    ) -> float:
+        candidates = [
+            str(facet.get("label", "") or ""),
+            *[
+                str(term)
+                for term in list(facet.get("search_terms", []) or [])
+                if str(term).strip()
+            ],
+        ]
+        branch_tokens = {
+            self._match_token(token)
+            for token in branch_text.split()
+            if token
+        }
+        best_score = 0.0
+        for candidate in candidates:
+            normalized = self._normalized_match_text(candidate)
+            if normalized and normalized in branch_text:
+                best_score = max(
+                    best_score,
+                    10.0 + len(normalized.split()),
+                )
+                continue
+            tokens = {
+                self._match_token(token)
+                for token in normalized.split()
+                if len(token) >= 4
+            }
+            overlap = len(tokens & branch_tokens)
+            if len(tokens) >= 2 and overlap >= 2:
+                best_score = max(
+                    best_score,
+                    overlap / len(tokens),
+                )
+        return best_score
+
+    def _match_token(self, token: str) -> str:
+        return token[:-1] if len(token) > 4 and token.endswith("s") else token
+
+    def _normalized_match_text(self, value: str) -> str:
+        return " ".join(
+            "".join(
+                character.casefold() if character.isalnum() else " "
+                for character in str(value or "")
+            ).split()
+        )
+
+    def _weakest_facet_level(self, levels: set[str]) -> str:
+        order = {
+            "missing": 0,
+            "unsupported": 0,
+            "adjacent_only": 1,
+            "weak": 1,
+            "moderate": 2,
+            "strong": 3,
+        }
+        return min(levels, key=lambda item: order.get(item, 1)) if levels else ""
 
     def _audit_payload(self, report: Any, index: int) -> Dict[str, Any]:
         payload = self._payload(report)

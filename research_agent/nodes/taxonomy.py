@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from observability import StageTimer, record_decision, record_tool_event
-from tools import build_taxonomy
+from product_agent.observability import StageTimer, record_decision, record_tool_event
+from product_agent.tools import build_taxonomy
 
 from ..models import ResearchState
 from ...services.taxonomy_evidence_service import build_taxonomy_evidence_brief

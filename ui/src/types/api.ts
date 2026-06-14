@@ -5,6 +5,7 @@ export type ConversationResponsePayload = {
 };
 
 export type KnowledgeScope = "none" | "conversation_only" | "shared";
+export type ResearchMode = "hybrid" | "imported_only" | "search_only";
 
 export type ConversationSummaryItem = {
   conversation_id: string;
@@ -42,6 +43,7 @@ export type FollowUpTaskItem = {
   topic: string;
   status: string;
   trigger_message_id?: string | null;
+  research_mode?: ResearchMode;
 };
 
 export type ResearchTaskSummaryItem = {
@@ -51,6 +53,7 @@ export type ResearchTaskSummaryItem = {
   status: string;
   mode: string;
   knowledge_scope?: KnowledgeScope;
+  research_mode?: ResearchMode;
   selected_skill_ids?: string[];
   trigger_message_id?: string | null;
   created_at: string;
@@ -66,6 +69,7 @@ export type ContinueConversationPayload = {
   message_id?: string | null;
   context_preview: string[];
   knowledge_scope_applied?: KnowledgeScope;
+  research_mode_applied?: ResearchMode;
   knowledge_context: string[];
   knowledge_hits?: WorkspaceKnowledgeHit[];
   workspace_context?: string[];
@@ -86,6 +90,9 @@ export type WorkspacePaper = {
   relevance_score?: number;
   relevance_tier?: "direct" | "adjacent" | "candidate" | "background";
   relevance_reasons?: string[];
+  paper_pool_status?: "candidate" | "core" | "";
+  document_id?: string;
+  origin?: string;
 };
 
 export type WorkspaceGraphEdge = {
@@ -205,11 +212,13 @@ export type WorkspaceKnowledgeHit = {
 
 export type WorkspaceSourceTrace = {
   knowledge_scope: KnowledgeScope;
+  research_mode?: ResearchMode;
   retrieval_plan: string;
   retrieval_status: string;
   retrieval_message: string;
   filtered_out_count: number;
   fallback_used: boolean;
+  external_search_skipped?: boolean;
   refresh_triggered: boolean;
   novel_paper_count: number;
   reused_paper_count: number;

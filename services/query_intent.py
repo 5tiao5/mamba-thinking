@@ -40,7 +40,7 @@ _GOAL_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 _PAPER_SCOPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("benchmark evaluation", ("benchmark", "evaluation", "eval", "\u8bc4\u6d4b", "\u8bc4\u4f30", "\u57fa\u51c6")),
-    ("survey review", ("survey", "review", "overview", "\u7efc\u8ff0", "\u8c03\u7814")),
+    ("survey review", ("survey", "review", "overview", "\u7efc\u8ff0")),
     ("methods", ("method", "methods", "approach", "technique", "\u65b9\u6cd5", "\u65b9\u6848")),
     ("datasets", ("dataset", "datasets", "corpus", "\u6570\u636e\u96c6", "\u8bed\u6599")),
     ("applications", ("application", "applications", "deployment", "\u5e94\u7528", "\u843d\u5730")),
@@ -48,6 +48,12 @@ _PAPER_SCOPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _DOMAIN_FOCUS_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("public datasets", ("public dataset", "public datasets", "\u516c\u5f00\u6570\u636e\u96c6")),
+    ("evaluation metrics", ("evaluation metric", "evaluation metrics", "\u8bc4\u4ef7\u6307\u6807", "\u8bc4\u6d4b\u6307\u6807")),
+    ("ablation studies", ("ablation study", "ablation studies", "ablation experiment", "\u6d88\u878d\u5b9e\u9a8c")),
+    ("early fusion", ("early fusion", "\u65e9\u671f\u878d\u5408")),
+    ("late fusion", ("late fusion", "\u540e\u671f\u878d\u5408")),
+    ("intermediate fusion", ("intermediate fusion", "middle fusion", "\u4e2d\u95f4\u878d\u5408")),
     (
         "failure recovery",
         (
@@ -86,7 +92,7 @@ _DOMAIN_FOCUS_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("tool use", ("tool use", "tool usage", "tool-using", "\u5de5\u5177\u4f7f\u7528", "\u5de5\u5177\u8c03\u7528")),
     ("tool calling", ("tool calling", "api calling", "function calling", "\u51fd\u6570\u8c03\u7528", "api \u8c03\u7528")),
     ("benchmark evaluation", ("benchmark", "evaluation", "\u8bc4\u6d4b", "\u57fa\u51c6")),
-    ("survey review", ("survey", "review", "\u7efc\u8ff0", "\u8c03\u7814")),
+    ("survey review", ("survey", "review", "\u7efc\u8ff0")),
     ("rag", ("rag", "retrieval augmented generation")),
     ("code agent", ("code agent", "coding agent", "software engineering agent", "\u4ee3\u7801 agent")),
 )
@@ -128,6 +134,49 @@ _RECENT_YEAR_PATTERNS: tuple[tuple[int, tuple[str, ...]], ...] = (
 )
 
 _ENGLISH_TOKEN_PATTERN = re.compile(r"\b[A-Za-z][A-Za-z0-9+/_-]{1,}\b")
+_EXPLICIT_FOCUS_PATTERNS = (
+    re.compile(
+        r"(?:\u91cd\u70b9(?:\u5173\u6ce8|\u5206\u6790|\u7814\u7a76|\u8ba8\u8bba|\u8865\u5145)"
+        r"|\u805a\u7126(?:\u4e8e)?|\u7740\u91cd(?:\u4e8e)?|\u5173\u6ce8|\u56f4\u7ed5)"
+        r"\s*[:\uff1a]?\s*([^\u3002\uff01\uff1f\uff1b;]+)",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:focus(?:ing)?\s+on|with\s+emphasis\s+on|pay\s+attention\s+to)"
+        r"\s*[:：]?\s*([^.!?;]+)",
+        flags=re.IGNORECASE,
+    ),
+)
+_EXPLICIT_COMPARISON_PATTERNS = (
+    re.compile(
+        r"(?:\u5e76|\u540c\u65f6)?(?:\u6bd4\u8f83|\u5bf9\u6bd4)"
+        r"\s*[:\uff1a]?\s*([^\u3002\uff01\uff1f\uff1b;]+)",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:compare|comparison\s+of)\s+([^.!?;]+)",
+        flags=re.IGNORECASE,
+    ),
+)
+_FOCUS_SEGMENT_SPLIT_PATTERN = re.compile(
+    r"\s*(?:[\u3001,\uff0c/]|\u4ee5\u53ca|\u4e0e|\u53ca|\u548c|\band\b)\s*",
+    flags=re.IGNORECASE,
+)
+_FOCUS_TRAILING_DIRECTIVE_PATTERN = re.compile(
+    r"(?:\uff0c|,)?\s*(?:"
+    r"\u5e76(?:\u8865\u5145|\u67e5\u627e|\u641c\u7d22|\u627e)"
+    r"|\u5e76(?:\u6bd4\u8f83|\u5bf9\u6bd4)"
+    r"|\u540c\u65f6(?:\u8865\u5145|\u67e5\u627e|\u641c\u7d22|\u627e)"
+    r"|\u540c\u65f6(?:\u6bd4\u8f83|\u5bf9\u6bd4)"
+    r"|and\s+(?:add|find|search|include)"
+    r"|and\s+compare"
+    r").*$",
+    flags=re.IGNORECASE,
+)
+_COMPARISON_CRITERIA_SUFFIX_PATTERN = re.compile(
+    r"\s*(?:\u7684)?(?:\u6027\u80fd|\u6548\u679c|\u8868\u73b0|\u9002\u7528\u573a\u666f|\u4f18\u7f3a\u70b9).*$",
+    flags=re.IGNORECASE,
+)
 _YEAR_RANGE_PATTERN = re.compile(r"\b(20\d{2})\s*(?:-|~|to)\s*(20\d{2})\b")
 _YEAR_AFTER_PATTERN = re.compile(
     r"(20\d{2})\s*(?:and later|or later|onward|after|\u4ee5\u540e|\u4e4b\u540e|\u4ee5\u6765)",
@@ -177,6 +226,22 @@ _ENGLISH_STOPWORDS = {
     "about",
     "around",
 }
+_GENERIC_FOCUS_TERMS = {
+    "\u8fd9\u4e2a\u65b9\u5411",
+    "\u8be5\u65b9\u5411",
+    "\u8fd9\u4e00\u65b9\u5411",
+    "\u76f8\u5173\u65b9\u5411",
+    "\u8fd9\u4e2a\u4e3b\u9898",
+    "\u8be5\u4e3b\u9898",
+    "this direction",
+    "this topic",
+    "the topic",
+    "\u5b83",
+    "\u5b83\u4eec",
+    "\u5176",
+    "\u4e8c\u8005",
+    "\u4e24\u8005",
+}
 
 
 @dataclass
@@ -187,6 +252,7 @@ class QueryIntent:
     core_topic: str
     user_goal: str
     knowledge_scope: str
+    focus_facets: list[dict[str, Any]] = field(default_factory=list)
     request_focus_terms: list[str] = field(default_factory=list)
     focus_terms: list[str] = field(default_factory=list)
     paper_scope: list[str] = field(default_factory=list)
@@ -202,6 +268,7 @@ class QueryIntent:
             "core_topic": self.core_topic,
             "user_goal": self.user_goal,
             "knowledge_scope": self.knowledge_scope,
+            "focus_facets": [dict(facet) for facet in self.focus_facets],
             "request_focus_terms": list(self.request_focus_terms),
             "focus_terms": list(self.focus_terms),
             "paper_scope": list(self.paper_scope),
@@ -247,13 +314,33 @@ def derive_query_intent(
         if part
     ).strip()
 
+    focus_facets = _extract_explicit_focus_facets(clean_request)
     request_focus_terms = _dedupe(
         [
+            *[str(facet.get("label", "")) for facet in focus_facets],
             *_domain_focus_terms(clean_request),
             *_quoted_or_acronym_terms(clean_request),
         ]
     )
-    focus_terms = _dedupe([*request_focus_terms, *_domain_focus_terms(combined_text)])
+    # Search intent must stay anchored to the user's request and research topic.
+    # Workspace and shared-knowledge clues are useful later as optional hints,
+    # but promoting their English tokens into hard rerank signals can derail a
+    # Chinese topic with unrelated terms from another conversation.
+    topic_text = " ".join(
+        part
+        for part in (
+            clean_request,
+            clean_task_topic,
+            clean_conversation_topic,
+        )
+        if part
+    )
+    focus_terms = _dedupe(
+        [
+            *request_focus_terms,
+            *_domain_focus_terms(topic_text),
+        ]
+    )
     paper_scope = _dedupe(_matching_labels(combined_text, _PAPER_SCOPE_PATTERNS))
     time_range = _extract_time_range(clean_request or combined_text, reference_year=reference_year)
     user_goal = _infer_user_goal(clean_request or combined_text, time_range=time_range, paper_scope=paper_scope)
@@ -267,6 +354,7 @@ def derive_query_intent(
         core_topic=core_topic,
         user_goal=user_goal,
         knowledge_scope=knowledge_scope or "shared",
+        focus_facets=focus_facets[:6],
         request_focus_terms=request_focus_terms[:4],
         focus_terms=focus_terms[:4],
         paper_scope=paper_scope[:4],
@@ -388,6 +476,69 @@ def _domain_focus_terms(text: str) -> list[str]:
     terms = _matching_labels(text, _DOMAIN_FOCUS_PATTERNS)
     terms.extend(_technical_english_terms(text))
     return _dedupe(terms)
+
+
+def _extract_explicit_focus_facets(text: str) -> list[dict[str, Any]]:
+    facets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for pattern in _EXPLICIT_FOCUS_PATTERNS:
+        for match in pattern.finditer(text):
+            clause = _FOCUS_TRAILING_DIRECTIVE_PATTERN.sub("", match.group(1)).strip()
+            _append_focus_clause(facets, seen, clause)
+    for pattern in _EXPLICIT_COMPARISON_PATTERNS:
+        for match in pattern.finditer(text):
+            clause = _COMPARISON_CRITERIA_SUFFIX_PATTERN.sub("", match.group(1)).strip()
+            _append_focus_clause(facets, seen, clause)
+    return facets
+
+
+def _append_focus_clause(
+    facets: list[dict[str, Any]],
+    seen: set[str],
+    clause: str,
+) -> None:
+    for raw_segment in _FOCUS_SEGMENT_SPLIT_PATTERN.split(clause):
+        segment = _clean_focus_segment(raw_segment)
+        if not segment:
+            continue
+        mapped_terms = _matching_labels(segment, _DOMAIN_FOCUS_PATTERNS)
+        labels = mapped_terms or [segment]
+        for label in labels:
+            key = label.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            facets.append(
+                {
+                    "label": label,
+                    "kind": "research_dimension",
+                    "source": "explicit_user",
+                    "required": True,
+                }
+            )
+
+
+def _clean_focus_segment(value: str) -> str:
+    segment = " ".join(str(value).split()).strip(" \t\r\n:：,，。；;")
+    segment = re.sub(
+        r"^(?:\u5bf9|\u5173\u4e8e|\u5728)\s*",
+        "",
+        segment,
+        flags=re.IGNORECASE,
+    )
+    segment = re.sub(
+        r"(?:\u7b49(?:\u65b9\u5411|\u65b9\u9762)?|\u65b9\u9762)$",
+        "",
+        segment,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not segment or segment.casefold() in _GENERIC_FOCUS_TERMS:
+        return ""
+    if len(segment) > 80:
+        return ""
+    if _extract_time_range(segment, reference_year=None):
+        return ""
+    return segment
 
 
 def _technical_english_terms(text: str) -> list[str]:

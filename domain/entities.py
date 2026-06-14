@@ -58,6 +58,7 @@ class ResearchTask:
     trigger_message_id: Optional[str] = None
     mode: str = "default"
     knowledge_scope: str = "shared"
+    research_mode: str = "hybrid"
     selected_skill_ids: List[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -83,6 +84,9 @@ class PaperRecord:
     relevance_score: float = 0.0
     relevance_tier: str = "candidate"
     relevance_reasons: List[str] = field(default_factory=list)
+    paper_pool_status: str = ""
+    document_id: str = ""
+    origin: str = ""
 
 
 @dataclass

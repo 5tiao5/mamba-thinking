@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import re
 from typing import Any, List
 
-from llm_client import call_openai_json
-from observability import StageTimer, record_decision, record_error_event, record_tool_event
-from pipeline_utils import balanced_mode, build_agent_plan, dedupe, fast_mode
+from product_agent.llm_client import call_openai_json
+from product_agent.observability import StageTimer, record_decision, record_error_event, record_tool_event
+from product_agent.pipeline_utils import balanced_mode, build_agent_plan, dedupe, fast_mode
 
 from ..models import ResearchState
+from ..query_coverage import audit_query_coverage, required_facet_queries
 from ..query_decomposition import infer_research_facets, is_broad_topic
+from ..query_expansion import expand_focus_facets
 from ..retrieval_plan import build_retrieval_plan, summarize_retrieval_plan
 
 
@@ -16,6 +19,11 @@ def planner_node(state: ResearchState) -> ResearchState:
 
     intent = _query_intent(state)
     topic = _planner_topic(state, intent)
+    intent, facet_expansion = expand_focus_facets(
+        query_intent=intent,
+        topic=topic,
+        mode=str(state.get("mode", "default") or "default"),
+    )
     workspace_queries = _workspace_context_queries(topic, state.get("conversation_workspace_context", []) or [])
     working_memory_queries = _working_memory_queries(
         topic,
@@ -25,9 +33,13 @@ def planner_node(state: ResearchState) -> ResearchState:
     )
     knowledge_queries = _knowledge_context_queries(topic, state.get("knowledge_hits", []) or [])
     recent_queries = _recent_context_queries(topic, state.get("recent_context", []) or [])
+    evidence_queries = _research_paper_anchor_queries(
+        state.get("research_papers", []) or []
+    )
     retrieval_plan = build_retrieval_plan(
         topic=topic,
         query_intent=intent,
+        evidence_queries=evidence_queries,
         workspace_queries=dedupe([*workspace_queries, *working_memory_queries]),
         knowledge_queries=knowledge_queries,
         recent_queries=recent_queries,
@@ -45,10 +57,29 @@ def planner_node(state: ResearchState) -> ResearchState:
         recent_context=state.get("recent_context", []) or [],
     )
     updated = dict(state)
+    updated["query_intent"] = intent
     updated["retrieval_plan"] = retrieval_plan.to_dict()
+    if facet_expansion["attempted"]:
+        record_tool_event(
+            updated,
+            tool_name="LLM facet query expansion",
+            input_summary=", ".join(
+                str(facet.get("label", ""))
+                for facet in list(intent.get("focus_facets", []) or [])
+                if isinstance(facet, dict)
+            ),
+            status=(
+                "success"
+                if facet_expansion["status"] == "expanded"
+                else "fallback"
+            ),
+            output_count=int(facet_expansion["expanded_count"]),
+            note=f"status={facet_expansion['status']}",
+        )
 
     if fast_mode(state):
         queries = _queries_for_mode(retrieval_plan, mode="fast")
+        _attach_query_coverage(updated, retrieval_plan, queries)
         updated["search_queries"] = queries
         updated["agent_plan"] = _augment_agent_plan(build_agent_plan(topic, ["ArXiv"], "fast"), context_note)
         record_decision(
@@ -67,6 +98,7 @@ def planner_node(state: ResearchState) -> ResearchState:
 
     if balanced_mode(state):
         queries = _queries_for_mode(retrieval_plan, mode="balanced")
+        _attach_query_coverage(updated, retrieval_plan, queries)
         updated["search_queries"] = queries
         updated["agent_plan"] = _augment_agent_plan(
             build_agent_plan(topic, ["ArXiv", "DeepSeek ideas"], "balanced"),
@@ -104,7 +136,10 @@ Context:
     if data and isinstance(data.get("queries"), list):
         llm_queries = [str(query).strip() for query in data["queries"] if str(query).strip()]
 
-    heuristic_queries = retrieval_plan.all_queries()
+    required_queries = required_facet_queries(retrieval_plan.focus_facets)
+    heuristic_queries = dedupe(
+        [*required_queries, *retrieval_plan.all_queries()]
+    )
     queries = dedupe([*heuristic_queries, *llm_queries]) if llm_queries else heuristic_queries
     if not llm_queries:
         record_error_event(
@@ -116,6 +151,7 @@ Context:
         )
 
     updated["search_queries"] = queries[:6]
+    _attach_query_coverage(updated, retrieval_plan, updated["search_queries"])
     updated["agent_plan"] = _augment_agent_plan(
         build_agent_plan(
             topic,
@@ -164,11 +200,44 @@ def _planner_topic(state: ResearchState, query_intent: dict[str, Any]) -> str:
 
 
 def _queries_for_mode(plan, *, mode: str) -> list[str]:
+    required_queries = required_facet_queries(plan.focus_facets)
     if mode == "fast":
-        return dedupe([*plan.strict_queries[:2], *plan.broad_queries[:1]])[:3]
+        return dedupe(
+            [
+                *required_queries[:2],
+                *plan.strict_queries[:2],
+                *plan.broad_queries[:1],
+            ]
+        )[:3]
     if mode == "balanced":
-        return dedupe([*plan.strict_queries[:3], *plan.broad_queries[:2]])[:5]
+        query_budget = max(5, len(required_queries) + 2)
+        return dedupe(
+            [
+                *required_queries,
+                *plan.strict_queries,
+                *plan.broad_queries[:2],
+            ]
+        )[:query_budget]
     return plan.all_queries()
+
+
+def _attach_query_coverage(
+    updated: ResearchState,
+    retrieval_plan,
+    queries: list[str],
+) -> None:
+    coverage = audit_query_coverage(
+        focus_facets=retrieval_plan.focus_facets,
+        scheduled_queries=queries,
+    )
+    retrieval_plan.query_coverage = coverage
+    updated["retrieval_plan"] = retrieval_plan.to_dict()
+    updated["query_coverage"] = coverage
+    if coverage["uncovered_count"]:
+        labels = ", ".join(coverage["uncovered_facets"])
+        updated.setdefault("logs", []).append(
+            f"Query coverage audit found uncovered required facet(s): {labels}."
+        )
 
 
 def _augment_agent_plan(agent_plan: str, context_note: str) -> str:
@@ -214,6 +283,15 @@ def _planner_context_block(state: ResearchState, retrieval_plan: dict[str, Any])
     ]
     if focus_terms:
         lines.append(f"- Focus terms: {', '.join(focus_terms)}")
+
+    focus_facets = [
+        " ".join(str(facet.get("label", "")).split()).strip()
+        for facet in list(query_intent.get("focus_facets", []) or [])[:6]
+        if isinstance(facet, dict)
+        and " ".join(str(facet.get("label", "")).split()).strip()
+    ]
+    if focus_facets:
+        lines.append(f"- Required focus facets: {', '.join(focus_facets)}")
 
     workspace_summary = str(state.get("conversation_workspace_summary", "") or "").strip()
     if workspace_summary:
@@ -321,6 +399,77 @@ def _working_memory_queries(
         if clean_question:
             queries.append(f"{clean_topic} {clean_question[:120]}")
     return dedupe(queries)
+
+
+def _research_paper_anchor_queries(
+    research_papers: list[dict[str, Any]],
+) -> list[str]:
+    """Extract repeated academic phrases from user-provided paper titles."""
+
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "the",
+        "to",
+        "towards",
+        "with",
+        "using",
+        "based",
+        "model",
+        "models",
+        "method",
+        "methods",
+    }
+    title_tokens: list[list[str]] = []
+    token_counts: dict[str, int] = {}
+    phrase_counts: dict[str, int] = {}
+
+    for paper in research_papers[:20]:
+        title = str(paper.get("title", "") or "")
+        tokens = [
+            token.casefold()
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", title)
+            if token.casefold() not in stopwords
+        ]
+        tokens = list(dict.fromkeys(tokens))
+        if not tokens:
+            continue
+        title_tokens.append(tokens)
+        for token in tokens:
+            token_counts[token] = token_counts.get(token, 0) + 1
+        for left, right in zip(tokens, tokens[1:]):
+            phrase = f"{left} {right}"
+            phrase_counts[phrase] = phrase_counts.get(phrase, 0) + 1
+
+    repeated_phrases = [
+        phrase
+        for phrase, count in sorted(
+            phrase_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        if count >= 2
+    ]
+    frequent_tokens = [
+        token
+        for token, count in sorted(
+            token_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        if count >= 2
+    ]
+    token_anchor = " ".join(frequent_tokens[:3])
+    return dedupe(
+        [
+            *repeated_phrases[:2],
+            token_anchor,
+        ]
+    )[:3]
 
 
 def _context_grounding_note(

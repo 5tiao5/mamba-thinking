@@ -9,7 +9,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
 
-from models import PaperNode
+from product_agent.models import PaperNode
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -537,7 +537,7 @@ def build_taxonomy(source_text: str) -> Dict[str, Any]:
     # Try LLM first
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
     if api_key:
-        from llm_client import call_openai_json
+        from product_agent.llm_client import call_openai_json
 
         prompt = f"""
 Based on the following research paper abstracts, build an expert taxonomy.

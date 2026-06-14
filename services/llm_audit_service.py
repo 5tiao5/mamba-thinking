@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Dict, List
 
-from llm_client import call_openai_json
+from product_agent.llm_client import call_openai_json
 
 from product_agent.research_agent.models import EvolutionEdge, PaperNode
 from product_agent.schemas.audit import AuditGap, AuditReport, AuditResult

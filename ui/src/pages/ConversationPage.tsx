@@ -17,7 +17,7 @@ const taskStatusLabelMap: Record<string, string> = {
   pending: "待运行",
   running: "运行中",
   completed: "已完成",
-  degraded: "已完成（证据受限）",
+  degraded: "已完成",
   step_limit_reached: "未完成（步数耗尽）",
   failed: "失败",
 };
@@ -157,7 +157,14 @@ export function ConversationPage() {
                   {message.role === "assistant" && getMessageTaskId(message) ? (
                     <div className="message-task-actions">
                       {getMessageTaskStatus(message) ? (
-                        <StatusPill compact tone={getMessageTaskStatus(message) === "completed" ? "success" : "warning"}>
+                        <StatusPill
+                          compact
+                          tone={
+                            ["completed", "degraded"].includes(getMessageTaskStatus(message))
+                              ? "success"
+                              : "warning"
+                          }
+                        >
                           {taskStatusLabelMap[getMessageTaskStatus(message)] ?? getMessageTaskStatus(message)}
                         </StatusPill>
                       ) : null}

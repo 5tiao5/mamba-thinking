@@ -38,6 +38,7 @@ SCHEMA_STATEMENTS = (
         trigger_message_id TEXT,
         mode TEXT NOT NULL,
         knowledge_scope TEXT NOT NULL DEFAULT 'shared',
+        research_mode TEXT NOT NULL DEFAULT 'hybrid',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
@@ -165,6 +166,10 @@ class SQLiteDatabase:
         if "selected_skill_ids_json" not in task_columns:
             connection.execute(
                 "ALTER TABLE research_tasks ADD COLUMN selected_skill_ids_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "research_mode" not in task_columns:
+            connection.execute(
+                "ALTER TABLE research_tasks ADD COLUMN research_mode TEXT NOT NULL DEFAULT 'hybrid'"
             )
 
     @contextmanager

@@ -149,6 +149,7 @@ class ProductApiHandlers:
             metadata={
                 "focus": request.focus or "",
                 "knowledge_scope": knowledge_scope,
+                "research_mode": request.research_mode,
             },
         )
         if message is None:
@@ -166,6 +167,19 @@ class ProductApiHandlers:
             knowledge_scope=knowledge_scope,
             conversation_id=request.conversation_id,
         )
+        if request.research_mode == "search_only":
+            imported_document_ids = {
+                paper.document_id
+                for paper in self.research_paper_service.list_papers(
+                    request.conversation_id
+                )
+                if paper.document_id
+            }
+            knowledge_hits = [
+                hit
+                for hit in knowledge_hits
+                if hit.document_id not in imported_document_ids
+            ]
         knowledge_context = [
             self.knowledge_service.format_hit_for_context(hit)
             for hit in knowledge_hits
@@ -194,6 +208,7 @@ class ProductApiHandlers:
                     workspace_hints=workspace_context,
                     mode=request.mode,
                     knowledge_scope=knowledge_scope,
+                    research_mode=request.research_mode,
                     trigger_message_id=message.message_id,
                     selected_skill_ids=request.selected_skill_ids,
                 )
@@ -205,6 +220,7 @@ class ProductApiHandlers:
                 topic=task.topic,
                 status=task.status,
                 trigger_message_id=task.trigger_message_id,
+                research_mode=task.research_mode,
             )
 
         response = ContinueConversationResponse(
@@ -214,6 +230,7 @@ class ProductApiHandlers:
             message_id=message.message_id,
             context_preview=context_preview,
             knowledge_scope_applied=knowledge_scope,
+            research_mode_applied=request.research_mode,
             knowledge_context=display_knowledge_context,
             knowledge_hits=[self._knowledge_hit_payload(hit) for hit in knowledge_hits],
             workspace_context=workspace_context,
@@ -237,6 +254,7 @@ class ProductApiHandlers:
                 topic=request.topic,
                 mode=request.mode,
                 knowledge_scope=knowledge_scope,
+                research_mode=request.research_mode,
                 selected_skill_ids=request.selected_skill_ids,
             )
         except ConversationNotFoundError:
@@ -250,6 +268,7 @@ class ProductApiHandlers:
                 "conversation_id": task.conversation_id,
                 "status": task.status,
                 "knowledge_scope": task.knowledge_scope,
+                "research_mode": task.research_mode,
             }
         )
 
@@ -668,6 +687,7 @@ class ProductApiHandlers:
             "status": task.status,
             "mode": task.mode,
             "knowledge_scope": task.knowledge_scope,
+            "research_mode": task.research_mode,
             "trigger_message_id": task.trigger_message_id,
             "selected_skill_ids": list(getattr(task, "selected_skill_ids", []) or []),
             "created_at": task.created_at.isoformat(),
@@ -760,7 +780,7 @@ class ProductApiHandlers:
         content = self._build_natural_assistant_message(task=task, workspace=workspace).strip()
         if task.status == "degraded":
             return (
-                "本轮已完成分析，但补搜未继续带来有效增益，以下结论应视为证据受限结果。\n\n"
+                "本轮已完成分析；直接证据不足的具体方向已在结果中标为探索性方向。\n\n"
                 f"{content}"
             )
         if task.status == "step_limit_reached":

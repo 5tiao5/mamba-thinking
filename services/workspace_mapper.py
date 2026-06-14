@@ -215,6 +215,9 @@ def _map_paper(paper: Any) -> PaperRecord:
             for item in payload.get("relevance_reasons", [])
             if str(item).strip()
         ],
+        paper_pool_status=str(payload.get("paper_pool_status", "") or ""),
+        document_id=str(payload.get("document_id", "") or ""),
+        origin=str(payload.get("origin", "") or ""),
     )
 
 

@@ -17,6 +17,7 @@ from product_agent.services.workspace_service import (
     WorkspaceService,
     _merge_workspace_graph_edges,
     _merge_workspace_taxonomy,
+    _visible_workspace_graph_edges,
 )
 
 
@@ -75,6 +76,44 @@ class EvidenceSnapshotTests(unittest.TestCase):
 
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["relationship"], "citation")
+
+    def test_workspace_graph_hides_weak_candidate_edges(self) -> None:
+        visible = _visible_workspace_graph_edges(
+            [
+                {
+                    "source": "paper-a",
+                    "target": "paper-b",
+                    "relationship": "related",
+                    "evidence_level": "candidate",
+                    "confidence": 0.39,
+                },
+                {
+                    "source": "paper-a",
+                    "target": "paper-c",
+                    "relationship": "scope_extension",
+                    "evidence_level": "inferred",
+                    "confidence": 0.58,
+                },
+                {
+                    "source": "paper-b",
+                    "target": "paper-c",
+                    "relationship": "citation",
+                    "evidence_level": "confirmed",
+                    "confidence": 1.0,
+                },
+            ]
+        )
+
+        self.assertEqual(
+            {
+                (edge["source"], edge["target"])
+                for edge in visible
+            },
+            {
+                ("paper-a", "paper-c"),
+                ("paper-b", "paper-c"),
+            },
+        )
 
     def test_conversation_taxonomy_preserves_deduplicated_matched_paper_ids(self) -> None:
         first = SimpleNamespace(
@@ -218,6 +257,8 @@ class EvidenceSnapshotTests(unittest.TestCase):
                     publish_date="2025",
                     expert_taxonomy_branches=["Evaluation"],
                     is_new_this_round=True,
+                    relevance_tier="direct",
+                    relevance_score=0.9,
                 ),
                 "paper-b": PaperNode(
                     paper_id="paper-b",
@@ -226,6 +267,7 @@ class EvidenceSnapshotTests(unittest.TestCase):
                     source="seed",
                     publish_date="2024",
                     expert_taxonomy_branches=["Evaluation"],
+                    relevance_tier="candidate",
                 ),
             },
             "expert_taxonomy": {
@@ -293,8 +335,281 @@ class EvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual(first["stats"]["paper_count"], 2)
         self.assertEqual(first["stats"]["real_paper_count"], 1)
         self.assertEqual(first["stats"]["fallback_paper_count"], 1)
+        self.assertEqual(first["stats"]["direct_paper_count"], 1)
+        self.assertEqual(
+            first["conclusion_contract"]["claimable_paper_ids"],
+            ["paper-a"],
+        )
+        self.assertTrue(
+            first["conclusion_contract"]["recommendations_allowed"]
+        )
+        branch = first["taxonomy"]["branches"][0]
+        self.assertEqual(branch["evidence_status"], "grounded")
+        self.assertEqual(branch["direct_paper_ids"], ["paper-a"])
         self.assertEqual(first["stats"]["evidence_level_counts"]["confirmed"], 1)
         self.assertEqual(first["stats"]["evidence_backed_gap_count"], 1)
+
+    def test_adjacent_only_taxonomy_branch_is_exploratory(self) -> None:
+        state = self._state()
+        state["paper_nodes"] = {
+            "paper-adjacent": PaperNode(
+                paper_id="paper-adjacent",
+                title="Early Fusion for Multimodal Image Segmentation",
+                abstract="A traditional RGB-T segmentation study.",
+                source="arxiv",
+                expert_taxonomy_branches=["Fusion Strategies"],
+                relevance_tier="adjacent",
+                relevance_score=0.7,
+            )
+        }
+        state["expert_taxonomy"] = {
+            "taxonomy": {
+                "Fusion Strategies": {
+                    "description": "Multimodal fusion methods",
+                    "required_concepts": ["early fusion"],
+                }
+            }
+        }
+
+        snapshot = EvidenceSnapshotService().build(
+            topic=state["topic"],
+            papers=state["paper_nodes"],
+            taxonomy=state["expert_taxonomy"],
+            edges=[],
+            gaps=[],
+            retrieval_plan=state["retrieval_plan"],
+            retrieval_outcome=state["retrieval_outcome"],
+            alignment_score=state["alignment_score"],
+            audit_reports=[],
+        )
+
+        branch = snapshot["taxonomy"]["branches"][0]
+        self.assertEqual(branch["evidence_status"], "exploratory")
+        self.assertEqual(branch["direct_paper_ids"], [])
+        self.assertEqual(branch["adjacent_paper_ids"], ["paper-adjacent"])
+        self.assertFalse(
+            snapshot["conclusion_contract"]["recommendations_allowed"]
+        )
+
+    def test_snapshot_uses_grounded_taxonomy_matched_paper_ids(self) -> None:
+        state = self._state()
+        state["paper_nodes"]["paper-a"].expert_taxonomy_branches = []
+        state["expert_taxonomy"] = {
+            "branches": [
+                {
+                    "branch_id": "evaluation",
+                    "name": "Evaluation",
+                    "description": "Evaluation methods",
+                    "required_concepts": ["benchmark"],
+                    "matched_paper_ids": ["paper-a"],
+                    "matched_gap_ids": ["gap-1"],
+                }
+            ],
+            "coverage": {
+                "evaluation": {
+                    "matched_paper_ids": ["paper-a"],
+                    "matched_gap_ids": ["gap-1"],
+                }
+            },
+        }
+
+        snapshot = EvidenceSnapshotService().build(
+            topic=state["topic"],
+            papers=state["paper_nodes"],
+            taxonomy=state["expert_taxonomy"],
+            edges=[],
+            gaps=state["detected_gaps"],
+            retrieval_plan=state["retrieval_plan"],
+            retrieval_outcome=state["retrieval_outcome"],
+            alignment_score=state["alignment_score"],
+            audit_reports=[],
+        )
+
+        branch = next(
+            item
+            for item in snapshot["taxonomy"]["branches"]
+            if item["name"] == "Evaluation"
+        )
+        self.assertEqual(branch["direct_paper_ids"], ["paper-a"])
+        self.assertEqual(branch["matched_gap_ids"], ["gap-1"])
+
+    @patch("product_agent.research_agent.nodes.synthesizer.SummaryGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.ReportGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.IdeaGenerationService.run")
+    def test_ungrounded_idea_is_rejected_after_generation(
+        self,
+        idea_run,
+        report_run,
+        summary_run,
+    ) -> None:
+        idea_run.return_value = IdeaGenerationOutput(
+            [
+                ResearchIdea(
+                    idea_id="idea-weak",
+                    title="Unsupported recommendation",
+                    motivation="Adjacent observation",
+                    approach="Build a benchmark",
+                    feasibility="Unknown",
+                    contribution="Unknown",
+                    related_papers=["paper-b"],
+                    derived_from_gaps=["gap-1"],
+                    confidence=0.8,
+                    tags=["benchmark"],
+                    raw_text="",
+                )
+            ],
+            "test",
+        )
+        report_run.return_value = ReportGenerationOutput(
+            "report",
+            "test",
+            "report-1",
+        )
+        summary_run.return_value = SummaryGenerationOutput(
+            {"counts": {}},
+            "test",
+        )
+
+        updated = synthesizer_node(self._state())
+
+        self.assertEqual(updated["generated_ideas"], [])
+        self.assertFalse(
+            report_run.call_args.args[0].allow_research_ideas
+        )
+        self.assertFalse(
+            summary_run.call_args.args[0].allow_recommendation
+        )
+        self.assertIn(
+            "could not be bound",
+            updated["degraded_reason"],
+        )
+
+    @patch("product_agent.research_agent.nodes.synthesizer.SummaryGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.ReportGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.IdeaGenerationService.run")
+    def test_unsupported_taxonomy_branch_downgrades_idea_to_exploratory(
+        self,
+        idea_run,
+        report_run,
+        summary_run,
+    ) -> None:
+        state = self._state()
+        state["expert_taxonomy"] = {
+            "branches": [
+                {
+                    "branch_id": "missing-modality",
+                    "name": "Robustness to Missing Modalities",
+                    "description": "Robust fusion when modalities are absent.",
+                    "required_concepts": ["modality dropout"],
+                    "matched_paper_ids": [],
+                    "matched_gap_ids": ["gap-missing"],
+                },
+                {
+                    "branch_id": "alignment",
+                    "name": "Cross-Modal Alignment",
+                    "description": "Alignment methods.",
+                    "required_concepts": ["mutual information"],
+                    "matched_paper_ids": ["paper-a"],
+                    "matched_gap_ids": [],
+                },
+            ],
+            "coverage": {
+                "missing-modality": {
+                    "matched_paper_ids": [],
+                    "matched_gap_ids": ["gap-missing"],
+                },
+                "alignment": {
+                    "matched_paper_ids": ["paper-a"],
+                    "matched_gap_ids": [],
+                },
+            },
+        }
+        state["detected_gaps"] = [
+            {
+                "id": "gap-missing",
+                "description": "Missing taxonomy branch: Robustness to Missing Modalities",
+                "severity": "high",
+                "evidence": [],
+            }
+        ]
+        idea_run.return_value = IdeaGenerationOutput(
+            [
+                ResearchIdea(
+                    idea_id="idea-missing",
+                    title="Improve missing-modality robustness",
+                    motivation="Handle absent modalities.",
+                    approach="Add modality dropout.",
+                    feasibility="Existing model.",
+                    contribution="Robust fusion.",
+                    related_papers=["paper-a"],
+                    derived_from_gaps=["gap-missing"],
+                    confidence=0.9,
+                    tags=["robustness"],
+                    raw_text="",
+                )
+            ],
+            "test",
+        )
+        report_run.return_value = ReportGenerationOutput(
+            "report",
+            "test",
+            "report-1",
+        )
+        summary_run.return_value = SummaryGenerationOutput(
+            {"counts": {}},
+            "test",
+        )
+
+        updated = synthesizer_node(state)
+
+        self.assertEqual(len(updated["generated_ideas"]), 1)
+        idea = updated["generated_ideas"][0]
+        self.assertTrue(idea.title.startswith("探索性方向："))
+        self.assertLessEqual(idea.confidence, 0.45)
+        self.assertIn("缺少分支级直接论文证据", idea.motivation)
+        self.assertTrue(report_run.call_args.args[0].allow_research_ideas)
+        self.assertFalse(summary_run.call_args.args[0].allow_recommendation)
+        self.assertEqual(summary_run.call_args.args[0].ideas, [])
+        self.assertEqual(
+            updated["final_report_summary"]["idea_admission"]["exploratory_count"],
+            1,
+        )
+
+    @patch("product_agent.research_agent.nodes.synthesizer.SummaryGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.ReportGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.IdeaGenerationService.run")
+    def test_adjacent_only_evidence_skips_idea_generation(
+        self,
+        idea_run,
+        report_run,
+        summary_run,
+    ) -> None:
+        state = self._state()
+        state["paper_nodes"]["paper-a"].relevance_tier = "adjacent"
+        state["retrieval_outcome"] = {
+            "real_paper_count": 1,
+            "direct_paper_count": 0,
+        }
+        report_run.return_value = ReportGenerationOutput(
+            "report",
+            "test",
+            "report-1",
+        )
+        summary_run.return_value = SummaryGenerationOutput(
+            {"counts": {}},
+            "test",
+        )
+
+        updated = synthesizer_node(state)
+
+        idea_run.assert_not_called()
+        self.assertEqual(updated["generated_ideas"], [])
+        self.assertFalse(
+            report_run.call_args.args[0].allow_research_ideas
+        )
+        self.assertFalse(
+            summary_run.call_args.args[0].allow_recommendation
+        )
 
     @patch("product_agent.research_agent.nodes.synthesizer.SummaryGenerationService.run")
     @patch("product_agent.research_agent.nodes.synthesizer.ReportGenerationService.run")
@@ -336,7 +651,11 @@ class EvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual(summary_snapshot["snapshot_id"], snapshot_id)
         self.assertEqual(
             idea_run.call_args.args[0].papers,
-            updated["evidence_snapshot"]["papers"],
+            [
+                paper
+                for paper in updated["evidence_snapshot"]["papers"]
+                if paper["relevance_tier"] == "direct"
+            ],
         )
         self.assertEqual(
             report_run.call_args.args[0].audit_reports,
@@ -362,6 +681,159 @@ class EvidenceSnapshotTests(unittest.TestCase):
         self.assertIsNotNone(response.evidence_snapshot)
         self.assertEqual(response.evidence_snapshot.snapshot_id, snapshot_id)
         self.assertEqual(response.evidence_snapshot.stats["paper_count"], 2)
+
+    def test_required_facet_adjacent_only_overrides_global_direct_relevance(
+        self,
+    ) -> None:
+        state = self._state()
+        state["expert_taxonomy"] = {
+            "branches": [
+                {
+                    "branch_id": "missing-modality",
+                    "name": "Robustness to Missing Modalities",
+                    "description": "Robustness when one modality is absent.",
+                    "required_concepts": ["missing modality robustness"],
+                    "matched_paper_ids": ["paper-a"],
+                }
+            ]
+        }
+        state["retrieval_outcome"] = {
+            "facet_evidence_coverage": {
+                "facets": [
+                    {
+                        "label": "missing modality robustness",
+                        "required": True,
+                        "evidence_level": "adjacent_only",
+                        "search_terms": ["missing modality robustness"],
+                        "matched_papers": [
+                            {
+                                "paper_id": "paper-a",
+                                "match_type": "adjacent",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+
+        snapshot = EvidenceSnapshotService().build(
+            topic=state["topic"],
+            papers=state["paper_nodes"],
+            taxonomy=state["expert_taxonomy"],
+            edges=[],
+            gaps=[],
+            retrieval_plan=state["retrieval_plan"],
+            retrieval_outcome=state["retrieval_outcome"],
+            alignment_score=state["alignment_score"],
+            audit_reports=[],
+        )
+
+        branch = next(
+            item
+            for item in snapshot["taxonomy"]["branches"]
+            if item["name"] == "Robustness to Missing Modalities"
+        )
+        self.assertEqual(branch["direct_paper_ids"], ["paper-a"])
+        self.assertEqual(branch["claimable_paper_ids"], [])
+        self.assertEqual(branch["evidence_status"], "exploratory")
+        self.assertEqual(
+            branch["required_facet_evidence_level"],
+            "adjacent_only",
+        )
+
+    @patch("product_agent.research_agent.nodes.synthesizer.SummaryGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.ReportGenerationService.run")
+    @patch("product_agent.research_agent.nodes.synthesizer.IdeaGenerationService.run")
+    def test_adjacent_only_required_facet_downgrades_linked_idea(
+        self,
+        idea_run,
+        report_run,
+        summary_run,
+    ) -> None:
+        state = self._state()
+        state["expert_taxonomy"] = {
+            "branches": [
+                {
+                    "branch_id": "missing-modality",
+                    "name": "Robustness to Missing Modalities",
+                    "description": "Robustness when modalities are absent.",
+                    "required_concepts": ["missing modality robustness"],
+                    "matched_paper_ids": ["paper-a"],
+                }
+            ]
+        }
+        state["detected_gaps"] = [
+            {
+                "id": "gap-missing",
+                "description": (
+                    "Direction Robustness to Missing Modalities lacks "
+                    "direct evidence."
+                ),
+                "severity": "warning",
+                "evidence": ["paper-a"],
+            }
+        ]
+        state["retrieval_outcome"] = {
+            "real_paper_count": 1,
+            "direct_paper_count": 1,
+            "facet_evidence_coverage": {
+                "facets": [
+                    {
+                        "label": "missing modality robustness",
+                        "required": True,
+                        "evidence_level": "adjacent_only",
+                        "search_terms": ["missing modality robustness"],
+                        "matched_papers": [
+                            {
+                                "paper_id": "paper-a",
+                                "match_type": "adjacent",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+        idea_run.return_value = IdeaGenerationOutput(
+            [
+                ResearchIdea(
+                    idea_id="idea-missing",
+                    title="Improve missing-modality robustness",
+                    motivation="Handle absent modalities.",
+                    approach="Add modality dropout.",
+                    feasibility="Existing model.",
+                    contribution="Robust fusion.",
+                    related_papers=["paper-a"],
+                    derived_from_gaps=["gap-missing"],
+                    confidence=0.9,
+                    tags=["robustness"],
+                    raw_text="",
+                )
+            ],
+            "test",
+        )
+        report_run.return_value = ReportGenerationOutput(
+            "report",
+            "test",
+            "report-1",
+        )
+        summary_run.return_value = SummaryGenerationOutput(
+            {"counts": {}},
+            "test",
+        )
+
+        updated = synthesizer_node(state)
+
+        self.assertEqual(len(updated["generated_ideas"]), 1)
+        self.assertTrue(
+            updated["generated_ideas"][0].title.startswith("探索性方向：")
+        )
+        self.assertEqual(
+            updated["final_report_summary"]["idea_admission"][
+                "exploratory_count"
+            ],
+            1,
+        )
+        self.assertEqual(summary_run.call_args.args[0].ideas, [])
 
 
 if __name__ == "__main__":

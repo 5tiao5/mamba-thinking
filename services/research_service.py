@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from product_agent.services.workspace_mapper import workspace_from_agent_state
 if TYPE_CHECKING:
     from product_agent.services.knowledge_service import KnowledgeHit, KnowledgeService
     from product_agent.services.message_service import MessageService
+    from product_agent.services.research_paper_service import ResearchPaperService
     from product_agent.services.working_memory_service import WorkingMemoryService
 
 
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
 class ResearchContextBundle:
     conversation_topic: str
     knowledge_scope: str
+    research_mode: str
     query_intent: dict[str, Any]
     recent_context: list[dict[str, Any]]
     knowledge_hits: list[dict[str, Any]]
@@ -35,7 +38,9 @@ class ResearchContextBundle:
     working_memory_constraints: list[str]
     previous_round_task_id: str
     previous_round_paper_ids: list[str]
+    previous_round_papers: list[dict[str, Any]]
     previous_round_query_intent: dict[str, Any]
+    research_papers: list[dict[str, Any]]
     context_inputs: list[dict[str, Any]]
     selected_skill_ids: list[str] = None
     skill_descriptions: list[str] = None
@@ -50,6 +55,7 @@ class ResearchContextBundle:
         return {
             "conversation_topic": self.conversation_topic,
             "knowledge_scope": self.knowledge_scope,
+            "research_mode": self.research_mode,
             "query_intent": dict(self.query_intent),
             "recent_context": list(self.recent_context),
             "knowledge_hits": list(self.knowledge_hits),
@@ -63,7 +69,9 @@ class ResearchContextBundle:
             "working_memory_constraints": list(self.working_memory_constraints),
             "previous_round_task_id": self.previous_round_task_id,
             "previous_round_paper_ids": list(self.previous_round_paper_ids),
+            "previous_round_papers": list(self.previous_round_papers),
             "previous_round_query_intent": dict(self.previous_round_query_intent),
+            "research_papers": list(self.research_papers),
             "context_inputs": list(self.context_inputs),
             "selected_skill_ids": list(self.selected_skill_ids),
             "skill_descriptions": list(self.skill_descriptions),
@@ -80,6 +88,7 @@ class ResearchService:
     """
 
     SUPPORTED_MODES = {"default", "fast", "balanced"}
+    SUPPORTED_RESEARCH_MODES = {"hybrid", "imported_only", "search_only"}
 
     def __init__(
         self,
@@ -90,6 +99,7 @@ class ResearchService:
         workspace_service=None,
         message_service: MessageService | None = None,
         knowledge_service: KnowledgeService | None = None,
+        research_paper_service: ResearchPaperService | None = None,
         working_memory_service: WorkingMemoryService | None = None,
         skill_service=None,
     ) -> None:
@@ -99,6 +109,7 @@ class ResearchService:
         self.workspace_service = workspace_service
         self.message_service = message_service
         self.knowledge_service = knowledge_service
+        self.research_paper_service = research_paper_service
         self.working_memory_service = working_memory_service
         self.skill_service = skill_service
 
@@ -109,6 +120,7 @@ class ResearchService:
         topic: str,
         mode: str = "default",
         knowledge_scope: str = "shared",
+        research_mode: str = "hybrid",
         trigger_message_id: str | None = None,
         selected_skill_ids: list[str] | None = None,
     ) -> ResearchTask:
@@ -126,6 +138,11 @@ class ResearchService:
             raise InvalidTaskModeError(
                 f"Mode `{mode}` is invalid. Supported modes: {sorted(self.SUPPORTED_MODES)}."
             )
+        if research_mode not in self.SUPPORTED_RESEARCH_MODES:
+            raise InvalidTaskModeError(
+                f"Research mode `{research_mode}` is invalid. "
+                f"Supported modes: {sorted(self.SUPPORTED_RESEARCH_MODES)}."
+            )
 
         task = ResearchTask(
             task_id=f"task_{uuid4().hex[:12]}",
@@ -133,6 +150,7 @@ class ResearchService:
             topic=topic,
             mode=mode,
             knowledge_scope=knowledge_scope,
+            research_mode=research_mode,
             trigger_message_id=trigger_message_id,
             selected_skill_ids=list(selected_skill_ids or []),
             status="created",
@@ -156,6 +174,7 @@ class ResearchService:
         workspace_hints: list[str] | None = None,
         mode: str = "default",
         knowledge_scope: str = "shared",
+        research_mode: str = "hybrid",
         trigger_message_id: str | None = None,
         selected_skill_ids: list[str] | None = None,
     ) -> ResearchTask:
@@ -178,6 +197,7 @@ class ResearchService:
             topic=follow_up_topic,
             mode=mode,
             knowledge_scope=knowledge_scope,
+            research_mode=research_mode,
             trigger_message_id=trigger_message_id,
             selected_skill_ids=selected_skill_ids,
         )
@@ -320,6 +340,10 @@ class ResearchService:
         )
         recent_context = self._recent_message_context(task.conversation_id)
         previous_round = self._previous_round_context_for_task(task)
+        research_papers, excluded_document_ids = self._research_paper_context_for_task(
+            task.conversation_id,
+            research_mode=task.research_mode,
+        )
         raw_user_request = self._raw_user_request_for_task(task, recent_context=recent_context)
         initial_query_intent = derive_query_intent(
             raw_user_request=raw_user_request,
@@ -343,6 +367,7 @@ class ResearchService:
             working_memory_summary=working_memory_summary,
             working_memory_findings=working_memory_findings,
             working_memory_open_questions=working_memory_open_questions,
+            excluded_document_ids=excluded_document_ids,
         )
         query_intent = derive_query_intent(
             raw_user_request=raw_user_request,
@@ -367,6 +392,7 @@ class ResearchService:
             {
                 "kind": "research_context_bundle",
                 "knowledge_scope": task.knowledge_scope,
+                "research_mode": task.research_mode,
                 "conversation_topic": conversation_topic,
                 "raw_user_request": raw_user_request,
                 "query_intent_summary": query_intent.summary,
@@ -381,9 +407,33 @@ class ResearchService:
                 "working_memory_constraints": list(working_memory_constraints[:3]),
                 "previous_round_task_id": previous_round["task_id"],
                 "previous_round_paper_count": len(previous_round["paper_ids"]),
+                "research_paper_count": len(research_papers),
+                "core_research_paper_count": sum(
+                    1 for paper in research_papers if paper.get("status") == "core"
+                ),
                 "recent_turns": [
                     f"{entry.get('role', 'unknown')}: {entry.get('content', '')}"
                     for entry in recent_context[-3:]
+                ],
+            },
+            {
+                "kind": "research_paper_pool",
+                "paper_count": len(research_papers),
+                "core_count": sum(
+                    1 for paper in research_papers if paper.get("status") == "core"
+                ),
+                "candidate_count": sum(
+                    1 for paper in research_papers if paper.get("status") == "candidate"
+                ),
+                "excluded_count": len(excluded_document_ids),
+                "papers": [
+                    {
+                        "paper_id": paper.get("paper_id", ""),
+                        "title": paper.get("title", ""),
+                        "status": paper.get("status", ""),
+                        "origin": paper.get("origin", ""),
+                    }
+                    for paper in research_papers[:20]
                 ],
             },
             {
@@ -413,6 +463,7 @@ class ResearchService:
         return ResearchContextBundle(
             conversation_topic=conversation_topic,
             knowledge_scope=task.knowledge_scope,
+            research_mode=task.research_mode,
             query_intent=query_intent.to_dict(),
             recent_context=recent_context,
             knowledge_hits=knowledge_hits,
@@ -426,7 +477,9 @@ class ResearchService:
             working_memory_constraints=working_memory_constraints,
             previous_round_task_id=previous_round["task_id"],
             previous_round_paper_ids=previous_round["paper_ids"],
+            previous_round_papers=previous_round["papers"],
             previous_round_query_intent=previous_round["query_intent"],
+            research_papers=research_papers,
             context_inputs=context_inputs,
             selected_skill_ids=list(task.selected_skill_ids),
             skill_descriptions=skill_descriptions,
@@ -468,6 +521,7 @@ class ResearchService:
         working_memory_summary: str,
         working_memory_findings: list[str],
         working_memory_open_questions: list[str],
+        excluded_document_ids: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         if self.knowledge_service is None or task.knowledge_scope == "none":
             return [], []
@@ -488,9 +542,190 @@ class ResearchService:
             knowledge_scope=task.knowledge_scope,
             conversation_id=task.conversation_id,
         )
+        excluded_ids = excluded_document_ids or set()
+        hits = [hit for hit in hits if hit.document_id not in excluded_ids]
+        topic_anchor = " ".join(
+            [
+                str(query_intent.core_topic or ""),
+                str(conversation_topic or ""),
+                *[
+                    str(term)
+                    for term in list(query_intent.focus_terms or [])[:4]
+                    if str(term).strip()
+                ],
+            ]
+        )
+        hits = [
+            hit
+            for hit in hits
+            if self._knowledge_hit_is_relevant(
+                hit,
+                topic_anchor=topic_anchor,
+            )
+        ]
         hit_dicts = [self._serialize_knowledge_hit(hit) for hit in hits]
         knowledge_context = [self.knowledge_service.format_hit_for_context(hit) for hit in hits]
         return hit_dicts, knowledge_context
+
+    @classmethod
+    def _knowledge_hit_is_relevant(
+        cls,
+        hit: KnowledgeHit,
+        *,
+        topic_anchor: str,
+    ) -> bool:
+        if str(hit.scope or "").casefold() == "conversation":
+            return True
+
+        score = float(hit.score or 0.0)
+        if score < 0.25:
+            return False
+        if score >= 0.55:
+            return True
+
+        anchor_terms = cls._knowledge_anchor_terms(topic_anchor)
+        if not anchor_terms:
+            return False
+        hit_text = " ".join(
+            [
+                str(hit.title or ""),
+                str(hit.snippet or ""),
+                *[
+                    str(snippet)
+                    for snippet in list(hit.supporting_snippets or [])[:2]
+                ],
+            ]
+        ).casefold()
+        matched_terms = {
+            term for term in anchor_terms if term in hit_text
+        }
+        chinese_matches = {
+            term
+            for term in matched_terms
+            if any("\u4e00" <= character <= "\u9fff" for character in term)
+        }
+        english_matches = matched_terms - chinese_matches
+        return bool(chinese_matches) or len(english_matches) >= 2
+
+    @staticmethod
+    def _knowledge_anchor_terms(value: str) -> set[str]:
+        text = str(value or "").casefold()
+        english_stopwords = {
+            "about",
+            "analysis",
+            "approach",
+            "based",
+            "model",
+            "models",
+            "paper",
+            "papers",
+            "research",
+            "study",
+            "using",
+        }
+        terms = {
+            token
+            for token in re.findall(r"[a-z][a-z0-9-]{2,}", text)
+            if token not in english_stopwords
+        }
+        for segment in re.findall(r"[\u4e00-\u9fff]{4,}", text):
+            for width in (4, 5, 6):
+                terms.update(
+                    segment[index : index + width]
+                    for index in range(max(0, len(segment) - width + 1))
+                )
+        return terms
+
+    def _research_paper_context_for_task(
+        self,
+        conversation_id: str,
+        *,
+        research_mode: str = "hybrid",
+    ) -> tuple[list[dict[str, Any]], set[str]]:
+        if self.research_paper_service is None or self.knowledge_service is None:
+            return [], set()
+
+        papers: list[dict[str, Any]] = []
+        excluded_document_ids: set[str] = set()
+        for entry in self.research_paper_service.list_papers(conversation_id):
+            if research_mode == "search_only":
+                excluded_document_ids.add(entry.document_id)
+                continue
+            if entry.status == "excluded":
+                excluded_document_ids.add(entry.document_id)
+                continue
+
+            document = self.knowledge_service.get_document(entry.document_id)
+            if document is None:
+                continue
+            metadata = {**dict(document.metadata or {}), **dict(entry.metadata or {})}
+            abstract, review_text = self._paper_text_context(document.content)
+            authors = metadata.get("authors", [])
+            if isinstance(authors, str):
+                authors = [item.strip() for item in re.split(r"[,;]", authors) if item.strip()]
+            elif not isinstance(authors, list):
+                authors = []
+
+            arxiv_id = str(metadata.get("arxiv_id", "") or "").strip()
+            doi = str(metadata.get("doi", "") or "").strip()
+            if arxiv_id:
+                paper_id = re.sub(r"v\d+$", "", arxiv_id, flags=re.IGNORECASE)
+            elif doi:
+                paper_id = doi.removeprefix("https://doi.org/").removeprefix("http://doi.org/")
+            else:
+                paper_id = f"imported:{entry.paper_entry_id}"
+
+            citation_count = metadata.get("citation_count", 0)
+            try:
+                citation_count = max(int(citation_count or 0), 0)
+            except (TypeError, ValueError):
+                citation_count = 0
+
+            papers.append(
+                {
+                    "paper_id": paper_id,
+                    "paper_entry_id": entry.paper_entry_id,
+                    "document_id": document.document_id,
+                    "title": entry.title or document.title,
+                    "abstract": abstract,
+                    "review_text": review_text,
+                    "authors": authors,
+                    "keywords": list(document.tags or []),
+                    "publish_date": str(metadata.get("year", "") or ""),
+                    "source": entry.origin,
+                    "origin": entry.origin,
+                    "status": entry.status,
+                    "taxonomy_category": str(metadata.get("category", "") or ""),
+                    "citation_count": citation_count,
+                    "citation_count_known": "citation_count" in metadata,
+                    "citation_source": str(metadata.get("citation_source", "") or ""),
+                    "url": entry.source_url or str(metadata.get("source_url", "") or ""),
+                    "doi": doi,
+                    "references": list(metadata.get("references", []) or []),
+                }
+            )
+        return papers, excluded_document_ids
+
+    @staticmethod
+    def _paper_text_context(content: str) -> tuple[str, str]:
+        text = re.sub(r"(?im)^\[Page \d+\]\s*$", "", str(content or ""))
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return "", ""
+
+        abstract = ""
+        match = re.search(r"\babstract\b[\s:.-]*", text, flags=re.IGNORECASE)
+        if match:
+            tail = text[match.end():]
+            heading = re.search(
+                r"\b(?:1[.\s]+)?(?:introduction|keywords|index terms)\b",
+                tail,
+                flags=re.IGNORECASE,
+            )
+            abstract = tail[: heading.start() if heading else 2500].strip()
+        if not abstract:
+            abstract = text[:2000].strip()
+        return abstract[:3000], text[:6000]
 
     def _knowledge_query_for_task(
         self,
@@ -594,7 +829,7 @@ class ResearchService:
             reverse=True,
         )
         if not previous_tasks:
-            return {"task_id": "", "paper_ids": [], "query_intent": {}}
+            return {"task_id": "", "paper_ids": [], "papers": [], "query_intent": {}}
 
         previous_task = None
         workspace = None
@@ -606,9 +841,45 @@ class ResearchService:
             workspace = candidate_workspace
             break
         if previous_task is None or workspace is None:
-            return {"task_id": "", "paper_ids": [], "query_intent": {}}
+            return {"task_id": "", "paper_ids": [], "papers": [], "query_intent": {}}
 
         paper_ids = [str(getattr(paper, "paper_id", "")).strip() for paper in workspace.papers if str(getattr(paper, "paper_id", "")).strip()]
+        papers = [
+            {
+                "paper_id": str(getattr(paper, "paper_id", "") or "").strip(),
+                "title": str(getattr(paper, "title", "") or ""),
+                "abstract": str(getattr(paper, "abstract", "") or ""),
+                "authors": list(getattr(paper, "authors", []) or []),
+                "keywords": list(getattr(paper, "keywords", []) or []),
+                "publish_date": str(getattr(paper, "publish_date", "") or ""),
+                "source": str(getattr(paper, "source", "") or ""),
+                "taxonomy_category": str(getattr(paper, "taxonomy_category", "") or ""),
+                "citation_count": int(getattr(paper, "citation_count", 0) or 0),
+                "citation_count_known": bool(
+                    getattr(paper, "citation_count_known", False)
+                ),
+                "citation_source": str(
+                    getattr(paper, "citation_source", "") or ""
+                ),
+                "url": str(getattr(paper, "url", "") or ""),
+                "relevance_score": float(
+                    getattr(paper, "relevance_score", 0.0) or 0.0
+                ),
+                "relevance_tier": str(
+                    getattr(paper, "relevance_tier", "candidate") or "candidate"
+                ),
+                "relevance_reasons": list(
+                    getattr(paper, "relevance_reasons", []) or []
+                ),
+                "paper_pool_status": str(
+                    getattr(paper, "paper_pool_status", "") or ""
+                ),
+                "document_id": str(getattr(paper, "document_id", "") or ""),
+                "origin": str(getattr(paper, "origin", "") or ""),
+            }
+            for paper in workspace.papers
+            if str(getattr(paper, "paper_id", "") or "").strip()
+        ]
         query_intent = {}
         trace = getattr(workspace, "trace", {}) or {}
         context_inputs = trace.get("context_inputs", []) if isinstance(trace, dict) else []
@@ -619,6 +890,7 @@ class ResearchService:
         return {
             "task_id": previous_task.task_id,
             "paper_ids": paper_ids,
+            "papers": papers,
             "query_intent": query_intent,
         }
 

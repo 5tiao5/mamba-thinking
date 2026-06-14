@@ -13,6 +13,7 @@ import type {
   KnowledgeDocumentItem,
   MessageItem,
   PaperImportCandidateItem,
+  ResearchMode,
   ResearchTaskSummaryItem,
   SkillItem,
   ToolItem,
@@ -36,6 +37,40 @@ const knowledgeScopeOptions: Array<{ value: KnowledgeScope; label: string }> = [
   { value: "shared", label: "当前研究 + 全局" },
   { value: "none", label: "关闭增强" },
 ];
+
+const researchModeOptions: Array<{ value: ResearchMode; label: string }> = [
+  { value: "hybrid", label: "导入 + 补搜" },
+  { value: "imported_only", label: "仅导入" },
+  { value: "search_only", label: "仅检索" },
+];
+
+const researchModeCards: Array<{
+  value: ResearchMode;
+  label: string;
+  description: string;
+  recommended?: boolean;
+}> = [
+  {
+    value: "hybrid",
+    label: "导入论文 + 系统补搜",
+    description: "优先使用你的论文，同时联网补齐相关证据。适合大多数研究。",
+    recommended: true,
+  },
+  {
+    value: "imported_only",
+    label: "仅分析导入论文",
+    description: "不执行外部论文检索，只围绕当前论文池生成 taxonomy、演进图和结论。",
+  },
+  {
+    value: "search_only",
+    label: "完全由系统检索",
+    description: "本轮不使用会话论文池，从公开学术来源重新建立证据。",
+  },
+];
+
+function researchModeLabel(mode: ResearchMode) {
+  return researchModeCards.find((item) => item.value === mode)?.label ?? "导入论文 + 系统补搜";
+}
 
 function knowledgeScopeLabel(scope: KnowledgeScope) {
   switch (scope) {
@@ -110,6 +145,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const [newTitle, setNewTitle] = useState("新的研究");
   const [runMode, setRunMode] = useState("balanced");
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("shared");
+  const [researchMode, setResearchMode] = useState<ResearchMode>("hybrid");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [paperPanelOpen, setPaperPanelOpen] = useState(false);
   const [pendingResearchFiles, setPendingResearchFiles] = useState<File[]>([]);
@@ -243,6 +279,8 @@ export function AppShell({ children }: PropsWithChildren) {
       : activeConversationTask?.task_id ?? currentTaskId;
   const activeTaskKnowledgeScope =
     activeConversationTask?.knowledge_scope ?? workspace?.source_trace?.knowledge_scope ?? "shared";
+  const activeTaskResearchMode =
+    activeConversationTask?.research_mode ?? workspace?.source_trace?.research_mode ?? "hybrid";
   const selectedSkillSummary = useMemo(() => {
     if (!selectedSkillIds.length) return "未选择";
     return selectedSkillIds
@@ -323,6 +361,21 @@ export function AppShell({ children }: PropsWithChildren) {
 
     setKnowledgeScope(activeTaskKnowledgeScope);
   }, [activeConversationId, activeTaskKnowledgeScope]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setResearchMode("hybrid");
+      return;
+    }
+    if (activeConversationTask || workspace?.source_trace?.research_mode) {
+      setResearchMode(activeTaskResearchMode);
+    }
+  }, [
+    activeConversationId,
+    activeConversationTask,
+    activeTaskResearchMode,
+    workspace?.source_trace?.research_mode,
+  ]);
 
   const workspaceDirections = useMemo(() => {
     if (!workspace) return [];
@@ -411,13 +464,17 @@ export function AppShell({ children }: PropsWithChildren) {
     const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     const shouldCreateFreshTask =
       activeConversationId !== DEMO_CONVERSATION_ID &&
-      (!activeTaskId || activeTaskKnowledgeScope !== knowledgeScope);
+      (
+        !activeTaskId ||
+        activeTaskKnowledgeScope !== knowledgeScope ||
+        activeTaskResearchMode !== researchMode
+      );
     setAskStatus("正在生成研究结果...");
     try {
       setAskStatus(
         shouldCreateFreshTask
-          ? `知识范围已切换为「${scopeLabel}」，正在创建新一轮研究结果...`
-          : `正在按「${scopeLabel}」生成研究结果...`
+          ? `研究方式已切换为「${researchModeLabel(researchMode)}」，正在创建新一轮研究结果...`
+          : `正在按「${researchModeLabel(researchMode)}」生成研究结果...`
       );
       let taskId = activeTaskId;
       if (shouldCreateFreshTask || !taskId) {
@@ -427,15 +484,16 @@ export function AppShell({ children }: PropsWithChildren) {
           mode: runMode,
           use_shared_knowledge: knowledgeScope === "shared",
           knowledge_scope: knowledgeScope,
+          research_mode: researchMode,
           selected_skill_ids: selectedSkillIds,
         });
         taskId = created.data.task_id;
       }
       await api.runTask(taskId);
-      setAskStatus(`结果已生成，本轮使用「${scopeLabel}」。可以继续追问来调整方向。`);
-      setAskStatus("结果已生成，可以继续追问来调整方向。");
       await loadHistory();
-      setAskStatus(`结果已生成，本轮使用「${scopeLabel}」。可以继续追问来调整方向。`);
+      setAskStatus(
+        `结果已生成，本轮使用「${researchModeLabel(researchMode)}」和「${scopeLabel}」。可以继续追问来调整方向。`
+      );
       navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
@@ -458,13 +516,14 @@ export function AppShell({ children }: PropsWithChildren) {
     const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     setAskStatus("正在继续追问...");
     try {
-      setAskStatus(`正在按「${scopeLabel}」继续追问...`);
+      setAskStatus(`正在按「${researchModeLabel(researchMode)}」继续追问...`);
       const response = await api.continueConversation({
         conversation_id: activeConversationId,
         content: askContent.trim(),
         create_follow_up_task: true,
         mode: runMode,
         knowledge_scope: knowledgeScope,
+        research_mode: researchMode,
         selected_skill_ids: selectedSkillIds,
       });
       const appliedScope = response.data.knowledge_scope_applied ?? knowledgeScope;
@@ -1050,6 +1109,15 @@ export function AppShell({ children }: PropsWithChildren) {
                         />
                       </div>
                       <div className="composer-mode-picker">
+                        <span className="composer-mode-label">论文来源</span>
+                        <SegmentedControl
+                          label="论文来源"
+                          onChange={(value) => setResearchMode(value as ResearchMode)}
+                          options={researchModeOptions}
+                          value={researchMode}
+                        />
+                      </div>
+                      <div className="composer-mode-picker">
                         <span className="composer-mode-label">知识范围</span>
                         <SegmentedControl
                           label="知识范围"
@@ -1208,6 +1276,34 @@ export function AppShell({ children }: PropsWithChildren) {
                 value={newTitle}
               />
             </label>
+            <fieldset className="research-mode-fieldset">
+              <legend>本次研究如何获得论文</legend>
+              <div className="research-mode-card-grid">
+                {researchModeCards.map((option) => (
+                  <label
+                    className={
+                      researchMode === option.value
+                        ? "research-mode-card research-mode-card-active"
+                        : "research-mode-card"
+                    }
+                    key={option.value}
+                  >
+                    <input
+                      checked={researchMode === option.value}
+                      name="research-mode"
+                      onChange={() => setResearchMode(option.value)}
+                      type="radio"
+                      value={option.value}
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      {option.recommended ? <em>推荐</em> : null}
+                    </span>
+                    <p>{option.description}</p>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <section className="new-research-paper-picker">
               <div>
                 <strong>先加入论文（可选）</strong>

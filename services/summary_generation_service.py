@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from llm_client import call_openai_json, has_openai_key
-from observability import live_status
+from product_agent.llm_client import call_openai_json, has_openai_key
+from product_agent.observability import live_status
 from product_agent.domain import ResearchIdea
 
 
@@ -21,6 +21,7 @@ class SummaryGenerationInput:
     ideas: List[ResearchIdea]
     report_text: str
     evidence_snapshot: Dict[str, Any] = field(default_factory=dict)
+    allow_recommendation: bool = True
 
 
 @dataclass
@@ -32,6 +33,8 @@ class SummaryGenerationOutput:
 class SummaryGenerationService:
     def run(self, request: SummaryGenerationInput) -> SummaryGenerationOutput:
         summary = self.build_structured_summary(request)
+        if not request.allow_recommendation:
+            return SummaryGenerationOutput(summary, "deterministic-evidence-limited")
         if os.environ.get("SKIP_SUMMARY_LLM") == "1" or not has_openai_key():
             return SummaryGenerationOutput(summary, "deterministic")
 
@@ -91,10 +94,17 @@ Ideas: {json.dumps([{'idea_id': idea.idea_id, 'title': idea.title} for idea in r
                 "gaps": len(request.detected_gaps),
                 "ideas": len(request.ideas),
             },
-            "recommendation": "Focus on the top gaps and refine the ideas into actionable research plans.",
+            "recommendation": (
+                "Focus on the top gaps and refine the ideas into actionable research plans."
+                if request.allow_recommendation
+                else "Direct evidence is insufficient. Narrow the query and retrieve topic-anchored papers before forming research recommendations."
+            ),
             "source": "deterministic",
             "evidence_snapshot_id": str(request.evidence_snapshot.get("snapshot_id", "") or ""),
             "evidence_stats": dict(request.evidence_snapshot.get("stats", {}) or {}),
+            "conclusion_contract": dict(
+                request.evidence_snapshot.get("conclusion_contract", {}) or {}
+            ),
         }
         return summary
 

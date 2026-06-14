@@ -395,6 +395,27 @@
   gap: 10px;
 }
 
+.workspace-paper-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.workspace-paper-source-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.workspace-paper-source-cell strong {
+  color: #2a3a52;
+  font-size: 0.8rem;
+}
+
+.workspace-paper-source-cell span {
+  color: #718096;
+  font-size: 0.68rem;
+}
+
 .workspace-paper-meta-item {
   display: grid;
   gap: 4px;

@@ -6,8 +6,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from observability import StageTimer, record_decision, record_error_event, record_tool_event
-from pipeline_utils import (
+from product_agent.observability import StageTimer, record_decision, record_error_event, record_tool_event
+from product_agent.pipeline_utils import (
     balanced_mode,
     dedupe,
     fallback_papers,
@@ -17,7 +17,7 @@ from pipeline_utils import (
     supplement_full_mode_papers,
     tool_name,
 )
-from tools import (
+from product_agent.tools import (
     enrich_paper_metadata,
     search_papers,
     search_papers_recall,
@@ -26,6 +26,11 @@ from tools import (
 )
 
 from ..models import PaperNode, ResearchState
+from ..query_coverage import (
+    audit_evidence_coverage,
+    facet_rescue_queries,
+    required_facet_queries,
+)
 from ..relevance import rank_relevant_papers
 from ..retrieval_plan import relevance_query, summarize_retrieval_plan
 
@@ -51,10 +56,13 @@ def searcher_node(state: ResearchState) -> ResearchState:
     retrieved_real_ids: set[str] = set()
     broad_search_triggered = False
     recall_rescue_triggered = False
+    facet_rescue_triggered = False
+    facet_rescue_queries_attempted: list[dict[str, str]] = []
     semantic_scholar_empty_runs = 0
     filtered_out_total = 0
     low_relevance_filtered_total = 0
     previous_round_paper_ids = _previous_round_paper_ids(state)
+    previous_round_papers = _previous_round_papers(state)
     refresh_triggered = _should_refresh_for_new_evidence(state, retrieval_plan)
     working["retrieval_plan"] = retrieval_plan
     retrieval_outcome = _build_retrieval_outcome(
@@ -67,6 +75,15 @@ def searcher_node(state: ResearchState) -> ResearchState:
         novel_paper_count=0,
         reused_paper_count=0,
     )
+    if str(state.get("research_mode", "hybrid") or "hybrid") == "imported_only":
+        return _finalize_imported_only_search(
+            working,
+            papers=papers,
+            review_texts=review_texts,
+            retrieval_plan=retrieval_plan,
+            previous_round_paper_ids=previous_round_paper_ids,
+            max_results=max_results,
+        )
 
     for query_spec in queries:
         query = str(query_spec.get("query", "") or "").strip()
@@ -306,6 +323,96 @@ def searcher_node(state: ResearchState) -> ResearchState:
                 recovery="Continue with non-survey paper abstracts.",
             )
 
+    initial_facet_coverage = audit_evidence_coverage(
+        focus_facets=list(retrieval_plan.get("focus_facets", []) or []),
+        papers=papers,
+    )
+    rescue_specs = (
+        facet_rescue_queries(
+            focus_facets=list(retrieval_plan.get("focus_facets", []) or []),
+            evidence_coverage=initial_facet_coverage,
+            attempted_queries=[
+                str(item.get("query", ""))
+                for item in attempted_queries
+            ],
+            topic_anchor=str(retrieval_plan.get("topic_anchor", "") or ""),
+        )
+        if not fast_mode(state)
+        else []
+    )
+    for rescue_spec in rescue_specs:
+        facet = rescue_spec["facet"]
+        query = rescue_spec["query"]
+        facet_rescue_triggered = True
+        facet_rescue_queries_attempted.append(dict(rescue_spec))
+        attempted_queries.append(
+            {"phase": "facet_rescue", "query": query, "facet": facet}
+        )
+        timer = StageTimer()
+        try:
+            raw_results = list(
+                search_papers(query, max_results=max(max_results * 2, 8))
+            )
+            filtered_results, filtered_out = _apply_retrieval_filters(
+                raw_results,
+                retrieval_plan,
+            )
+            filtered_out_total += filtered_out
+            facet_plan = _facet_retrieval_plan(retrieval_plan, facet)
+            relevant_results, low_relevance_filtered = rank_relevant_papers(
+                filtered_results,
+                topic=str(retrieval_plan.get("topic", "") or working.get("topic", "")),
+                query=query,
+                retrieval_plan=facet_plan,
+                limit=None,
+            )
+            low_relevance_filtered_total += low_relevance_filtered
+            candidate_pool.extend(relevant_results)
+            for paper in relevant_results:
+                merge_paper(papers, paper)
+                if (
+                    (paper.source or "").lower() not in {"seed", "fallback"}
+                    and paper.relevance_tier == "direct"
+                ):
+                    retrieved_real_ids.add(paper.paper_id)
+            phase_entry = phase_stats.setdefault(
+                "facet_rescue",
+                {"queries": 0, "raw": 0, "post_filter": 0, "selected": 0},
+            )
+            phase_entry["queries"] += 1
+            phase_entry["raw"] += len(raw_results)
+            phase_entry["post_filter"] += len(filtered_results)
+            phase_entry["selected"] += len(relevant_results)
+            record_tool_event(
+                working,
+                tool_name="ArXiv facet rescue",
+                input_summary=query,
+                status="success" if relevant_results else "fallback",
+                output_count=len(relevant_results),
+                duration_sec=timer.elapsed(),
+                note=(
+                    f"facet={facet}; raw={len(raw_results)}; "
+                    f"post_filter={len(filtered_results)}; "
+                    f"selected={len(relevant_results)}"
+                ),
+            )
+        except Exception as exc:
+            record_tool_event(
+                working,
+                tool_name="ArXiv facet rescue",
+                input_summary=query,
+                status="failed",
+                duration_sec=timer.elapsed(),
+                note=f"facet={facet}; {exc}",
+            )
+            record_error_event(
+                working,
+                stage="searcher",
+                error_type=type(exc).__name__,
+                message=str(exc),
+                recovery="Continue with the first-pass evidence pool.",
+            )
+
     if filtered_out_total:
         working.setdefault("logs", []).append(
             f"Searcher discarded {filtered_out_total} papers via retrieval-plan filters "
@@ -377,6 +484,15 @@ def searcher_node(state: ResearchState) -> ResearchState:
                 "Searcher re-ran retrieval for the expansion follow-up, but no stronger new papers displaced the existing evidence."
             )
 
+    inherited_metadata_count = _inherit_previous_round_metadata(
+        papers,
+        previous_round_papers,
+    )
+    if inherited_metadata_count:
+        working.setdefault("logs", []).append(
+            f"Searcher preserved richer metadata for {inherited_metadata_count} "
+            "paper(s) reused from the previous round."
+        )
     _mark_round_novelty(papers, previous_round_paper_ids)
     before_dedup_count = len(papers)
     papers = _deduplicate_papers_by_title(papers)
@@ -507,6 +623,8 @@ def searcher_node(state: ResearchState) -> ResearchState:
     retrieval_outcome["queries_attempted"] = attempted_queries
     retrieval_outcome["broad_search_triggered"] = broad_search_triggered
     retrieval_outcome["recall_rescue_triggered"] = recall_rescue_triggered
+    retrieval_outcome["facet_rescue_triggered"] = facet_rescue_triggered
+    retrieval_outcome["facet_rescue_queries"] = facet_rescue_queries_attempted
     tier_counts = _relevance_tier_counts(evidence_pool)
     retrieval_outcome["direct_paper_count"] = tier_counts["direct"]
     retrieval_outcome["adjacent_paper_count"] = tier_counts["adjacent"]
@@ -519,7 +637,17 @@ def searcher_node(state: ResearchState) -> ResearchState:
         if not fast_mode(state)
         else "relevance_core"
     )
+    retrieval_outcome["research_mode"] = str(
+        state.get("research_mode", "hybrid") or "hybrid"
+    )
+    retrieval_outcome["external_search_skipped"] = False
     retrieval_outcome["low_relevance_filtered_count"] = low_relevance_filtered_total
+    _attach_facet_evidence_coverage(
+        working,
+        retrieval_outcome=retrieval_outcome,
+        retrieval_plan=retrieval_plan,
+        evidence_pool=evidence_pool,
+    )
     _refine_outcome_for_relevance(retrieval_outcome)
     working["retrieval_outcome"] = retrieval_outcome
 
@@ -546,6 +674,124 @@ def searcher_node(state: ResearchState) -> ResearchState:
     return updated
 
 
+def _finalize_imported_only_search(
+    working: ResearchState,
+    *,
+    papers: Dict[str, PaperNode],
+    review_texts: List[str],
+    retrieval_plan: dict[str, Any],
+    previous_round_paper_ids: set[str],
+    max_results: int,
+) -> ResearchState:
+    _mark_round_novelty(papers, previous_round_paper_ids)
+    evidence_pool = _deduplicate_papers_by_title(dict(papers))
+    analysis_shortlist = _select_analysis_shortlist(
+        evidence_pool,
+        state=working,
+        max_results=max_results,
+    )
+    analysis_papers = _select_papers_for_analysis(
+        analysis_shortlist,
+        state=working,
+        max_results=max_results,
+    )
+    novel_paper_count = _count_novel_papers(evidence_pool, previous_round_paper_ids)
+    reused_paper_count = (
+        max(len(evidence_pool) - novel_paper_count, 0)
+        if previous_round_paper_ids
+        else 0
+    )
+    retrieval_outcome = _build_retrieval_outcome(
+        retrieval_plan,
+        real_paper_count=_count_real_papers(evidence_pool),
+        total_paper_count=len(evidence_pool),
+        filtered_out_count=0,
+        fallback_used=False,
+        refresh_triggered=False,
+        novel_paper_count=novel_paper_count,
+        reused_paper_count=reused_paper_count,
+    )
+    tier_counts = _relevance_tier_counts(evidence_pool)
+    retrieval_outcome.update(
+        {
+            "research_mode": "imported_only",
+            "external_search_skipped": True,
+            "search_added_paper_count": 0,
+            "search_removed_paper_count": 0,
+            "search_changed": False,
+            "query_phase_stats": {},
+            "queries_attempted": [],
+            "broad_search_triggered": False,
+            "recall_rescue_triggered": False,
+            "direct_paper_count": tier_counts["direct"],
+            "adjacent_paper_count": tier_counts["adjacent"],
+            "evidence_pool_count": len(evidence_pool),
+            "analysis_paper_count": len(analysis_papers),
+            "analysis_shortlist_count": len(analysis_shortlist),
+            "citation_enriched_shortlist_count": sum(
+                1
+                for paper in analysis_shortlist.values()
+                if paper.citation_count_known
+            ),
+            "analysis_selection_strategy": "user_imported_core+candidate",
+            "low_relevance_filtered_count": 0,
+        }
+    )
+    _attach_facet_evidence_coverage(
+        working,
+        retrieval_outcome=retrieval_outcome,
+        retrieval_plan=retrieval_plan,
+        evidence_pool=evidence_pool,
+    )
+    _refine_outcome_for_relevance(retrieval_outcome)
+
+    updated = dict(working)
+    updated["evidence_pool"] = evidence_pool
+    updated["paper_nodes"] = analysis_papers
+    updated["retrieval_outcome"] = retrieval_outcome
+    updated["review_texts"] = dedupe(review_texts)
+    updated.setdefault("logs", []).append(
+        "Searcher skipped external retrieval because this task uses imported-only evidence."
+    )
+    if not evidence_pool:
+        updated.setdefault("logs", []).append(
+            "Imported-only research has no active papers; the run will continue in evidence-insufficient mode."
+        )
+    record_decision(
+        updated,
+        stage="searcher",
+        decision=f"Selected {len(analysis_papers)} imported paper(s) for analysis.",
+        reason="The user explicitly limited this task to the conversation paper pool.",
+        next_step="taxonomy",
+    )
+    return updated
+
+
+def _attach_facet_evidence_coverage(
+    working: ResearchState,
+    *,
+    retrieval_outcome: dict[str, Any],
+    retrieval_plan: dict[str, Any],
+    evidence_pool: Dict[str, PaperNode],
+) -> None:
+    coverage = audit_evidence_coverage(
+        focus_facets=list(retrieval_plan.get("focus_facets", []) or []),
+        papers=evidence_pool,
+    )
+    retrieval_outcome["facet_evidence_coverage"] = coverage
+    working["evidence_coverage"] = coverage
+    if coverage["missing_count"]:
+        labels = ", ".join(coverage["missing_facets"])
+        working.setdefault("logs", []).append(
+            f"Evidence coverage audit found required facet(s) without matching papers: {labels}."
+        )
+    if coverage["weak_count"]:
+        labels = ", ".join(coverage["weak_facets"])
+        working.setdefault("logs", []).append(
+            f"Evidence coverage audit found abstract-only support for facet(s): {labels}."
+        )
+
+
 def _retrieval_plan(state: ResearchState, topic: str) -> dict[str, Any]:
     raw = state.get("retrieval_plan", {}) or {}
     if isinstance(raw, dict) and raw.get("strict_queries"):
@@ -565,18 +811,52 @@ def _retrieval_plan(state: ResearchState, topic: str) -> dict[str, Any]:
 def _query_sequence(state: ResearchState, retrieval_plan: dict[str, Any]) -> list[dict[str, str]]:
     strict_queries = [str(query).strip() for query in list(retrieval_plan.get("strict_queries", []) or []) if str(query).strip()]
     broad_queries = [str(query).strip() for query in list(retrieval_plan.get("broad_queries", []) or []) if str(query).strip()]
+    required_queries = required_facet_queries(
+        list(retrieval_plan.get("focus_facets", []) or [])
+    )
 
     if fast_mode(state):
         return [{"phase": "strict", "query": query} for query in strict_queries[:1] or broad_queries[:1]]
     if balanced_mode(state):
-        queries = [{"phase": "strict", "query": query} for query in strict_queries[:2]]
+        selected_strict = dedupe([*required_queries, *strict_queries])[
+            : max(2, len(required_queries))
+        ]
+        queries = [
+            {"phase": "strict", "query": query}
+            for query in selected_strict
+        ]
         if broad_queries:
             queries.append({"phase": "broad", "query": broad_queries[0]})
         return queries
     return [
-        *({"phase": "strict", "query": query} for query in strict_queries[:4]),
+        *(
+            {"phase": "strict", "query": query}
+            for query in dedupe([*required_queries, *strict_queries])[:6]
+        ),
         *({"phase": "broad", "query": query} for query in broad_queries[:2]),
     ]
+
+
+def _facet_retrieval_plan(
+    retrieval_plan: dict[str, Any],
+    facet_label: str,
+) -> dict[str, Any]:
+    facet = next(
+        (
+            item
+            for item in list(retrieval_plan.get("focus_facets", []) or [])
+            if isinstance(item, dict)
+            and str(item.get("label", "")).strip() == facet_label
+        ),
+        {},
+    )
+    return {
+        "topic": retrieval_plan.get("topic", ""),
+        "topic_anchor": retrieval_plan.get("topic_anchor", ""),
+        "filters": dict(retrieval_plan.get("filters", {}) or {}),
+        "rerank_signals": list(facet.get("search_terms", []) or []),
+        "focus_facets": [facet] if facet else [],
+    }
 
 
 def _apply_retrieval_filters(
@@ -708,6 +988,77 @@ def _previous_round_paper_ids(state: ResearchState) -> set[str]:
         for paper_id in list(state.get("previous_round_paper_ids", []) or [])
         if str(paper_id).strip()
     }
+
+
+def _previous_round_papers(state: ResearchState) -> Dict[str, PaperNode]:
+    papers: Dict[str, PaperNode] = {}
+    for payload in list(state.get("previous_round_papers", []) or []):
+        if not isinstance(payload, dict):
+            continue
+        paper_id = str(payload.get("paper_id", "") or "").strip()
+        if not paper_id:
+            continue
+        papers[paper_id] = PaperNode(
+            paper_id=paper_id,
+            title=str(payload.get("title", "") or ""),
+            abstract=str(payload.get("abstract", "") or ""),
+            authors=[str(item) for item in payload.get("authors", []) or []],
+            keywords=[str(item) for item in payload.get("keywords", []) or []],
+            publish_date=str(payload.get("publish_date", "") or ""),
+            source=str(payload.get("source", "") or ""),
+            taxonomy_category=str(payload.get("taxonomy_category", "") or ""),
+            citation_count=max(int(payload.get("citation_count", 0) or 0), 0),
+            citation_count_known=bool(payload.get("citation_count_known", False)),
+            citation_source=str(payload.get("citation_source", "") or ""),
+            url=str(payload.get("url", "") or ""),
+            relevance_score=float(payload.get("relevance_score", 0.0) or 0.0),
+            relevance_tier=str(
+                payload.get("relevance_tier", "candidate") or "candidate"
+            ),
+            relevance_reasons=[
+                str(item)
+                for item in payload.get("relevance_reasons", []) or []
+                if str(item).strip()
+            ],
+            paper_pool_status=str(payload.get("paper_pool_status", "") or ""),
+            document_id=str(payload.get("document_id", "") or ""),
+            origin=str(payload.get("origin", "") or ""),
+        )
+    return papers
+
+
+def _inherit_previous_round_metadata(
+    papers: Dict[str, PaperNode],
+    previous_round_papers: Dict[str, PaperNode],
+) -> int:
+    inherited_count = 0
+    for paper_id, previous in previous_round_papers.items():
+        if paper_id not in papers:
+            continue
+        current = papers[paper_id]
+        before = (
+            current.citation_count,
+            current.citation_count_known,
+            current.citation_source,
+            current.abstract,
+            tuple(current.authors),
+            tuple(current.keywords),
+            current.url,
+        )
+        merge_paper(papers, previous)
+        current = papers[paper_id]
+        after = (
+            current.citation_count,
+            current.citation_count_known,
+            current.citation_source,
+            current.abstract,
+            tuple(current.authors),
+            tuple(current.keywords),
+            current.url,
+        )
+        if after != before:
+            inherited_count += 1
+    return inherited_count
 
 
 def _should_refresh_for_new_evidence(state: ResearchState, retrieval_plan: dict[str, Any]) -> bool:
@@ -963,6 +1314,14 @@ def _deduplicate_papers_by_title(
             keep_paper.relevance_score = remove_paper.relevance_score
             keep_paper.relevance_tier = remove_paper.relevance_tier
             keep_paper.relevance_reasons = list(remove_paper.relevance_reasons)
+        if _paper_pool_status_rank(remove_paper) > _paper_pool_status_rank(keep_paper):
+            keep_paper.paper_pool_status = remove_paper.paper_pool_status
+            keep_paper.document_id = remove_paper.document_id
+            keep_paper.origin = remove_paper.origin
+            keep_paper.relevance_reasons = list(dict.fromkeys([
+                *keep_paper.relevance_reasons,
+                *remove_paper.relevance_reasons,
+            ]))
 
         papers[keep_id] = keep_paper
         removed.add(remove_id)
@@ -986,7 +1345,32 @@ def _paper_metadata_quality(paper: PaperNode) -> int:
         score += 2
     if paper.url:
         score += 1
+    if paper.paper_pool_status == "core":
+        score += 5
+    elif paper.paper_pool_status == "candidate":
+        score += 1
     return score
+
+
+def _paper_pool_status_rank(paper: PaperNode) -> int:
+    return {"core": 2, "candidate": 1}.get(
+        str(getattr(paper, "paper_pool_status", "") or "").lower(),
+        0,
+    )
+
+
+def _ordered_with_core(papers: Dict[str, PaperNode]) -> tuple[list[PaperNode], list[PaperNode]]:
+    core = sorted(
+        (paper for paper in papers.values() if paper.paper_pool_status == "core"),
+        key=_relevance_priority,
+        reverse=True,
+    )
+    remaining = sorted(
+        (paper for paper in papers.values() if paper.paper_pool_status != "core"),
+        key=_relevance_priority,
+        reverse=True,
+    )
+    return core, remaining
 
 
 def _select_analysis_shortlist(
@@ -999,11 +1383,13 @@ def _select_analysis_shortlist(
         target_count = min(max_results, 3)
     else:
         target_count = min(len(papers), max(max_results * 2, 12))
+    core, remaining = _ordered_with_core(papers)
+    target_count = max(target_count, len(core))
     if len(papers) <= target_count:
         return papers
 
-    ordered = sorted(papers.values(), key=_relevance_priority, reverse=True)
-    return {paper.paper_id: paper for paper in ordered[:target_count]}
+    selected = [*core, *remaining[: max(target_count - len(core), 0)]]
+    return {paper.paper_id: paper for paper in selected}
 
 
 def _select_papers_for_analysis(
@@ -1015,21 +1401,37 @@ def _select_papers_for_analysis(
     if fast_mode(state):
         target_count = min(max_results, 3)
     else:
-        target_count = max_results
+        high_quality_count = sum(
+            1
+            for paper in papers.values()
+            if paper.paper_pool_status == "core"
+            or (
+                str(getattr(paper, "relevance_tier", "") or "").lower() == "direct"
+                and float(getattr(paper, "relevance_score", 0.0) or 0.0) >= 0.55
+            )
+        )
+        target_count = min(
+            len(papers),
+            max(max_results, min(high_quality_count, 12)),
+        )
+    core, relevance_order = _ordered_with_core(papers)
+    target_count = max(target_count, len(core))
     if len(papers) <= target_count:
         return papers
 
-    relevance_order = sorted(papers.values(), key=_relevance_priority, reverse=True)
+    remaining_slots = max(target_count - len(core), 0)
+    if remaining_slots == 0:
+        return {paper.paper_id: paper for paper in core}
     if fast_mode(state) or target_count < 4:
         return {
             paper.paper_id: paper
-            for paper in relevance_order[:target_count]
+            for paper in [*core, *relevance_order[:remaining_slots]]
         }
 
-    impact_slots = 2 if target_count >= 6 else 1
-    recent_slots = 1
-    relevance_slots = max(target_count - impact_slots - recent_slots, 1)
-    selected: list[PaperNode] = relevance_order[:relevance_slots]
+    impact_slots = min(2 if target_count >= 6 else 1, remaining_slots)
+    recent_slots = min(1, max(remaining_slots - impact_slots, 0))
+    relevance_slots = max(remaining_slots - impact_slots - recent_slots, 0)
+    selected: list[PaperNode] = [*core, *relevance_order[:relevance_slots]]
     selected_ids = {paper.paper_id for paper in selected}
 
     impact_candidates = sorted(

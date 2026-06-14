@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 from product_agent.models import PaperNode
 from product_agent.research_agent.nodes.searcher import searcher_node
-from product_agent.research_agent.retrieval_plan import build_retrieval_plan
+from product_agent.research_agent.nodes.planner import planner_node
+from product_agent.research_agent.retrieval_plan import (
+    build_retrieval_plan,
+    relevance_query,
+)
 from product_agent.services.query_intent import derive_query_intent
 from product_agent.tools import (
     _build_arxiv_recall_query,
@@ -18,6 +22,87 @@ from product_agent.tools import (
 
 
 class RetrievalQueryFamilyTests(unittest.TestCase):
+    def test_unrelated_context_does_not_pollute_topic_focus_terms(self) -> None:
+        intent = derive_query_intent(
+            raw_user_request="补充近三年的新论文",
+            task_topic="大模型多模态融合 - 补充近三年的新论文",
+            conversation_topic="大模型多模态融合",
+            knowledge_scope="shared",
+            workspace_hints=[
+                "Evidence cluster: Dynamic and Adaptive Multimodal Fusion",
+            ],
+            knowledge_hints=[
+                "AI Agent for Software Engineering",
+            ],
+            reference_year=2026,
+        )
+
+        self.assertEqual(intent.focus_terms, [])
+        self.assertNotIn("Evidence", intent.summary)
+        self.assertNotIn("Agent", intent.summary)
+
+    def test_chinese_multimodal_topic_uses_grounded_english_query_anchors(self) -> None:
+        state = {
+            "topic": "大模型多模态融合 - 补充近三年的新论文",
+            "mode": "balanced",
+            "query_intent": {
+                "raw_user_request": "补充近三年的新论文",
+                "core_topic": "大模型多模态融合",
+                "user_goal": "extend_context",
+                "focus_terms": [],
+                "paper_scope": [],
+                "time_range": {
+                    "start_year": 2023,
+                    "end_year": 2026,
+                    "strict": True,
+                },
+            },
+            "research_papers": [
+                {
+                    "title": (
+                        "UrbanFusion: Stochastic Multimodal Fusion for "
+                        "Robust Spatial Representations"
+                    )
+                },
+                {
+                    "title": (
+                        "Dynamical Multimodal Fusion with Mixture-of-Experts "
+                        "for Localizations"
+                    )
+                },
+                {
+                    "title": (
+                        "COMO: Cross-Mamba Interaction for Multimodal "
+                        "Object Detection"
+                    )
+                },
+            ],
+            "conversation_workspace_context": [
+                "Evidence cluster: Dynamic and Adaptive Multimodal Fusion",
+            ],
+            "knowledge_hits": [
+                {"title": "AI Agent for Software Engineering", "snippet": ""}
+            ],
+            "recent_context": [],
+            "logs": [],
+            "decisions": [],
+        }
+
+        planned = planner_node(state)
+        plan = planned["retrieval_plan"]
+
+        self.assertEqual(
+            plan["strict_queries"][:2],
+            [
+                "multimodal large language model fusion",
+                "multimodal fusion",
+            ],
+        )
+        self.assertNotIn("大模型多模态融合 Evidence", plan["strict_queries"])
+        scoring_query = relevance_query(plan, fallback_topic=state["topic"])
+        self.assertIn("multimodal large language model fusion", scoring_query)
+        self.assertIn("multimodal fusion", scoring_query)
+
     def test_failure_recovery_follow_up_prioritizes_delta_queries(self) -> None:
         intent = derive_query_intent(
             raw_user_request="缩小到近三年的论文，重点分析工具调用失败后的恢复能力，并补充新的相关论文",

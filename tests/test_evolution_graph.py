@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from product_agent.models import EvolutionEdge, PaperNode
+from product_agent.research_agent.nodes.auditor import _normalize_edges
 from product_agent.research_agent.nodes.evolution import evolution_node
 from product_agent.services.graph_audit_service import GraphAuditService
 from product_agent.services.relationship_evidence_service import RelationshipEvidenceService
@@ -31,6 +32,21 @@ def paper(
 
 
 class EvolutionGraphTests(unittest.TestCase):
+    def test_auditor_normalizes_edge_loaded_from_product_package(self) -> None:
+        edge = EvolutionEdge(
+            source="paper-a",
+            target="paper-b",
+            relationship="related",
+            confidence=0.6,
+        )
+
+        normalized = _normalize_edges([edge])
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0].source, "paper-a")
+        self.assertEqual(normalized[0].target, "paper-b")
+        self.assertEqual(normalized[0].relationship, "related")
+
     def test_explicit_reference_is_a_confirmed_citation(self) -> None:
         predecessor = paper(
             "paper-a",

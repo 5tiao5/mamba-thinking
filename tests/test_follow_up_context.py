@@ -4,6 +4,11 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from product_agent.domain import PaperRecord, ResearchTask, ResearchWorkspace
+from product_agent.models import PaperNode
+from product_agent.research_agent.nodes.searcher import (
+    _inherit_previous_round_metadata,
+    _previous_round_papers,
+)
 from product_agent.services.research_service import ResearchService
 
 
@@ -53,7 +58,16 @@ class FollowUpContextTests(unittest.TestCase):
         previous_workspace = ResearchWorkspace(
             task_id=previous_task.task_id,
             topic=previous_task.topic,
-            papers=[PaperRecord(paper_id="paper-a", title="Paper A")],
+            papers=[
+                PaperRecord(
+                    paper_id="paper-a",
+                    title="Paper A",
+                    abstract="A richer abstract from the previous round.",
+                    citation_count=70,
+                    citation_count_known=True,
+                    citation_source="semantic_scholar",
+                )
+            ],
             trace={
                 "context_inputs": [
                     {
@@ -77,9 +91,48 @@ class FollowUpContextTests(unittest.TestCase):
 
         self.assertEqual(context["task_id"], previous_task.task_id)
         self.assertEqual(context["paper_ids"], ["paper-a"])
+        self.assertEqual(context["papers"][0]["citation_count"], 70)
+        self.assertTrue(context["papers"][0]["citation_count_known"])
         self.assertEqual(
             context["query_intent"]["user_goal"],
             "benchmark_evaluation",
+        )
+
+    def test_reused_paper_inherits_known_citation_metadata(self) -> None:
+        current = PaperNode(
+            paper_id="paper-a",
+            title="Paper A",
+            abstract="Short.",
+            citation_count=0,
+            citation_count_known=False,
+        )
+        previous = _previous_round_papers(
+            {
+                "previous_round_papers": [
+                    {
+                        "paper_id": "paper-a",
+                        "title": "Paper A",
+                        "abstract": "A richer abstract from the previous round.",
+                        "citation_count": 70,
+                        "citation_count_known": True,
+                        "citation_source": "semantic_scholar",
+                    }
+                ]
+            }
+        )
+
+        inherited = _inherit_previous_round_metadata(
+            {"paper-a": current},
+            previous,
+        )
+
+        self.assertEqual(inherited, 1)
+        self.assertEqual(current.citation_count, 70)
+        self.assertTrue(current.citation_count_known)
+        self.assertEqual(current.citation_source, "semantic_scholar")
+        self.assertEqual(
+            current.abstract,
+            "A richer abstract from the previous round.",
         )
 
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
-from llm_client import call_openai_json
-from observability import record_audit_event, record_decision, record_tool_event
+from product_agent.llm_client import call_openai_json
+from product_agent.observability import record_audit_event, record_decision, record_tool_event
 
 from product_agent.schemas.audit import AuditGap, AuditReport, AuditSummary
 from product_agent.services.audit_common import (
@@ -75,6 +75,7 @@ def auditor_node(state: ResearchState) -> ResearchState:
     # 合并结果
     reports = taxonomy_result.reports + graph_result.reports + llm_result.reports
     gaps = _dedupe_gaps(taxonomy_result.gaps + graph_result.gaps + llm_result.gaps)
+    _attach_gap_evidence(papers, gaps)
     _mark_gap_candidates(papers, gaps)
 
     for gap in gaps[:20]:
@@ -183,7 +184,27 @@ def _normalize_papers(raw: Any) -> Dict[str, PaperNode]:
 
 
 def _normalize_edges(raw: Any) -> List[EvolutionEdge]:
-    return [edge if isinstance(edge, EvolutionEdge) else EvolutionEdge(**dict(edge)) for edge in raw or []]
+    edges: List[EvolutionEdge] = []
+    for edge in raw or []:
+        if isinstance(edge, EvolutionEdge):
+            edges.append(edge)
+            continue
+        if isinstance(edge, Mapping):
+            payload = dict(edge)
+        elif hasattr(edge, "to_dict"):
+            payload = dict(edge.to_dict())
+        elif hasattr(edge, "__dict__"):
+            payload = {
+                key: value
+                for key, value in vars(edge).items()
+                if not key.startswith("_")
+            }
+        else:
+            raise TypeError(
+                f"Unsupported evolution edge payload: {type(edge).__name__}"
+            )
+        edges.append(EvolutionEdge(**payload))
+    return edges
 
 
 def _normalize_taxonomy(raw: Any) -> List[TaxonomyBranch]:
@@ -224,6 +245,23 @@ def _mark_gap_candidates(papers: Dict[str, PaperNode], gaps: Sequence[AuditGap])
         for item in gap.affected_items:
             if item in papers:
                 papers[item].is_gap_candidate = True
+
+
+def _attach_gap_evidence(
+    papers: Dict[str, PaperNode], gaps: Sequence[AuditGap]
+) -> None:
+    """Expose readable paper evidence for downstream gap consumers."""
+    for gap in gaps:
+        if gap.evidence:
+            continue
+        evidence: List[str] = []
+        for paper_id in gap.related_papers:
+            paper = papers.get(paper_id)
+            if not paper:
+                continue
+            title = str(paper.title or "").strip()
+            evidence.append(f"{title} ({paper_id})" if title else paper_id)
+        gap.evidence = evidence
 
 
 def _paper_search_text(paper: PaperNode) -> str:

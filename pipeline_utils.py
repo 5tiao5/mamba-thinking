@@ -5,7 +5,7 @@ import random
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from models import EvolutionEdge, PaperNode, ResearchState
+from product_agent.models import EvolutionEdge, PaperNode, ResearchState
 
 SEED_PAPERS: Dict[str, List[Dict[str, Any]]] = {
     "agent tool use": [
@@ -131,6 +131,65 @@ def balanced_mode(state: Optional[Dict[str, Any]] = None) -> bool:
     return _state_mode(state) == "balanced"
 
 
+def _as_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _context_paper_nodes(
+    research_papers: Iterable[Dict[str, Any]],
+) -> Tuple[Dict[str, PaperNode], List[str]]:
+    nodes: Dict[str, PaperNode] = {}
+    review_texts: List[str] = []
+    for item in research_papers:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status", "candidate") or "candidate").strip().lower()
+        if status == "excluded":
+            continue
+        paper_id = str(item.get("paper_id", "") or "").strip()
+        title = str(item.get("title", "") or "").strip()
+        if not paper_id or not title:
+            continue
+
+        is_core = status == "core"
+        node = PaperNode(
+            paper_id=paper_id,
+            title=title,
+            abstract=str(item.get("abstract", "") or "").strip(),
+            authors=_as_string_list(item.get("authors")),
+            keywords=_as_string_list(item.get("keywords")),
+            publish_date=str(item.get("publish_date", "") or "").strip(),
+            source=str(item.get("source", "") or "user_import").strip(),
+            taxonomy_category=str(item.get("taxonomy_category", "") or "").strip(),
+            citation_count=max(int(item.get("citation_count", 0) or 0), 0),
+            citation_count_known=bool(item.get("citation_count_known", False)),
+            citation_source=str(item.get("citation_source", "") or "").strip(),
+            url=str(item.get("url", "") or "").strip(),
+            doi=str(item.get("doi", "") or "").strip(),
+            references=_as_string_list(item.get("references")),
+            relevance_score=1.0 if is_core else float(item.get("relevance_score", 0.55) or 0.55),
+            relevance_tier="direct" if is_core else str(item.get("relevance_tier", "candidate") or "candidate"),
+            relevance_reasons=[
+                f"user_selected:{status}",
+                *list(item.get("relevance_reasons", []) or []),
+            ],
+            paper_pool_status=status,
+            document_id=str(item.get("document_id", "") or "").strip(),
+            origin=str(item.get("origin", "") or item.get("source", "") or "").strip(),
+        )
+        nodes[paper_id] = node
+        review_text = str(item.get("review_text", "") or "").strip()
+        if review_text:
+            review_texts.append(f"{title}\n{review_text}")
+        elif node.abstract:
+            review_texts.append(f"{title}\n{node.abstract}")
+    return nodes, review_texts
+
+
 def repair_round_budget(state: Optional[Dict[str, Any]] = None) -> int:
     raw_value = (state or {}).get("max_repair_rounds")
     if raw_value is None:
@@ -164,11 +223,14 @@ def initial_state(
 ) -> ResearchState:
     context = dict(research_context or {})
     workspace_context = context.get("conversation_workspace_context", conversation_workspace_context or [])
+    research_papers = list(context.get("research_papers", []) or [])
+    imported_nodes, imported_review_texts = _context_paper_nodes(research_papers)
     return ResearchState(
         topic=topic,
         conversation_topic=str(context.get("conversation_topic", topic)),
         mode=mode,
         knowledge_scope=str(context.get("knowledge_scope", "shared")),
+        research_mode=str(context.get("research_mode", "hybrid") or "hybrid"),
         query_intent=dict(context.get("query_intent", {}) or {}),
         retrieval_plan=dict(context.get("retrieval_plan", {}) or {}),
         retrieval_outcome=dict(context.get("retrieval_outcome", {}) or {}),
@@ -185,12 +247,14 @@ def initial_state(
         working_memory_constraints=list(context.get("working_memory_constraints", [])),
         previous_round_task_id=str(context.get("previous_round_task_id", "") or ""),
         previous_round_paper_ids=list(context.get("previous_round_paper_ids", [])),
+        previous_round_papers=list(context.get("previous_round_papers", [])),
         previous_round_query_intent=dict(context.get("previous_round_query_intent", {}) or {}),
+        research_papers=research_papers,
         max_results=max_results,
         search_queries=[],
-        evidence_pool={},
+        evidence_pool=imported_nodes,
         paper_nodes={},
-        review_texts=[],
+        review_texts=imported_review_texts,
         expert_taxonomy={},
         evolution_graph=[],
         alignment_score=0.0,
@@ -343,25 +407,53 @@ def merge_paper(papers: Dict[str, PaperNode], paper: PaperNode) -> None:
     key = paper.paper_id
     if key in papers:
         existing = papers[key]
+        if not existing.title and paper.title:
+            existing.title = paper.title
         # Keep longer abstract
         if len(paper.abstract) > len(existing.abstract):
             existing.abstract = paper.abstract
+        existing_authors = {author.casefold() for author in existing.authors}
+        for author in paper.authors:
+            if author.casefold() not in existing_authors:
+                existing.authors.append(author)
+                existing_authors.add(author.casefold())
         # Merge keywords
         existing_kw = {k.lower() for k in existing.keywords}
         for kw in paper.keywords:
             if kw.lower() not in existing_kw:
                 existing.keywords.append(kw)
+                existing_kw.add(kw.lower())
+        if not existing.publish_date and paper.publish_date:
+            existing.publish_date = paper.publish_date
+        if not existing.source and paper.source:
+            existing.source = paper.source
+        if not existing.taxonomy_category and paper.taxonomy_category:
+            existing.taxonomy_category = paper.taxonomy_category
         # Keep higher citation count
         if paper.citation_count > existing.citation_count:
             existing.citation_count = paper.citation_count
         if getattr(paper, "citation_count_known", False):
             existing.citation_count_known = True
             existing.citation_source = getattr(paper, "citation_source", "") or existing.citation_source
+        if not existing.url and paper.url:
+            existing.url = paper.url
+        if not existing.doi and paper.doi:
+            existing.doi = paper.doi
         # Merge references
         existing_refs = set(existing.references)
         for ref in paper.references:
             if ref not in existing_refs:
                 existing.references.append(ref)
+                existing_refs.add(ref)
+        existing_branches = set(existing.expert_taxonomy_branches)
+        for branch in paper.expert_taxonomy_branches:
+            if branch not in existing_branches:
+                existing.expert_taxonomy_branches.append(branch)
+                existing_branches.add(branch)
+        if not existing.document_id and paper.document_id:
+            existing.document_id = paper.document_id
+        if not existing.origin and paper.origin:
+            existing.origin = paper.origin
     else:
         papers[key] = paper
 

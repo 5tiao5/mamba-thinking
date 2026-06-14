@@ -10,6 +10,7 @@ from product_agent.research_agent.relevance import evaluate_paper_relevance
 
 RETRIEVAL_PLAN = {
     "topic": "AI agent tool use reliability evaluation",
+    "topic_anchor": "LLM agent tool use evaluation",
     "strict_queries": ["LLM agent tool use evaluation"],
     "broad_queries": ["function calling robustness benchmark"],
     "filters": {},
@@ -18,6 +19,113 @@ RETRIEVAL_PLAN = {
 
 
 class PaperRelevanceTests(unittest.TestCase):
+    def test_topic_gate_rejects_facet_match_without_multimodal_topic(self) -> None:
+        paper = PaperNode(
+            paper_id="public-datasets",
+            title=(
+                "Accessibility Barriers in Multi-Terabyte Public Datasets: "
+                "The Gap Between Promise and Practice"
+            ),
+            abstract="A study of processing costs for public scientific datasets.",
+            source="arxiv",
+        )
+
+        relevance = evaluate_paper_relevance(
+            paper,
+            topic="大模型多模态融合",
+            query="multimodal large language model fusion public datasets",
+            retrieval_plan={
+                "topic": "大模型多模态融合",
+                "topic_anchor": "multimodal large language model fusion",
+                "rerank_signals": ["public datasets"],
+            },
+        )
+
+        self.assertEqual(relevance.topic_tier, "candidate")
+        self.assertEqual(relevance.tier, "candidate")
+        self.assertIn("topic_gate:candidate", relevance.reasons)
+
+    def test_topic_gate_rejects_ambiguous_fusion_and_ablation_terms(self) -> None:
+        cases = [
+            (
+                PaperNode(
+                    paper_id="fusion-energy",
+                    title="Potential Early Markets for Fusion Energy",
+                    abstract="An economic analysis of future fusion power plants.",
+                    source="arxiv",
+                ),
+                "early fusion",
+            ),
+            (
+                PaperNode(
+                    paper_id="laser-ablation",
+                    title="Laser Ablation of Compound Semiconductors",
+                    abstract="A physical study of pulsed laser ablation.",
+                    source="arxiv",
+                ),
+                "ablation studies",
+            ),
+        ]
+
+        for paper, facet in cases:
+            with self.subTest(paper=paper.paper_id):
+                relevance = evaluate_paper_relevance(
+                    paper,
+                    topic="大模型多模态融合",
+                    query=f"multimodal large language model fusion {facet}",
+                    retrieval_plan={
+                        "topic": "大模型多模态融合",
+                        "topic_anchor": "multimodal large language model fusion",
+                        "rerank_signals": [facet],
+                    },
+                )
+                self.assertEqual(relevance.topic_tier, "candidate")
+                self.assertEqual(relevance.tier, "candidate")
+
+    def test_topic_gate_keeps_traditional_multimodal_fusion_adjacent(self) -> None:
+        paper = PaperNode(
+            paper_id="traditional-fusion",
+            title="Rethinking Early Fusion for Multimodal Image Segmentation",
+            abstract="We compare feature fusion strategies for RGB and thermal images.",
+            source="arxiv",
+        )
+
+        relevance = evaluate_paper_relevance(
+            paper,
+            topic="大模型多模态融合",
+            query="multimodal large language model fusion early fusion",
+            retrieval_plan={
+                "topic": "大模型多模态融合",
+                "topic_anchor": "multimodal large language model fusion",
+                "rerank_signals": ["early fusion"],
+            },
+        )
+
+        self.assertEqual(relevance.topic_tier, "adjacent")
+        self.assertEqual(relevance.tier, "adjacent")
+
+    def test_topic_gate_accepts_multimodal_llm_fusion_as_direct(self) -> None:
+        paper = PaperNode(
+            paper_id="mllm-fusion",
+            title="Efficient Fusion in Multimodal Large Language Models",
+            abstract="We evaluate early and intermediate fusion for vision and text.",
+            source="arxiv",
+        )
+
+        relevance = evaluate_paper_relevance(
+            paper,
+            topic="大模型多模态融合",
+            query="multimodal large language model fusion early fusion",
+            retrieval_plan={
+                "topic": "大模型多模态融合",
+                "topic_anchor": "multimodal large language model fusion",
+                "rerank_signals": ["early fusion"],
+            },
+        )
+
+        self.assertEqual(relevance.topic_tier, "direct")
+        self.assertEqual(relevance.tier, "direct")
+
     def test_workflow_mention_does_not_make_tokenomics_direct_collaboration_evidence(
         self,
     ) -> None:

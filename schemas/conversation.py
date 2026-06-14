@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 KnowledgeScopeLiteral = Literal["none", "conversation_only", "shared"]
+ResearchModeLiteral = Literal["hybrid", "imported_only", "search_only"]
 
 
 class CreateConversationRequest(BaseModel):
@@ -44,6 +45,7 @@ class FollowUpTaskPreview(BaseModel):
     topic: str
     status: str
     trigger_message_id: Optional[str] = None
+    research_mode: ResearchModeLiteral = "hybrid"
 
 
 class ContinueConversationRequest(BaseModel):
@@ -55,6 +57,10 @@ class ContinueConversationRequest(BaseModel):
     knowledge_scope: Optional[KnowledgeScopeLiteral] = Field(
         default=None,
         description="Knowledge scope for this follow-up: none / conversation_only / shared.",
+    )
+    research_mode: ResearchModeLiteral = Field(
+        default="hybrid",
+        description="Paper evidence mode for the follow-up.",
     )
     selected_skill_ids: list[str] = Field(default_factory=list, description="Skill IDs to activate for this follow-up task")
 
@@ -82,6 +88,7 @@ class ContinueConversationResponse(BaseModel):
     message_id: Optional[str] = None
     context_preview: list[str] = Field(default_factory=list)
     knowledge_scope_applied: KnowledgeScopeLiteral = "shared"
+    research_mode_applied: ResearchModeLiteral = "hybrid"
     knowledge_context: list[str] = Field(default_factory=list, description="Retrieved knowledge snippets")
     knowledge_hits: list[KnowledgeHitView] = Field(default_factory=list, description="Structured knowledge hits")
     workspace_context: list[str] = Field(default_factory=list, description="Conversation workspace guidance")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Dict
 
-from pipeline_utils import initial_state, repair_round_budget
+from product_agent.pipeline_utils import initial_state, repair_round_budget
 
 from .models import ResearchState
 from .nodes import (

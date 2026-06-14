@@ -28,8 +28,13 @@ type GraphNode = {
   degree: number;
 };
 
-function uniqueNodeIds(graphEdges: WorkspaceGraphEdge[]) {
-  return Array.from(new Set(graphEdges.flatMap((edge) => [edge.source, edge.target]).filter(Boolean)));
+function uniqueNodeIds(graphEdges: WorkspaceGraphEdge[], papers: WorkspacePaper[]) {
+  return Array.from(
+    new Set([
+      ...papers.map((paper) => paper.paper_id),
+      ...graphEdges.flatMap((edge) => [edge.source, edge.target]),
+    ].filter(Boolean))
+  );
 }
 
 function curvedPath(source: GraphNode, target: GraphNode) {
@@ -91,13 +96,18 @@ function evidenceLevelLabel(level?: string) {
   return "候选关系";
 }
 
+function confidenceLabel(confidence?: number) {
+  const normalized = Math.max(0, Math.min(1, confidence ?? 0));
+  return `置信度 ${Math.round(normalized * 100)}%`;
+}
+
 export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanvasProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [activeRelationships, setActiveRelationships] = useState<string[]>([]);
   const [graphExpanded, setGraphExpanded] = useState(false);
 
   const { nodes, edgesByNode, relationshipStats, categoryStats } = useMemo(() => {
-    const ids = uniqueNodeIds(graphEdges);
+    const ids = uniqueNodeIds(graphEdges, papers);
     const width = 820;
     const height = 380;
     const cx = width / 2;
@@ -180,8 +190,12 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
     });
   }
 
-  if (!graphEdges.length) {
-    return <div className="empty-state">暂无可视化关系图。补到更多论文后，这里会出现完整的演进网络。</div>;
+  if (!nodes.length) {
+    return (
+      <div className="empty-state">
+        暂无可展示的核心论文。
+      </div>
+    );
   }
 
   return (
@@ -216,6 +230,9 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
             清除筛选
           </button>
         ) : null}
+        {!graphEdges.length ? (
+          <span className="graph-legend-item">暂无达到展示门槛的关系，当前仅展示核心论文节点</span>
+        ) : null}
       </div>
 
       <div className="graph-category-strip">
@@ -240,7 +257,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
           }}
           role="button"
           tabIndex={0}
-          title={graphExpanded ? "演进图谱放大视图" : "单击放大演进图谱"}
+          title={graphExpanded ? "研究关系图谱放大视图" : "单击放大研究关系图谱"}
           onKeyDown={(event) => {
             if (!graphExpanded && (event.key === "Enter" || event.key === " ")) {
               setGraphExpanded(true);
@@ -339,9 +356,17 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
                       <span className="message-source-trace-chip">
                         {evidenceLevelLabel(edge.evidence_level)}
                       </span>
+                      <span className="message-source-trace-chip">
+                        {confidenceLabel(edge.confidence)}
+                      </span>
                     </div>
                     <span>{formatGraphEdgeHeadline(edge.relationship, edge.source, edge.target, papers)}</span>
                     <small>{formatGraphEdgeReasoningByRelationship(edge.relationship, edge.reasoning, papers)}</small>
+                    {edge.provenance ? (
+                      <small className="fine-print">
+                        判定来源：{cleanDisplayText(edge.provenance, 100)}
+                      </small>
+                    ) : null}
                     {edge.evidence_snippets?.slice(0, 2).map((snippet, snippetIndex) => (
                       <small className="fine-print" key={`${edge.source}-${edge.target}-evidence-${snippetIndex}`}>
                         {cleanDisplayText(snippet, 220)}

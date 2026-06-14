@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Iterable, Sequence
 
-from models import PaperNode
+from product_agent.models import PaperNode
 
 # Research facets used to detect evidence gaps — same facets as query_decomposition
 _RESEARCH_FACET_KEYWORDS: dict[str, list[str]] = {

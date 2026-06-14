@@ -27,6 +27,9 @@ class PaperNode:
     relevance_score: float = 0.0
     relevance_tier: str = "candidate"
     relevance_reasons: List[str] = field(default_factory=list)
+    paper_pool_status: str = ""
+    document_id: str = ""
+    origin: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -51,6 +54,9 @@ class PaperNode:
             "relevance_score": self.relevance_score,
             "relevance_tier": self.relevance_tier,
             "relevance_reasons": self.relevance_reasons,
+            "paper_pool_status": self.paper_pool_status,
+            "document_id": self.document_id,
+            "origin": self.origin,
         }
 
 
@@ -91,9 +97,12 @@ class ResearchState(TypedDict, total=False):
     max_results: int
     search_queries: List[str]
     knowledge_scope: str
+    research_mode: str
     query_intent: Dict[str, Any]
     retrieval_plan: Dict[str, Any]
     retrieval_outcome: Dict[str, Any]
+    query_coverage: Dict[str, Any]
+    evidence_coverage: Dict[str, Any]
     knowledge_context: List[str]
     knowledge_hits: List[Dict[str, Any]]
     recent_context: List[Dict[str, Any]]
@@ -107,7 +116,9 @@ class ResearchState(TypedDict, total=False):
     working_memory_constraints: List[str]
     previous_round_task_id: str
     previous_round_paper_ids: List[str]
+    previous_round_papers: List[Dict[str, Any]]
     previous_round_query_intent: Dict[str, Any]
+    research_papers: List[Dict[str, Any]]
     evidence_pool: Dict[str, PaperNode]
     paper_nodes: Dict[str, PaperNode]
     review_texts: List[str]

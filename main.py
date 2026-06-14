@@ -11,7 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from observability import (  # noqa: E402
+from product_agent.observability import (  # noqa: E402
     render_demo_dashboard,
     render_demo_summary,
     render_state_timeline,

@@ -4,8 +4,8 @@ import itertools
 import os
 from typing import Dict, Tuple
 
-from observability import StageTimer, record_decision, record_graph_event, record_tool_event
-from pipeline_utils import (
+from product_agent.observability import StageTimer, record_decision, record_graph_event, record_tool_event
+from product_agent.pipeline_utils import (
     balanced_fallback_pairs,
     balanced_mode,
     canonical,

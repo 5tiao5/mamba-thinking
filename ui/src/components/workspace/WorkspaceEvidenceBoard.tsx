@@ -16,9 +16,43 @@ type WorkspaceEvidenceBoardProps = {
 function sourceLabel(source: string) {
   const normalized = (source || "").toLowerCase();
   if (normalized === "fallback") return "系统回退";
+  if (normalized === "user_upload") return "用户上传 PDF";
+  if (normalized === "user_import") return "用户导入";
   if (normalized === "arxiv") return "ArXiv";
   if (normalized === "semantic_scholar") return "Semantic Scholar";
   return source || "未知";
+}
+
+function evidenceOriginLabel(paper: WorkspacePaper) {
+  const origin = (paper.origin || paper.source || "").toLowerCase();
+  if (origin === "user_upload") return "用户上传";
+  if (origin === "user_import") return "用户导入";
+  if (origin === "system_search" || origin === "arxiv" || origin === "semantic_scholar") {
+    return "系统检索";
+  }
+  if (paper.source === "fallback") return "系统回退";
+  return "系统检索";
+}
+
+function poolStatusLabel(paper: WorkspacePaper) {
+  if (paper.paper_pool_status === "core") return "用户指定核心";
+  if (paper.paper_pool_status === "candidate") return "导入候选";
+  return "";
+}
+
+function PaperBadges({ paper, showRoundMarkers }: { paper: WorkspacePaper; showRoundMarkers?: boolean }) {
+  const poolLabel = poolStatusLabel(paper);
+  return (
+    <span className="workspace-paper-badges">
+      <span className="message-source-trace-chip">{evidenceOriginLabel(paper)}</span>
+      {poolLabel ? (
+        <span className="message-source-trace-chip message-source-trace-chip-info">{poolLabel}</span>
+      ) : null}
+      {showRoundMarkers ? (
+        <span className={`message-source-trace-chip ${noveltyToneClass(paper)}`}>{noveltyLabel(paper)}</span>
+      ) : null}
+    </span>
+  );
 }
 
 function noveltyLabel(paper: WorkspacePaper) {
@@ -44,15 +78,17 @@ function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; s
         <div className="section-eyebrow">当前选中</div>
         <div className="workspace-paper-title-row">
           <div className="insight-title">{cleanDisplayText(paper.title, 180)}</div>
-          {showRoundMarkers ? (
-            <span className={`message-source-trace-chip ${noveltyToneClass(paper)}`}>{noveltyLabel(paper)}</span>
-          ) : null}
+          <PaperBadges paper={paper} showRoundMarkers={showRoundMarkers} />
         </div>
       </div>
       <div className="workspace-paper-meta-grid">
         <div className="workspace-paper-meta-item">
           <span>来源</span>
           <strong>{sourceLabel(paper.source)}</strong>
+        </div>
+        <div className="workspace-paper-meta-item">
+          <span>证据身份</span>
+          <strong>{poolStatusLabel(paper) || evidenceOriginLabel(paper)}</strong>
         </div>
         <div className="workspace-paper-meta-item">
           <span>年份</span>
@@ -127,7 +163,7 @@ export function WorkspaceEvidenceBoard({
         />
         <div className="workspace-evidence-scope-note">
           {viewMode === "analysis"
-            ? "这些论文参与了本轮 taxonomy、演进图、研究空白与结论生成。"
+            ? "这些论文参与了本轮 taxonomy、研究关系图谱、研究空白与结论生成。"
             : "这里展示本轮检索到的全部合格论文；未进入核心集的论文用于补充阅读，不直接支撑主要结论。"}
         </div>
         <div className="data-table-wrap pane-scroll">
@@ -153,12 +189,15 @@ export function WorkspaceEvidenceBoard({
                       <td>
                         <div className="workspace-paper-title-row">
                           <div className="table-title">{cleanDisplayText(paper.title, 180)}</div>
-                          {showRoundMarkers ? (
-                            <span className={`message-source-trace-chip ${noveltyToneClass(paper)}`}>{noveltyLabel(paper)}</span>
-                          ) : null}
+                          <PaperBadges paper={paper} showRoundMarkers={showRoundMarkers} />
                         </div>
                       </td>
-                    <td>{sourceLabel(paper.source)}</td>
+                    <td>
+                      <div className="workspace-paper-source-cell">
+                        <strong>{sourceLabel(paper.source)}</strong>
+                        <span>{evidenceOriginLabel(paper)}</span>
+                      </div>
+                    </td>
                     <td>{paper.publish_date || "-"}</td>
                     <td>{cleanDisplayText(paper.taxonomy_category, 80) || "未分类"}</td>
                     <td>{citationLabel(paper)}</td>

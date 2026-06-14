@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 KnowledgeScopeLiteral = Literal["none", "conversation_only", "shared"]
+ResearchModeLiteral = Literal["hybrid", "imported_only", "search_only"]
 
 
 class CreateResearchTaskRequest(BaseModel):
@@ -16,6 +17,10 @@ class CreateResearchTaskRequest(BaseModel):
     knowledge_scope: Optional[KnowledgeScopeLiteral] = Field(
         default=None,
         description="Knowledge scope for this task: none / conversation_only / shared.",
+    )
+    research_mode: ResearchModeLiteral = Field(
+        default="hybrid",
+        description="Paper evidence mode: hybrid / imported_only / search_only.",
     )
     enabled_tools: List[str] = Field(default_factory=list)
     selected_skill_ids: List[str] = Field(default_factory=list, description="Skill IDs to activate for this task")
@@ -31,6 +36,7 @@ class CreateResearchTaskResponse(BaseModel):
     conversation_id: str
     status: str
     knowledge_scope: KnowledgeScopeLiteral = "shared"
+    research_mode: ResearchModeLiteral = "hybrid"
 
 
 class ResearchTaskSummaryView(BaseModel):
@@ -40,6 +46,7 @@ class ResearchTaskSummaryView(BaseModel):
     status: str
     mode: str
     knowledge_scope: KnowledgeScopeLiteral = "shared"
+    research_mode: ResearchModeLiteral = "hybrid"
     trigger_message_id: Optional[str] = None
     created_at: str
     updated_at: str
@@ -63,6 +70,9 @@ class WorkspacePaperView(BaseModel):
     relevance_score: float = 0.0
     relevance_tier: str = "candidate"
     relevance_reasons: List[str] = Field(default_factory=list)
+    paper_pool_status: str = ""
+    document_id: str = ""
+    origin: str = ""
 
 
 class WorkspaceGraphEdgeView(BaseModel):
@@ -120,11 +130,13 @@ class WorkspaceKnowledgeHitView(BaseModel):
 
 class WorkspaceSourceTraceView(BaseModel):
     knowledge_scope: KnowledgeScopeLiteral = "shared"
+    research_mode: ResearchModeLiteral = "hybrid"
     retrieval_plan: str = ""
     retrieval_status: str = ""
     retrieval_message: str = ""
     filtered_out_count: int = 0
     fallback_used: bool = False
+    external_search_skipped: bool = False
     refresh_triggered: bool = False
     novel_paper_count: int = 0
     reused_paper_count: int = 0

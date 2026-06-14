@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from observability import record_decision, record_tool_event
+from product_agent.observability import record_decision, record_tool_event
 from product_agent.services.idea_generation_service import IdeaGenerationInput, IdeaGenerationService
 from product_agent.services.evidence_snapshot_service import EvidenceSnapshotService
 from product_agent.services.report_generation_service import ReportGenerationInput, ReportGenerationService
@@ -40,16 +40,69 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     snapshot_taxonomy = dict(evidence_snapshot.get("taxonomy", {}) or {})
     snapshot_audits = list(evidence_snapshot.get("audit_reports", []))
 
-    idea_input = IdeaGenerationInput(
-        task_id=str(state.get("task_id", "")),
-        topic=str(state.get("topic", "")),
-        papers=snapshot_papers,
-        gaps=snapshot_gaps,
-        evidence_snapshot=evidence_snapshot,
+    conclusion_contract = dict(
+        evidence_snapshot.get("conclusion_contract", {}) or {}
     )
-    idea_output = IdeaGenerationService().run(idea_input)
-    ideas = idea_output.ideas
-    idea_source = idea_output.source
+    claimable_paper_ids = {
+        str(paper_id)
+        for paper_id in list(
+            conclusion_contract.get("claimable_paper_ids", []) or []
+        )
+        if str(paper_id)
+    }
+    claimable_papers = [
+        paper
+        for paper in snapshot_papers
+        if str(paper.get("paper_id", "")) in claimable_paper_ids
+    ]
+    suppress_ideas = (
+        _should_suppress_research_ideas(state)
+        or not bool(conclusion_contract.get("recommendations_allowed", False))
+    )
+    if suppress_ideas:
+        ideas = []
+        idea_source = "suppressed_insufficient_direct_evidence"
+    else:
+        idea_input = IdeaGenerationInput(
+            task_id=str(state.get("task_id", "")),
+            topic=str(state.get("topic", "")),
+            papers=claimable_papers,
+            gaps=snapshot_gaps,
+            evidence_snapshot=evidence_snapshot,
+        )
+        idea_output = IdeaGenerationService().run(idea_input)
+        ideas, idea_admission = _ground_ideas(
+            idea_output.ideas,
+            claimable_paper_ids=claimable_paper_ids,
+            taxonomy_branches=list(snapshot_taxonomy.get("branches", []) or []),
+            gaps=snapshot_gaps,
+        )
+        idea_source = idea_output.source
+        if not ideas:
+            suppress_ideas = True
+            idea_source = f"{idea_source}+rejected_ungrounded"
+    if suppress_ideas:
+        idea_admission = {
+            "supported_count": 0,
+            "exploratory_count": 0,
+            "rejected_count": 0,
+        }
+
+    supported_idea_count = int(idea_admission.get("supported_count", 0) or 0)
+    exploratory_idea_count = int(
+        idea_admission.get("exploratory_count", 0) or 0
+    )
+    recommendation_allowed = supported_idea_count > 0
+    supported_idea_ids = {
+        str(idea_id)
+        for idea_id in list(idea_admission.get("supported_idea_ids", []) or [])
+        if str(idea_id)
+    }
+    recommendable_ideas = [
+        idea
+        for idea in ideas
+        if str(getattr(idea, "idea_id", "") or "") in supported_idea_ids
+    ]
 
     report_input = ReportGenerationInput(
         topic=str(state.get("topic", "")),
@@ -60,6 +113,7 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         ideas=ideas,
         mermaid=mermaid,
         evidence_snapshot=evidence_snapshot,
+        allow_research_ideas=bool(ideas),
     )
     report_output = ReportGenerationService().run(report_input)
     report_text = _append_context_grounding(report_output.report_text, context_grounding)
@@ -71,9 +125,10 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         alignment_score=float(state.get("alignment_score", 0.0) or 0.0),
         paper_nodes=snapshot_papers,
         detected_gaps=snapshot_gaps,
-        ideas=ideas,
+        ideas=recommendable_ideas,
         report_text=report_text,
         evidence_snapshot=evidence_snapshot,
+        allow_recommendation=recommendation_allowed,
     )
     summary_output = SummaryGenerationService().run(summary_input)
     summary = dict(summary_output.summary or {})
@@ -82,9 +137,13 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     counts["papers"] = len(evidence_pool)
     counts["papers_retrieved"] = len(evidence_pool)
     counts["papers_analyzed"] = len(papers)
+    counts["ideas"] = len(ideas)
+    counts["supported_ideas"] = supported_idea_count
+    counts["exploratory_ideas"] = exploratory_idea_count
     summary["counts"] = counts
     summary["context_grounding"] = context_grounding
     summary["evidence_snapshot"] = evidence_snapshot
+    summary["idea_admission"] = idea_admission
     summary_source = summary_output.source
 
     updated = dict(state)
@@ -95,6 +154,20 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     updated["final_report_text"] = report_text
     updated["final_report_summary"] = summary
     updated["mermaid_graph"] = mermaid
+    if suppress_ideas:
+        updated["degraded_reason"] = (
+            str(updated.get("degraded_reason", "") or "").strip()
+            or _idea_suppression_reason(
+                conclusion_contract=conclusion_contract,
+                idea_source=idea_source,
+            )
+        )
+    elif exploratory_idea_count and not supported_idea_count:
+        updated["degraded_reason"] = (
+            str(updated.get("degraded_reason", "") or "").strip()
+            or "Generated research directions are exploratory because their target "
+            "taxonomy branches lack direct supporting papers."
+        )
 
     record_tool_event(
         updated,
@@ -102,7 +175,11 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         input_summary=f"papers={len(papers)}, gaps={len(state.get('detected_gaps', []))}",
         status="success" if idea_source.startswith("llm") else "fallback",
         output_count=len(ideas),
-        note=idea_source,
+        note=(
+            f"{idea_source}; supported={supported_idea_count}; "
+            f"exploratory={exploratory_idea_count}; "
+            f"rejected={int(idea_admission.get('rejected_count', 0) or 0)}"
+        ),
     )
     record_tool_event(
         updated,
@@ -142,6 +219,160 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         logs.append("Synthesizer attached context grounding metadata to report summary.")
     updated["logs"] = logs
     return updated
+
+
+def _should_suppress_research_ideas(state: ResearchState) -> bool:
+    outcome = state.get("retrieval_outcome", {})
+    if not isinstance(outcome, dict):
+        return False
+    return (
+        int(outcome.get("real_paper_count", 0) or 0) > 0
+        and int(outcome.get("direct_paper_count", 0) or 0) == 0
+    )
+
+
+def _ground_ideas(
+    ideas: List[Any],
+    *,
+    claimable_paper_ids: set[str],
+    taxonomy_branches: List[Dict[str, Any]],
+    gaps: List[Dict[str, Any]],
+) -> tuple[List[Any], Dict[str, Any]]:
+    """Admit recommendations at branch level and downgrade unsupported gaps."""
+
+    grounded: List[Any] = []
+    stats = {
+        "supported_count": 0,
+        "exploratory_count": 0,
+        "rejected_count": 0,
+        "supported_idea_ids": [],
+        "exploratory_idea_ids": [],
+    }
+    gap_branch_evidence: Dict[str, set[str]] = {}
+    for branch in taxonomy_branches:
+        direct_ids = {
+            str(paper_id)
+            for paper_id in list(
+                branch.get(
+                    "claimable_paper_ids",
+                    branch.get("direct_paper_ids", []),
+                )
+                or []
+            )
+            if str(paper_id)
+        }
+        for gap_id in list(branch.get("matched_gap_ids", []) or []):
+            normalized_gap_id = str(gap_id).strip()
+            if normalized_gap_id:
+                gap_branch_evidence.setdefault(normalized_gap_id, set()).update(
+                    direct_ids
+                )
+        branch_name = str(branch.get("name", "") or "").strip()
+        if not branch_name:
+            continue
+        normalized_branch_name = _normalized_binding_text(branch_name)
+        for gap in gaps:
+            gap_id = str(gap.get("gap_id", "") or "").strip()
+            gap_summary = _normalized_binding_text(
+                str(gap.get("summary", "") or "")
+            )
+            if gap_id and normalized_branch_name in gap_summary:
+                gap_branch_evidence.setdefault(gap_id, set()).update(direct_ids)
+
+    for idea in ideas:
+        related = [
+            str(paper_id)
+            for paper_id in list(getattr(idea, "related_papers", []) or [])
+            if str(paper_id) in claimable_paper_ids
+        ]
+        if not related:
+            stats["rejected_count"] += 1
+            continue
+        idea.related_papers = list(dict.fromkeys(related))[:3]
+        derived_gap_ids = [
+            str(gap_id).strip()
+            for gap_id in list(getattr(idea, "derived_from_gaps", []) or [])
+            if str(gap_id).strip()
+        ]
+        linked_gap_ids = [
+            gap_id for gap_id in derived_gap_ids if gap_id in gap_branch_evidence
+        ]
+        unsupported_gap_ids = [
+            gap_id
+            for gap_id in linked_gap_ids
+            if not gap_branch_evidence.get(gap_id)
+        ]
+        mismatched_gap_ids = [
+            gap_id
+            for gap_id in linked_gap_ids
+            if gap_branch_evidence.get(gap_id)
+            and not (
+                set(idea.related_papers) & gap_branch_evidence.get(gap_id, set())
+            )
+        ]
+        if unsupported_gap_ids or mismatched_gap_ids:
+            _mark_idea_exploratory(
+                idea,
+                reason=(
+                    "target branch lacks direct evidence"
+                    if unsupported_gap_ids
+                    else "cited papers do not support the target branch"
+                ),
+            )
+            stats["exploratory_count"] += 1
+            stats["exploratory_idea_ids"].append(
+                str(getattr(idea, "idea_id", "") or "")
+            )
+        else:
+            stats["supported_count"] += 1
+            stats["supported_idea_ids"].append(
+                str(getattr(idea, "idea_id", "") or "")
+            )
+        grounded.append(idea)
+    return grounded, stats
+
+
+def _normalized_binding_text(value: str) -> str:
+    return " ".join(
+        "".join(
+            character.casefold() if character.isalnum() else " "
+            for character in str(value or "")
+        ).split()
+    )
+
+
+def _mark_idea_exploratory(idea: Any, *, reason: str) -> None:
+    title = str(getattr(idea, "title", "") or "").strip()
+    if title and not title.startswith("探索性方向："):
+        idea.title = f"探索性方向：{title}"
+    disclaimer = (
+        "该方向当前缺少分支级直接论文证据，以下内容仅作为待验证假设，"
+        "不应视为已有研究结论。"
+    )
+    motivation = str(getattr(idea, "motivation", "") or "").strip()
+    if disclaimer not in motivation:
+        idea.motivation = f"{disclaimer}{motivation}"
+    idea.confidence = min(float(getattr(idea, "confidence", 0.0) or 0.0), 0.45)
+    tags = list(getattr(idea, "tags", []) or [])
+    idea.tags = list(dict.fromkeys(["exploratory", reason, *tags]))[:5]
+
+
+def _idea_suppression_reason(
+    *,
+    conclusion_contract: Dict[str, Any],
+    idea_source: str,
+) -> str:
+    if not bool(conclusion_contract.get("recommendations_allowed", False)):
+        return (
+            "No direct paper evidence remained after retrieval repair; "
+            "research ideas were suppressed."
+        )
+    if "rejected_ungrounded" in idea_source:
+        return (
+            "Generated research ideas could not be bound to the audited direct "
+            "paper evidence and were rejected."
+        )
+    return "Research ideas were suppressed by the evidence admission policy."
 
 
 def build_mermaid_graph(papers: Dict[str, PaperNode], edges: List[EvolutionEdge]) -> str:

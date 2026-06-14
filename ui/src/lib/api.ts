@@ -13,6 +13,7 @@ import type {
   MessageItem,
   ResearchPaperItem,
   ResearchPaperStatus,
+  ResearchMode,
   ResearchTaskDetailItem,
   ResearchTaskSummaryItem,
   RunTaskPayload,
@@ -145,6 +146,7 @@ export const api = {
     create_follow_up_task?: boolean;
     mode?: string;
     knowledge_scope?: KnowledgeScope;
+    research_mode?: ResearchMode;
     selected_skill_ids?: string[];
   }) => {
     if (payload.conversation_id === DEMO_CONVERSATION_ID) {
@@ -169,10 +171,11 @@ export const api = {
     mode?: string;
     use_shared_knowledge?: boolean;
     knowledge_scope?: KnowledgeScope;
+    research_mode?: ResearchMode;
     enabled_tools?: string[];
     selected_skill_ids?: string[];
   }) =>
-    request<ApiResponse<{ task_id: string; conversation_id: string; status: string; knowledge_scope?: KnowledgeScope }>>(
+    request<ApiResponse<{ task_id: string; conversation_id: string; status: string; knowledge_scope?: KnowledgeScope; research_mode?: ResearchMode }>>(
       "/research/tasks",
       {
         method: "POST",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import OrderedDict, defaultdict
+from copy import deepcopy
 
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
 from product_agent.schemas import (
@@ -20,6 +21,10 @@ from product_agent.schemas import (
     WorkspaceWorkingMemoryView,
 )
 from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
+from product_agent.services.conversation_synthesis_service import (
+    select_conversation_core_paper_ids,
+    synthesize_conversation_overview,
+)
 
 
 _CONV_CACHE_MAX_SIZE = 128
@@ -73,6 +78,7 @@ class WorkspaceService:
         workspace = self.repository.get_by_task(task_id)
         if workspace is None:
             return None
+        workspace = self._inherit_previous_paper_metadata(task_id, workspace)
 
         trace = workspace.trace or {}
         evidence_status = _build_evidence_status(workspace)
@@ -108,6 +114,9 @@ class WorkspaceService:
                     relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
                     relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
                     relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
+                    paper_pool_status=str(getattr(paper, "paper_pool_status", "") or ""),
+                    document_id=str(getattr(paper, "document_id", "") or ""),
+                    origin=str(getattr(paper, "origin", "") or ""),
                 )
                 for paper in workspace.papers
             ],
@@ -126,8 +135,13 @@ class WorkspaceService:
                     evidence_snippets=[
                         str(item) for item in edge.get("evidence_snippets", []) if str(item).strip()
                     ],
+                    evidence_details=[
+                        dict(item)
+                        for item in edge.get("evidence_details", [])
+                        if isinstance(item, dict)
+                    ],
                 )
-                for edge in workspace.graph_edges
+                for edge in _visible_workspace_graph_edges(workspace.graph_edges)
             ],
             gaps=[
                 WorkspaceGapView(
@@ -168,6 +182,45 @@ class WorkspaceService:
             ),
         )
 
+    def _inherit_previous_paper_metadata(self, task_id: str, workspace):
+        if self.task_repository is None:
+            return workspace
+        current_task = self.task_repository.get(task_id)
+        if current_task is None:
+            return workspace
+
+        previous_tasks = sorted(
+            (
+                task
+                for task in self.task_repository.list_all()
+                if task.task_id != current_task.task_id
+                and task.created_at < current_task.created_at
+            ),
+            key=lambda task: task.created_at,
+            reverse=True,
+        )
+        previous_workspaces = [
+            previous_workspace
+            for task in previous_tasks
+            if (previous_workspace := self.repository.get_by_task(task.task_id))
+            is not None
+        ]
+        if not previous_workspaces:
+            return workspace
+
+        historical_by_id = {
+            paper.paper_id: paper
+            for paper in _merge_workspace_papers(previous_workspaces)
+        }
+        enriched = deepcopy(workspace)
+        enriched.papers = [
+            _merge_workspace_paper_record(historical_by_id[paper.paper_id], paper)
+            if paper.paper_id in historical_by_id
+            else paper
+            for paper in enriched.papers
+        ]
+        return enriched
+
     def get_conversation_workspace_snapshot(self, conversation_id: str) -> WorkspaceSnapshotResponse | None:
         """
         Build a conversation-level aggregated workspace by merging all completed
@@ -205,7 +258,13 @@ class WorkspaceService:
             return None
 
         tasks.sort(key=lambda item: item.updated_at, reverse=True)
-        workspaces = [self.repository.get_by_task(task.task_id) for task in tasks]
+        workspaces = [
+            self._inherit_previous_paper_metadata(task.task_id, workspace)
+            if workspace is not None
+            else None
+            for task in tasks
+            for workspace in [self.repository.get_by_task(task.task_id)]
+        ]
         valid_workspaces = [workspace for workspace in workspaces if workspace is not None]
         if not valid_workspaces:
             return None
@@ -219,6 +278,23 @@ class WorkspaceService:
         merged_alignment = round(
             sum(workspace.alignment_score for workspace in valid_workspaces) / len(valid_workspaces), 3
         )
+        conversation_synthesis = synthesize_conversation_overview(
+            topic=topic,
+            workspaces=valid_workspaces,
+            papers=merged_papers,
+            gaps=merged_gaps,
+            ideas=merged_ideas,
+        )
+        llm_core_paper_ids = select_conversation_core_paper_ids(
+            topic=topic,
+            workspaces=valid_workspaces,
+            papers=merged_papers,
+        )
+        conversation_analysis_paper_ids = _select_conversation_analysis_paper_ids(
+            workspaces=valid_workspaces,
+            papers=merged_papers,
+            llm_recommended_paper_ids=llm_core_paper_ids,
+        )
         merged_summary_payload = _build_conversation_summary_payload(
             topic=topic,
             workspaces=valid_workspaces,
@@ -226,6 +302,8 @@ class WorkspaceService:
             gaps=merged_gaps,
             ideas=merged_ideas,
             alignment_score=merged_alignment,
+            conversation_synthesis=conversation_synthesis,
+            analysis_paper_ids=conversation_analysis_paper_ids,
         )
         merged_summary = _merge_workspace_summaries(
             topic=topic,
@@ -233,6 +311,7 @@ class WorkspaceService:
             paper_count=len(merged_papers),
             gap_count=len(merged_gaps),
             idea_count=len(merged_ideas),
+            conversation_synthesis=conversation_synthesis,
         )
 
         synthetic_workspace = type("ConversationWorkspaceProjection", (), {})()
@@ -277,6 +356,9 @@ class WorkspaceService:
                     relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
                     relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
                     relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
+                    paper_pool_status=str(getattr(paper, "paper_pool_status", "") or ""),
+                    document_id=str(getattr(paper, "document_id", "") or ""),
+                    origin=str(getattr(paper, "origin", "") or ""),
                 )
                 for paper in synthetic_workspace.papers
             ],
@@ -297,8 +379,15 @@ class WorkspaceService:
                         for item in edge.get("evidence_snippets", [])
                         if str(item).strip()
                     ],
+                    evidence_details=[
+                        dict(item)
+                        for item in edge.get("evidence_details", [])
+                        if isinstance(item, dict)
+                    ],
                 )
-                for edge in synthetic_workspace.graph_edges
+                for edge in _visible_workspace_graph_edges(
+                    synthetic_workspace.graph_edges
+                )
             ],
             gaps=[
                 WorkspaceGapView(
@@ -522,16 +611,47 @@ def _merge_workspace_summaries(
     paper_count: int | None = None,
     gap_count: int | None = None,
     idea_count: int | None = None,
+    conversation_synthesis: dict | None = None,
 ) -> str:
     paper_count = len(_merge_workspace_papers(workspaces)) if paper_count is None else paper_count
     gap_count = len(_merge_workspace_gaps(workspaces)) if gap_count is None else gap_count
     idea_count = len(_merge_workspace_ideas(workspaces)) if idea_count is None else idea_count
     task_count = len(workspaces)
 
+    synthesis = conversation_synthesis or {}
     lines = [
-        f"{topic} 的会话级研究工作台",
-        f"当前累计 {task_count} 轮有效研究，汇总论文 {paper_count} 篇、研究空白 {gap_count} 条、研究建议 {idea_count} 条。",
+        str(synthesis.get("headline", "") or f"{topic} 的会话级研究工作台"),
+        str(
+            synthesis.get("summary", "")
+            or (
+                f"当前累计 {task_count} 轮有效研究，汇总论文 {paper_count} 篇、"
+                f"研究空白 {gap_count} 条、研究建议 {idea_count} 条。"
+            )
+        ),
     ]
+    section_labels = (
+        ("new_findings", "本轮新增"),
+        ("strengthened_findings", "得到补强"),
+        ("revised_findings", "发生修正"),
+        ("open_questions", "仍待验证"),
+        ("current_recommendations", "当前建议"),
+    )
+    emitted_texts: set[str] = set()
+    for field_name, label in section_labels:
+        texts = []
+        for item in list(synthesis.get(field_name, []) or []):
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "") or "").strip()
+            normalized = _normalized_merge_text(text)
+            if not text or normalized in emitted_texts:
+                continue
+            texts.append(text)
+            emitted_texts.add(normalized)
+            if len(texts) == 2:
+                break
+        if texts:
+            lines.append(f"{label}：{'；'.join(texts)}")
     return "\n".join(lines)
 
 
@@ -543,6 +663,8 @@ def _build_conversation_summary_payload(
     gaps: list,
     ideas: list,
     alignment_score: float,
+    conversation_synthesis: dict | None = None,
+    analysis_paper_ids: list[str] | None = None,
 ) -> dict:
     latest_payload = next((dict(workspace.summary_payload or {}) for workspace in workspaces if workspace.summary_payload), {})
     top_gaps = [
@@ -572,17 +694,185 @@ def _build_conversation_summary_payload(
                 "再围绕稳定空白细化下一轮追问。"
             ),
             "aggregation_mode": "conversation_workspace",
+            "conclusion_evolution": dict(conversation_synthesis or {}),
+            "synthesis_source": str(
+                (conversation_synthesis or {}).get("source", "deterministic")
+            ),
+            "analysis_paper_ids": list(analysis_paper_ids or []),
         }
     )
+    current_recommendations = list(
+        (conversation_synthesis or {}).get("current_recommendations", []) or []
+    )
+    if current_recommendations:
+        payload["recommendation"] = "；".join(
+            str(item.get("text", "") or "").strip()
+            for item in current_recommendations[:2]
+            if isinstance(item, dict) and str(item.get("text", "") or "").strip()
+        )
     return payload
+
+
+def _select_conversation_analysis_paper_ids(
+    *,
+    workspaces: list,
+    papers: list,
+    llm_recommended_paper_ids: list[str] | None = None,
+) -> list[str]:
+    if not workspaces:
+        return []
+    paper_by_id = {
+        str(getattr(paper, "paper_id", "") or ""): paper
+        for paper in papers
+        if str(getattr(paper, "paper_id", "") or "")
+    }
+    round_ids = [
+        [
+            str(paper_id)
+            for paper_id in list(
+                (workspace.summary_payload or {}).get("analysis_paper_ids", []) or []
+            )
+            if str(paper_id) in paper_by_id
+        ]
+        for workspace in workspaces
+    ]
+    latest_ids = list(dict.fromkeys(round_ids[0]))
+    candidate_ids = list(
+        dict.fromkeys(paper_id for ids in round_ids for paper_id in ids)
+    )
+    if not candidate_ids:
+        return list(paper_by_id)[:12]
+
+    llm_ids = set(
+        str(paper_id)
+        for paper_id in list(llm_recommended_paper_ids or [])
+        if str(paper_id) in paper_by_id
+    )
+    occurrence_count = {
+        paper_id: sum(paper_id in ids for ids in round_ids)
+        for paper_id in candidate_ids
+    }
+
+    def score(paper_id: str) -> tuple[float, int, int]:
+        paper = paper_by_id[paper_id]
+        tier_score = {
+            "direct": 2.0,
+            "adjacent": 1.0,
+            "candidate": 0.4,
+            "background": 0.0,
+        }.get(str(getattr(paper, "relevance_tier", "") or "").casefold(), 0.4)
+        citation_count = max(int(getattr(paper, "citation_count", 0) or 0), 0)
+        citation_score = min(citation_count, 100) / 100
+        total = (
+            occurrence_count[paper_id] * 1.5
+            + float(getattr(paper, "relevance_score", 0.0) or 0.0) * 2
+            + tier_score
+            + citation_score
+            + (1.5 if paper_id in llm_ids else 0.0)
+        )
+        return total, occurrence_count[paper_id], citation_count
+
+    target_count = min(12, len(candidate_ids))
+    latest_quota = min(len(latest_ids), max(1, round(target_count * 0.67)))
+    selected = sorted(latest_ids, key=score, reverse=True)[:latest_quota]
+    selected_set = set(selected)
+    historical_ids = [
+        paper_id for paper_id in candidate_ids if paper_id not in selected_set
+    ]
+    selected.extend(
+        sorted(historical_ids, key=score, reverse=True)[
+            : max(target_count - len(selected), 0)
+        ]
+    )
+    return selected[:target_count]
 
 
 def _merge_workspace_papers(workspaces: list) -> list:
     merged: dict[str, object] = {}
     for workspace in reversed(workspaces):
         for paper in workspace.papers:
-            merged[paper.paper_id] = paper
+            existing = merged.get(paper.paper_id)
+            if existing is None:
+                merged[paper.paper_id] = deepcopy(paper)
+                continue
+            merged[paper.paper_id] = _merge_workspace_paper_record(existing, paper)
     return list(merged.values())
+
+
+def _merge_workspace_paper_record(existing, candidate):
+    """Merge a newer paper record without discarding richer historical metadata."""
+    merged = deepcopy(existing)
+
+    if candidate.title:
+        merged.title = candidate.title
+    if len(candidate.abstract or "") > len(merged.abstract or ""):
+        merged.abstract = candidate.abstract
+    merged.authors = _merge_string_ids(merged.authors, candidate.authors)
+    merged.keywords = _merge_string_ids(merged.keywords, candidate.keywords)
+
+    for field_name in (
+        "publish_date",
+        "source",
+        "taxonomy_category",
+        "url",
+        "paper_pool_status",
+        "document_id",
+        "origin",
+    ):
+        value = str(getattr(candidate, field_name, "") or "").strip()
+        if value:
+            setattr(merged, field_name, value)
+
+    existing_known = bool(getattr(merged, "citation_count_known", False))
+    candidate_known = bool(getattr(candidate, "citation_count_known", False))
+    existing_count = max(int(getattr(merged, "citation_count", 0) or 0), 0)
+    candidate_count = max(int(getattr(candidate, "citation_count", 0) or 0), 0)
+    if existing_known or candidate_known:
+        merged.citation_count_known = True
+        if candidate_known and candidate_count >= existing_count:
+            merged.citation_count = candidate_count
+            merged.citation_source = (
+                str(getattr(candidate, "citation_source", "") or "")
+                or str(getattr(merged, "citation_source", "") or "")
+            )
+        else:
+            merged.citation_count = existing_count
+    else:
+        merged.citation_count = max(existing_count, candidate_count)
+
+    merged.relevance_score = max(
+        float(getattr(merged, "relevance_score", 0.0) or 0.0),
+        float(getattr(candidate, "relevance_score", 0.0) or 0.0),
+    )
+    merged.relevance_tier = _stronger_relevance_tier(
+        str(getattr(merged, "relevance_tier", "") or ""),
+        str(getattr(candidate, "relevance_tier", "") or ""),
+    )
+    merged.relevance_reasons = _merge_string_ids(
+        getattr(merged, "relevance_reasons", []),
+        getattr(candidate, "relevance_reasons", []),
+    )
+    merged.is_new_this_round = bool(
+        getattr(merged, "is_new_this_round", False)
+        or getattr(candidate, "is_new_this_round", False)
+    )
+    return merged
+
+
+def _stronger_relevance_tier(current: str, candidate: str) -> str:
+    rank = {
+        "background": 0,
+        "candidate": 1,
+        "adjacent": 2,
+        "direct": 3,
+    }
+    current_key = current.strip().casefold() or "candidate"
+    candidate_key = candidate.strip().casefold() or "candidate"
+    return (
+        candidate_key
+        if rank.get(candidate_key, 1) > rank.get(current_key, 1)
+        else current_key
+    )
 
 
 def _workspace_analysis_paper_ids(workspace) -> list[str]:
@@ -631,6 +921,36 @@ def _merge_workspace_graph_edges(workspaces: list) -> list[dict]:
     return list(merged.values())
 
 
+def _visible_workspace_graph_edges(edges: list[dict]) -> list[dict]:
+    """Expose only graph relations that have enough evidence for users."""
+
+    visible: list[dict] = []
+    related_count = 0
+    for edge in sorted(
+        edges,
+        key=_graph_edge_strength,
+        reverse=True,
+    ):
+        evidence_level = str(
+            edge.get("evidence_level", "candidate") or "candidate"
+        ).casefold()
+        relationship = str(
+            edge.get("relationship", "related") or "related"
+        ).casefold()
+        confidence = float(edge.get("confidence", 0.0) or 0.0)
+
+        if evidence_level == "candidate":
+            continue
+        if evidence_level == "inferred" and confidence < 0.50:
+            continue
+        if relationship == "related":
+            if confidence < 0.50 or related_count >= 2:
+                continue
+            related_count += 1
+        visible.append(edge)
+    return visible
+
+
 def _graph_edge_strength(edge: dict) -> tuple[int, float]:
     relationship = str(edge.get("relationship", "") or "").strip().lower()
     evidence_level = str(edge.get("evidence_level", "") or "").strip().lower()
@@ -655,21 +975,45 @@ def _graph_edge_strength(edge: dict) -> tuple[int, float]:
 
 
 def _merge_workspace_gaps(workspaces: list) -> list:
-    merged: dict[str, object] = {}
+    merged: dict[tuple[str, str], object] = {}
+    seen_summaries: set[str] = set()
     for workspace in workspaces:
         for gap in workspace.gaps:
-            key = getattr(gap, "gap_id", "") or _stable_text_id(f"gap::{gap.summary}")
-            merged[key] = gap
+            semantic_key = _normalized_merge_text(getattr(gap, "summary", ""))
+            if semantic_key and semantic_key in seen_summaries:
+                continue
+            task_id = str(getattr(gap, "task_id", "") or getattr(workspace, "task_id", ""))
+            gap_id = str(
+                getattr(gap, "gap_id", "")
+                or _stable_text_id(f"gap::{getattr(gap, 'summary', '')}")
+            )
+            merged[(task_id, gap_id)] = gap
+            if semantic_key:
+                seen_summaries.add(semantic_key)
     return list(merged.values())
 
 
 def _merge_workspace_ideas(workspaces: list) -> list:
-    merged: dict[str, object] = {}
+    merged: dict[tuple[str, str], object] = {}
+    seen_titles: set[str] = set()
     for workspace in workspaces:
         for idea in workspace.ideas:
-            key = getattr(idea, "idea_id", "") or _stable_text_id(f"idea::{idea.title}")
-            merged[key] = idea
+            semantic_key = _normalized_merge_text(getattr(idea, "title", ""))
+            if semantic_key and semantic_key in seen_titles:
+                continue
+            task_id = str(getattr(idea, "task_id", "") or getattr(workspace, "task_id", ""))
+            idea_id = str(
+                getattr(idea, "idea_id", "")
+                or _stable_text_id(f"idea::{getattr(idea, 'title', '')}")
+            )
+            merged[(task_id, idea_id)] = idea
+            if semantic_key:
+                seen_titles.add(semantic_key)
     return list(merged.values())
+
+
+def _normalized_merge_text(value: str) -> str:
+    return re.sub(r"\W+", "", str(value or "").casefold(), flags=re.UNICODE)
 
 
 def _merge_workspace_taxonomy(workspaces: list) -> dict:
@@ -918,6 +1262,9 @@ def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> Workspace
     knowledge_scope = str(grounding.get("knowledge_scope", "")).strip() if isinstance(grounding, dict) else ""
     if not knowledge_scope:
         knowledge_scope = str(bundle.get("knowledge_scope", "")).strip() or "shared"
+    research_mode = str(retrieval_outcome.get("research_mode", "") or "").strip()
+    if not research_mode:
+        research_mode = str(bundle.get("research_mode", "") or "").strip() or "hybrid"
 
     knowledge_hit_count = int(grounding.get("knowledge_hit_count", 0) or 0) if isinstance(grounding, dict) else 0
     if not knowledge_hit_count:
@@ -936,11 +1283,13 @@ def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> Workspace
 
     return WorkspaceSourceTraceView(
         knowledge_scope=knowledge_scope if knowledge_scope in {"none", "conversation_only", "shared"} else "shared",
+        research_mode=research_mode if research_mode in {"hybrid", "imported_only", "search_only"} else "hybrid",
         retrieval_plan=clean_internal_context_text(str(grounding.get("retrieval_plan", "") or ""), max_length=180),
         retrieval_status=clean_internal_context_text(str(retrieval_outcome.get("status", "") or ""), max_length=80),
         retrieval_message=clean_internal_context_text(str(retrieval_outcome.get("message", "") or ""), max_length=240),
         filtered_out_count=int(retrieval_outcome.get("filtered_out_count", 0) or 0),
         fallback_used=bool(retrieval_outcome.get("fallback_used", False)),
+        external_search_skipped=bool(retrieval_outcome.get("external_search_skipped", False)),
         refresh_triggered=bool(retrieval_outcome.get("refresh_triggered", False)),
         novel_paper_count=int(retrieval_outcome.get("novel_paper_count", 0) or 0),
         reused_paper_count=int(retrieval_outcome.get("reused_paper_count", 0) or 0),

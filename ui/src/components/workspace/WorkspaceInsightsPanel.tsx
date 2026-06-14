@@ -39,6 +39,7 @@ import {
   formatIdeaSummary,
   formatIdeaSummaryFull,
   gapCategoryTone,
+  relationshipLabel,
 } from "./workspaceFormatters";
 
 function severityTone(severity: string): "danger" | "warning" | "neutral" {
@@ -702,13 +703,16 @@ export function WorkspaceInsightsPanel({
       <section className="workspace-secondary-stack">
         <CollapsibleInsightSection
           eyebrow={`${graphEdges.length} 条关系`}
-          title="整体演进图谱"
+          title="研究关系图谱"
           className="workspace-graph-pane"
         >
           <div className="content-pad pane-scroll">
+            <div className="workspace-evidence-scope-note">
+              仅展示达到可信门槛的引用、文本支持或高置信推断关系；“主题关联”不代表方法改进或引用继承。
+            </div>
             {insufficientEvidence ? (
               <div className="empty-state workspace-evidence-mode-note">
-                当前证据不足，这一轮不展示完整演进图谱。等真实论文数量上来，或者导入更多资料后，再看关系图谱会更有意义。
+                当前证据不足，这一轮不展示研究关系图谱。补充真实论文或全文证据后再判断论文之间的关系。
               </div>
             ) : (
               <>
@@ -723,7 +727,9 @@ export function WorkspaceInsightsPanel({
                             <th>起点</th>
                             <th>终点</th>
                             <th>关系</th>
-                            <th>依据</th>
+                            <th>证据等级</th>
+                            <th>置信度</th>
+                            <th>判定依据</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -731,7 +737,9 @@ export function WorkspaceInsightsPanel({
                             <tr key={`${edge.source}-${edge.target}-${index}`}>
                               <td>{cleanDisplayText(edge.source, 80)}</td>
                               <td>{cleanDisplayText(edge.target, 80)}</td>
-                              <td>{cleanDisplayText(edge.relationship, 80)}</td>
+                              <td>{relationshipLabel(cleanDisplayText(edge.relationship, 80))}</td>
+                              <td>{cleanDisplayText(edge.evidence_level || "candidate", 80)}</td>
+                              <td>{Math.round((edge.confidence ?? 0) * 100)}%</td>
                               <td>{cleanDisplayText(edge.reasoning) || "-"}</td>
                             </tr>
                           ))}

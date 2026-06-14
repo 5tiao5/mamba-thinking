@@ -114,3 +114,4 @@ def test_pdf_import_api_returns_per_file_results() -> None:
     assert payload["data"]["imported_count"] == 1
     assert payload["data"]["failed_count"] == 1
     assert payload["data"]["items"][1]["error_code"] == "unsupported_file_type"
+    assert container.task_repository.list_all() == []

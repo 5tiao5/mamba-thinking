@@ -194,8 +194,8 @@ class SQLiteResearchTaskRepository:
                 """
                 INSERT INTO research_tasks (
                     task_id, conversation_id, topic, status, trigger_message_id,
-                    mode, knowledge_scope, selected_skill_ids_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    mode, knowledge_scope, research_mode, selected_skill_ids_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_id,
@@ -205,6 +205,7 @@ class SQLiteResearchTaskRepository:
                     task.trigger_message_id,
                     task.mode,
                     task.knowledge_scope,
+                    task.research_mode,
                     _dump_json(list(task.selected_skill_ids)),
                     _dump_datetime(task.created_at),
                     _dump_datetime(task.updated_at),
@@ -229,7 +230,7 @@ class SQLiteResearchTaskRepository:
                 """
                 UPDATE research_tasks
                 SET conversation_id = ?, topic = ?, status = ?, trigger_message_id = ?,
-                    mode = ?, knowledge_scope = ?, selected_skill_ids_json = ?,
+                    mode = ?, knowledge_scope = ?, research_mode = ?, selected_skill_ids_json = ?,
                     created_at = ?, updated_at = ?
                 WHERE task_id = ?
                 """,
@@ -240,6 +241,7 @@ class SQLiteResearchTaskRepository:
                     task.trigger_message_id,
                     task.mode,
                     task.knowledge_scope,
+                    task.research_mode,
                     _dump_json(list(task.selected_skill_ids)),
                     _dump_datetime(task.created_at),
                     _dump_datetime(task.updated_at),
@@ -283,6 +285,11 @@ class SQLiteResearchTaskRepository:
                 row["knowledge_scope"]
                 if "knowledge_scope" in row.keys() and row["knowledge_scope"]
                 else "shared"
+            ),
+            research_mode=(
+                row["research_mode"]
+                if "research_mode" in row.keys() and row["research_mode"]
+                else "hybrid"
             ),
             selected_skill_ids=list(
                 _load_json(row["selected_skill_ids_json"]) or []
@@ -397,6 +404,9 @@ class SQLiteWorkspaceRepository:
             "relevance_score": float(getattr(paper, "relevance_score", 0.0) or 0.0),
             "relevance_tier": str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
             "relevance_reasons": list(getattr(paper, "relevance_reasons", []) or []),
+            "paper_pool_status": str(getattr(paper, "paper_pool_status", "") or ""),
+            "document_id": str(getattr(paper, "document_id", "") or ""),
+            "origin": str(getattr(paper, "origin", "") or ""),
         }
 
     @staticmethod

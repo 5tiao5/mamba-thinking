@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from observability import record_audit_event, record_decision
-from pipeline_utils import (
+from product_agent.observability import record_audit_event, record_decision
+from product_agent.pipeline_utils import (
     balanced_mode,
     dedupe,
     fast_mode,
@@ -18,7 +18,10 @@ def corrector_node(state: ResearchState) -> ResearchState:
 
     retry_count = int(state.get("retry_count", 0))
     max_repair_rounds = repair_round_budget(state)
-    if fast_mode(state) or balanced_mode(state):
+    evidence_repair_reason = _evidence_repair_reason(state)
+    if evidence_repair_reason:
+        max_repair_rounds = max(max_repair_rounds, 1)
+    if fast_mode(state) or (balanced_mode(state) and not evidence_repair_reason):
         record_audit_event(
             state,
             event_type="corrector_skipped",
@@ -44,7 +47,7 @@ def corrector_node(state: ResearchState) -> ResearchState:
     if repair_result:
         state.setdefault("repair_history", []).append(repair_result)
 
-    if score >= 0.7 and len(gaps) <= 3:
+    if score >= 0.7 and len(gaps) <= 3 and not evidence_repair_reason:
         record_audit_event(
             state,
             event_type="corrector_no_retry",
@@ -87,16 +90,21 @@ def corrector_node(state: ResearchState) -> ResearchState:
 
     topic = state.get("topic", "")
     gap_terms = " ".join(gap_keywords(gaps, limit=8))
+    plan = state.get("retrieval_plan", {})
+    plan = plan if isinstance(plan, dict) else {}
+    repair_focus = _repair_focus_terms(state, plan)
+    repair_anchor = str(plan.get("topic_anchor", "") or topic).strip()
     repair_query = " ".join(
         part
-        for part in [topic, gap_terms, "survey benchmark future work"]
+        for part in [
+            repair_anchor,
+            repair_focus,
+            "" if evidence_repair_reason else gap_terms,
+            "methods datasets metrics",
+        ]
         if str(part).strip()
     )
-    current_plan = (
-        dict(state.get("retrieval_plan", {}))
-        if isinstance(state.get("retrieval_plan"), dict)
-        else {}
-    )
+    current_plan = dict(plan)
     current_strict_queries = list(current_plan.get("strict_queries", []) or [])
     current_plan["strict_queries"] = dedupe(
         [repair_query, *current_strict_queries]
@@ -118,6 +126,7 @@ def corrector_node(state: ResearchState) -> ResearchState:
         "paper_ids": sorted(str(paper_id) for paper_id in state.get("paper_nodes", {})),
     }
     updated["retrieval_plan"] = current_plan
+    updated["evidence_repair_reason"] = evidence_repair_reason
     updated["search_queries"] = dedupe(
         [repair_query, *list(state.get("search_queries", []))]
     )[:6]
@@ -144,6 +153,42 @@ def corrector_node(state: ResearchState) -> ResearchState:
         f"Corrector scheduled repair round {retry_count + 1}/{max_repair_rounds}."
     )
     return updated
+
+
+def _evidence_repair_reason(state: ResearchState) -> str:
+    outcome = state.get("retrieval_outcome", {})
+    if not isinstance(outcome, dict):
+        outcome = {}
+    if (
+        int(outcome.get("real_paper_count", 0) or 0) > 0
+        and int(outcome.get("direct_paper_count", 0) or 0) == 0
+    ):
+        return "no_direct_evidence"
+    coverage = outcome.get("facet_evidence_coverage", {})
+    if not isinstance(coverage, dict):
+        coverage = state.get("evidence_coverage", {})
+    if isinstance(coverage, dict) and (
+        int(coverage.get("missing_count", 0) or 0) > 0
+        or int(coverage.get("weak_count", 0) or 0) > 0
+        or int(coverage.get("unevaluable_count", 0) or 0) > 0
+    ):
+        return "required_facets_not_directly_supported"
+    return ""
+
+
+def _repair_focus_terms(
+    state: ResearchState,
+    retrieval_plan: dict,
+) -> str:
+    coverage = state.get("evidence_coverage", {})
+    labels: list[str] = []
+    if isinstance(coverage, dict):
+        labels.extend(list(coverage.get("missing_facets", []) or []))
+        labels.extend(list(coverage.get("weak_facets", []) or []))
+        labels.extend(list(coverage.get("unevaluable_facets", []) or []))
+    if not labels:
+        labels.extend(list(retrieval_plan.get("rerank_signals", []) or [])[:4])
+    return " ".join(dedupe([str(label) for label in labels])[:4])
 
 
 def _evaluate_previous_repair(

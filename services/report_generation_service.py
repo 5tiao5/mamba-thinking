@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-from llm_client import call_openai_text, has_openai_key
-from observability import live_status
+from product_agent.llm_client import call_openai_text, has_openai_key
+from product_agent.observability import live_status
 from product_agent.domain import ResearchIdea
 
 
@@ -22,6 +22,7 @@ class ReportGenerationInput:
     ideas: List[ResearchIdea]
     mermaid: str
     evidence_snapshot: Dict[str, Any] = field(default_factory=dict)
+    allow_research_ideas: bool = True
 
 
 @dataclass
@@ -37,19 +38,36 @@ class ReportGenerationService:
         if os.environ.get("SKIP_REPORT_LLM") == "1" or not has_openai_key():
             return ReportGenerationOutput(self._fallback_report(request), "fallback-balanced", report_id)
 
+        final_section = (
+            "5. Three research ideas"
+            if request.allow_research_ideas
+            else "5. Evidence limitations and next retrieval steps"
+        )
+        idea_instruction = (
+            "Propose research ideas only from the supplied Ideas list."
+            if request.allow_research_ideas
+            else "Do not propose research ideas. Explain that direct evidence is insufficient and recommend narrower retrieval."
+        )
         prompt = f"""
 Write a Chinese research evolution audit report with the following sections:
 1. Topic overview
 2. Expert taxonomy
 3. Evolution narrative
 4. Audit findings and gaps
-5. Three research ideas
+{final_section}
 
 Writing requirements:
 - The main body should be in Chinese.
 - Taxonomy branch names and important technical terms may stay in English.
 - Paper titles, model names, benchmarks, datasets, and frameworks should stay in English.
 - Use natural Chinese-English mixed academic writing instead of forcing every term into Chinese.
+- {idea_instruction}
+- Treat papers in conclusion_contract.claimable_paper_ids as the only support
+  for definitive conclusions and research recommendations.
+- Papers in conclusion_contract.context_only_paper_ids may only be described
+  as background, adjacent evidence, or hypotheses requiring validation.
+- Taxonomy branches marked exploratory must not be presented as established
+  findings.
 
 Topic: {request.topic}
 Alignment score: {request.alignment_score}
@@ -134,7 +152,17 @@ Ideas: {json.dumps([{"idea_id": idea.idea_id, "title": idea.title} for idea in r
         lines.extend([f"- {item}" for item in reports[:15]] or ["- 暂无明显审计风险。"])
         lines.extend(["", "## 4. 检测到的 Gap"])
         lines.extend([f"- {item}" for item in gaps[:15]] or ["- 暂无明显 gap。"])
-        lines.extend(["", "## 5. 研究选题建议"])
-        lines.extend([f"{index}. {getattr(idea, 'title', str(idea))}" for index, idea in enumerate(request.ideas, 1)])
+        if request.allow_research_ideas:
+            lines.extend(["", "## 5. 研究选题建议"])
+            lines.extend([f"{index}. {getattr(idea, 'title', str(idea))}" for index, idea in enumerate(request.ideas, 1)])
+        else:
+            lines.extend(
+                [
+                    "",
+                    "## 5. 证据限制与下一步",
+                    "- 修复检索后仍未获得直接论文证据，本轮不生成研究选题建议。",
+                    "- 建议缩小研究问题，并使用带主题锚点的查询继续补充证据。",
+                ]
+            )
         lines.extend(["", "## Mermaid 图谱", "```mermaid", request.mermaid, "```"])
         return "\n".join(lines)

@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-from llm_client import call_openai_json, call_openai_text, has_openai_key
-from observability import live_status
+from product_agent.llm_client import call_openai_json, call_openai_text, has_openai_key
+from product_agent.observability import live_status
 from product_agent.domain import ResearchIdea
 
 

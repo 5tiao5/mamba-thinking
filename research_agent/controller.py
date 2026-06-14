@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from .models import ResearchState
-from observability import record_decision
-from pipeline_runtime import record_thought
+from product_agent.observability import record_decision
+from product_agent.pipeline_runtime import record_thought
 
 
 def controller_node(state: ResearchState) -> ResearchState:
