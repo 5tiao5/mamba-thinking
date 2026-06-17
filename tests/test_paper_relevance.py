@@ -199,6 +199,27 @@ class PaperRelevanceTests(unittest.TestCase):
         self.assertIn("tool_use", relevance.matched_groups)
         self.assertIn("evaluation", relevance.matched_groups)
 
+    def test_fuzzy_phrase_matching_keeps_inflected_evaluation_terms(self) -> None:
+        paper = PaperNode(
+            paper_id="inflected-benchmark",
+            title="MCPAgentBench: Benchmarking Tool-Augmented LLM Agents",
+            abstract=(
+                "We study function-calling failures and tool selection behavior "
+                "in large language model agents."
+            ),
+            source="arxiv",
+        )
+
+        relevance = evaluate_paper_relevance(
+            paper,
+            topic=RETRIEVAL_PLAN["topic"],
+            query=RETRIEVAL_PLAN["strict_queries"][0],
+            retrieval_plan=RETRIEVAL_PLAN,
+        )
+
+        self.assertEqual(relevance.tier, "direct")
+        self.assertIn("evaluation", relevance.matched_groups)
+
     def test_neighboring_benchmark_is_not_promoted_to_direct_evidence(self) -> None:
         paper = PaperNode(
             paper_id="adjacent",

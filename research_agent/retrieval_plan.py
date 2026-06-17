@@ -94,8 +94,14 @@ def build_retrieval_plan(
         focus_terms=focus_terms,
         paper_scope=paper_scope,
     )
-    topic_alias_queries = _topic_alias_queries(clean_topic)
-    topic_anchor = _topic_search_anchor(clean_topic, topic_alias_queries)
+    llm_topic_anchor = _clean_one(intent.get("topic_anchor", ""))
+    topic_alias_queries = _dedupe(
+        [
+            *_clean_items(list(intent.get("topic_alias_queries", []) or [])[:4]),
+            *_topic_alias_queries(clean_topic),
+        ]
+    )
+    topic_anchor = llm_topic_anchor or _topic_search_anchor(clean_topic, topic_alias_queries)
     for facet in focus_facets:
         candidates = [
             _anchor_query(query, topic_anchor)
@@ -143,6 +149,7 @@ def build_retrieval_plan(
         strict_queries.append(f"{clean_topic} {focus_terms[0]} {paper_scope[0]}")
 
     broad_queries = [
+        *_clean_items(list(intent.get("llm_broad_queries", []) or [])[:3]),
         *family_broad,
         *build_search_queries(clean_topic, fast=(mode == "fast"), balanced=(mode == "balanced")),
         *(workspace_queries or []),
@@ -161,6 +168,7 @@ def build_retrieval_plan(
         broad_queries=_dedupe(broad_queries),
         recall_queries=_dedupe(
             [
+                *_clean_items(list(intent.get("llm_recall_queries", []) or [])[:3]),
                 *family_recall,
                 *[
                     _anchor_query(query, topic_anchor)
@@ -446,6 +454,15 @@ def _topic_alias_queries(topic: str) -> list[str]:
                 "adaptive multimodal fusion",
             ]
         )
+    if _looks_like_causal_llm_topic(compact):
+        queries.extend(
+            [
+                "large language models causal reasoning",
+                "LLM causal discovery",
+                "counterfactual reasoning large language models",
+                "causal representation learning language models",
+            ]
+        )
     return _dedupe(queries)
 
 
@@ -455,6 +472,30 @@ def _topic_search_anchor(topic: str, aliases: list[str] | None = None) -> str:
         return candidates[0]
     english_topic = _english_search_terms(topic)
     return english_topic or " ".join(str(topic).split()).strip()
+
+
+def _looks_like_causal_llm_topic(compact: str) -> bool:
+    has_causal = any(
+        token in compact
+        for token in (
+            "\u56e0\u679c",
+            "\u53cd\u4e8b\u5b9e",
+            "causal",
+            "causality",
+            "counterfactual",
+        )
+    )
+    has_model = any(
+        token in compact
+        for token in (
+            "\u5927\u6a21\u578b",
+            "\u8bed\u8a00\u6a21\u578b",
+            "llm",
+            "largelanguagemodel",
+            "languagemodel",
+        )
+    )
+    return has_causal and has_model
 
 
 def _is_agent_tool_anchor(topic_anchor: str) -> bool:
@@ -591,6 +632,10 @@ def _clean_items(items: list[Any]) -> list[str]:
         seen.add(key)
         cleaned.append(text)
     return cleaned
+
+
+def _clean_one(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
 
 
 def _clean_focus_facets(value: Any) -> list[dict[str, Any]]:

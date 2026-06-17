@@ -1,14 +1,25 @@
 import { useMemo, useState } from "react";
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  forceX,
+  forceY,
+} from "d3-force";
 
 import { cleanDisplayText } from "../../lib/displayText";
 import type { WorkspaceGraphEdge, WorkspacePaper } from "../../types/api";
 import {
   categoryTone,
+  cleanWorkspaceText,
   formatGraphEdgeHeadline,
   formatGraphEdgeReasoningByRelationship,
   relationshipBadgeLabel,
   relationshipLabel,
   relationshipTone,
+  resolvePaperTitle,
   shortPaperLabel,
 } from "./workspaceFormatters";
 
@@ -28,13 +39,31 @@ type GraphNode = {
   degree: number;
 };
 
+type SimulationGraphNode = GraphNode & {
+  fx?: number | null;
+  fy?: number | null;
+};
+
+const GRAPH_WIDTH = 820;
+const GRAPH_HEIGHT = 460;
+const GRAPH_PADDING_X = 84;
+const GRAPH_PADDING_Y = 78;
+
 function uniqueNodeIds(graphEdges: WorkspaceGraphEdge[], papers: WorkspacePaper[]) {
+  const edgeNodeIds = graphEdges.flatMap((edge) => [edge.source, edge.target]).filter(Boolean);
   return Array.from(
     new Set([
-      ...papers.map((paper) => paper.paper_id),
-      ...graphEdges.flatMap((edge) => [edge.source, edge.target]),
+      ...(edgeNodeIds.length ? edgeNodeIds : papers.map((paper) => paper.paper_id)),
     ].filter(Boolean))
   );
+}
+
+function isOpaqueNodeId(value: string) {
+  return /^[a-f0-9]{24,64}$/i.test(value) || /^imported:[a-z0-9_-]+$/i.test(value);
+}
+
+function displayNodeIdentifier(value: string) {
+  return isOpaqueNodeId(value) ? "内部标识已隐藏" : value;
 }
 
 function curvedPath(source: GraphNode, target: GraphNode) {
@@ -88,6 +117,115 @@ function wrapTitle(title: string, maxCharsPerLine = 14, maxLines = 2) {
   return lines.slice(0, maxLines);
 }
 
+function relationshipDistance(relationship: string) {
+  const normalized = relationship.toLowerCase();
+  if (normalized.includes("extends") || normalized.includes("improves") || normalized.includes("builds_on")) {
+    return 118;
+  }
+  if (normalized.includes("contrasts") || normalized.includes("compares")) {
+    return 154;
+  }
+  if (normalized.includes("reference") || normalized.includes("cites")) {
+    return 138;
+  }
+  return 176;
+}
+
+function nodeVisualRadius(node: Pick<GraphNode, "degree">) {
+  return 24 + Math.min(node.degree * 2.8, 12);
+}
+
+function nodeCollisionRadius(node: Pick<GraphNode, "degree">) {
+  return nodeVisualRadius(node) + 38;
+}
+
+function clampGraphX(value: number) {
+  return Math.max(GRAPH_PADDING_X, Math.min(GRAPH_WIDTH - GRAPH_PADDING_X, Number(value.toFixed(1))));
+}
+
+function clampGraphY(value: number) {
+  return Math.max(GRAPH_PADDING_Y, Math.min(GRAPH_HEIGHT - GRAPH_PADDING_Y, Number(value.toFixed(1))));
+}
+
+function separateOverlappingNodes(nodes: GraphNode[]) {
+  const positioned = nodes.map((node) => ({ ...node }));
+
+  for (let round = 0; round < 90; round += 1) {
+    let moved = false;
+    for (let leftIndex = 0; leftIndex < positioned.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < positioned.length; rightIndex += 1) {
+        const left = positioned[leftIndex];
+        const right = positioned[rightIndex];
+        const minDistance = nodeCollisionRadius(left) + nodeCollisionRadius(right);
+        const rawDx = right.x - left.x;
+        const rawDy = right.y - left.y;
+        const fallbackAngle = ((leftIndex + 1) * 37 + (rightIndex + 1) * 17) * (Math.PI / 180);
+        const dx = Math.abs(rawDx) < 0.01 && Math.abs(rawDy) < 0.01 ? Math.cos(fallbackAngle) * 0.1 : rawDx;
+        const dy = Math.abs(rawDx) < 0.01 && Math.abs(rawDy) < 0.01 ? Math.sin(fallbackAngle) * 0.1 : rawDy;
+        const distance = Math.max(Math.hypot(dx, dy), 0.1);
+
+        if (distance >= minDistance) {
+          continue;
+        }
+
+        const push = (minDistance - distance) / 2;
+        const ux = dx / distance;
+        const uy = dy / distance;
+        left.x = clampGraphX(left.x - ux * push);
+        left.y = clampGraphY(left.y - uy * push);
+        right.x = clampGraphX(right.x + ux * push);
+        right.y = clampGraphY(right.y + uy * push);
+        moved = true;
+      }
+    }
+
+    if (!moved) {
+      break;
+    }
+  }
+
+  return positioned;
+}
+
+function layoutGraphNodes(nodes: GraphNode[], graphEdges: WorkspaceGraphEdge[]): GraphNode[] {
+  if (nodes.length <= 1) {
+    return nodes;
+  }
+
+  const simulatedNodes: SimulationGraphNode[] = nodes.map((node) => ({ ...node }));
+  const simulatedEdges = graphEdges
+    .filter((edge) => nodes.some((node) => node.id === edge.source) && nodes.some((node) => node.id === edge.target))
+    .map((edge) => ({
+      source: edge.source,
+      target: edge.target,
+      relationship: cleanDisplayText(edge.relationship, 80),
+    }));
+
+  forceSimulation(simulatedNodes)
+    .force(
+      "link",
+      forceLink<SimulationGraphNode, { source: string; target: string; relationship: string }>(simulatedEdges)
+        .id((node) => node.id)
+        .distance((edge) => relationshipDistance(edge.relationship) + (nodes.length > 12 ? 30 : 16))
+        .strength(0.34)
+    )
+    .force("charge", forceManyBody<SimulationGraphNode>().strength(nodes.length > 10 ? -320 : -360))
+    .force("collide", forceCollide<SimulationGraphNode>().radius(nodeCollisionRadius).strength(0.95))
+    .force("center", forceCenter(GRAPH_WIDTH / 2, GRAPH_HEIGHT / 2))
+    .force("x", forceX<SimulationGraphNode>(GRAPH_WIDTH / 2).strength(0.024))
+    .force("y", forceY<SimulationGraphNode>(GRAPH_HEIGHT / 2).strength(0.034))
+    .stop()
+    .tick(260);
+
+  const positionedNodes = simulatedNodes.map((node) => ({
+    ...node,
+    x: clampGraphX(node.x ?? GRAPH_WIDTH / 2),
+    y: clampGraphY(node.y ?? GRAPH_HEIGHT / 2),
+  }));
+
+  return separateOverlappingNodes(positionedNodes);
+}
+
 function evidenceLevelLabel(level?: string) {
   const normalized = (level || "").toLowerCase();
   if (normalized === "confirmed") return "已证实";
@@ -108,12 +246,10 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
 
   const { nodes, edgesByNode, relationshipStats, categoryStats } = useMemo(() => {
     const ids = uniqueNodeIds(graphEdges, papers);
-    const width = 820;
-    const height = 380;
-    const cx = width / 2;
-    const cy = height / 2;
-    const radiusX = 290;
-    const radiusY = 125;
+    const cx = GRAPH_WIDTH / 2;
+    const cy = GRAPH_HEIGHT / 2;
+    const radiusX = 315;
+    const radiusY = 165;
 
     const degreeMap = new Map<string, number>();
     for (const edge of graphEdges) {
@@ -124,17 +260,19 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
     const graphNodes = ids.map((id, index) => {
       const matchedPaper = papers.find((paper) => paper.paper_id === id);
       const angle = (Math.PI * 2 * index) / Math.max(ids.length, 1) - Math.PI / 2;
+      const title = cleanWorkspaceText(shortPaperLabel(id, papers), 80) || "未识别论文";
       return {
         id,
-        title: cleanDisplayText(shortPaperLabel(id, papers), 80),
-        fullTitle: cleanDisplayText(matchedPaper?.title?.trim() || id, 180),
-        subtitle: matchedPaper?.paper_id ?? id,
+        title,
+        fullTitle: cleanWorkspaceText(resolvePaperTitle(id, papers), 180) || title,
+        subtitle: displayNodeIdentifier(matchedPaper?.paper_id ?? id),
         category: cleanDisplayText(matchedPaper?.taxonomy_category, 80) || "Uncategorized",
         x: cx + Math.cos(angle) * radiusX,
         y: cy + Math.sin(angle) * radiusY,
         degree: degreeMap.get(id) ?? 0,
       };
     });
+    const positionedNodes = layoutGraphNodes(graphNodes, graphEdges);
 
     const nodeEdges = new Map<string, WorkspaceGraphEdge[]>();
     const relationshipCounter = new Map<string, number>();
@@ -147,12 +285,12 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
       nodeEdges.set(edge.target, [...(nodeEdges.get(edge.target) ?? []), edge]);
     }
 
-    for (const node of graphNodes) {
+    for (const node of positionedNodes) {
       categoryCounter.set(node.category, (categoryCounter.get(node.category) ?? 0) + 1);
     }
 
     return {
-      nodes: graphNodes,
+      nodes: positionedNodes,
       edgesByNode: nodeEdges,
       relationshipStats: Array.from(relationshipCounter.entries()),
       categoryStats: Array.from(categoryCounter.entries()),
@@ -239,7 +377,15 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
         {categoryStats.map(([category, count]) => {
           const tone = categoryTone(category);
           return (
-            <span className="graph-category-pill" key={category}>
+            <span
+              className="graph-category-pill"
+              key={category}
+              style={{
+                backgroundColor: tone.fill,
+                borderColor: `${tone.stroke}55`,
+                color: tone.stroke,
+              }}
+            >
               <span className="graph-category-dot" style={{ backgroundColor: tone.stroke }} />
               {tone.label} · {count}
             </span>
@@ -264,7 +410,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
             }
           }}
         >
-          <svg className="graph-canvas" viewBox="0 0 820 380">
+          <svg className="graph-canvas" viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`}>
             <defs>
               <marker
                 id="workspace-graph-arrow"
@@ -302,7 +448,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
 
             {nodes.map((node) => {
               const active = selectedNode?.id === node.id;
-              const radius = 22 + Math.min(node.degree * 2.4, 10);
+              const radius = nodeVisualRadius(node);
               const lines = wrapTitle(node.title);
               const tone = categoryTone(node.category);
               return (
@@ -314,14 +460,14 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
                     setSelectedNodeId(node.id);
                   }}
                 >
-                  <title>{`${node.fullTitle}\nPaper ID: ${node.subtitle}`}</title>
+                  <title>{`${node.fullTitle}\n论文标识：${node.subtitle}`}</title>
                   <circle
                     className={active ? "graph-node-circle graph-node-circle-active" : "graph-node-circle"}
                     cx={node.x}
                     cy={node.y}
-                    fill={active ? tone.fill : "#ffffff"}
+                    fill={tone.fill}
                     r={radius}
-                    stroke={tone.stroke}
+                    stroke={active ? "#2f6fed" : tone.stroke}
                   />
                   <text className="graph-node-title" textAnchor="middle" x={node.x} y={node.y - 8}>
                     {lines.map((line, index) => (
@@ -344,7 +490,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
             <div className="section-eyebrow">选中节点</div>
             <div className="graph-node-detail-title">{selectedNode.fullTitle}</div>
             <div className="graph-node-detail-meta">
-              <div className="fine-print">Paper ID: {selectedNode.id}</div>
+              <div className="fine-print">论文标识：{selectedNode.subtitle}</div>
               <div className="fine-print">Taxonomy Category: {selectedNode.category}</div>
             </div>
             <div className="graph-node-detail-list">
@@ -364,12 +510,12 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
                     <small>{formatGraphEdgeReasoningByRelationship(edge.relationship, edge.reasoning, papers)}</small>
                     {edge.provenance ? (
                       <small className="fine-print">
-                        判定来源：{cleanDisplayText(edge.provenance, 100)}
+                        判定来源：{cleanWorkspaceText(edge.provenance, 100)}
                       </small>
                     ) : null}
                     {edge.evidence_snippets?.slice(0, 2).map((snippet, snippetIndex) => (
                       <small className="fine-print" key={`${edge.source}-${edge.target}-evidence-${snippetIndex}`}>
-                        {cleanDisplayText(snippet, 220)}
+                        {cleanWorkspaceText(snippet, 220)}
                       </small>
                     ))}
                   </div>

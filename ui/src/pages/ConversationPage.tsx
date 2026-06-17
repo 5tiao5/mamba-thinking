@@ -147,6 +147,11 @@ export function ConversationPage() {
                     <>
                       <AssistantMessageContent content={getDisplayMessageContent(message)} />
                       <MessageSourceTrace
+                        detailsHref={
+                          getMessageTaskId(message)
+                            ? `/workspace?conversation_id=${encodeURIComponent(conversationIdFromQuery)}&task_id=${encodeURIComponent(getMessageTaskId(message))}&view=task`
+                            : undefined
+                        }
                         inheritedContext={message.metadata?.inherited_context}
                         sourceTrace={message.metadata?.source_trace}
                       />

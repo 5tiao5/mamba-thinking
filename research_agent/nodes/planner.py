@@ -101,7 +101,11 @@ def planner_node(state: ResearchState) -> ResearchState:
         _attach_query_coverage(updated, retrieval_plan, queries)
         updated["search_queries"] = queries
         updated["agent_plan"] = _augment_agent_plan(
-            build_agent_plan(topic, ["ArXiv", "DeepSeek ideas"], "balanced"),
+            build_agent_plan(
+                topic,
+                ["ArXiv", "Semantic Scholar", "DeepSeek ideas"],
+                "balanced",
+            ),
             context_note,
         )
         record_decision(

@@ -235,6 +235,7 @@ class ProductApiHandlers:
             knowledge_hits=[self._knowledge_hit_payload(hit) for hit in knowledge_hits],
             workspace_context=workspace_context,
             follow_up_task=follow_up_task,
+            follow_up_run_scheduled=False,
         )
         return ok(response.model_dump())
 
@@ -284,6 +285,14 @@ class ProductApiHandlers:
         except TaskNotFoundError:
             return fail("task_not_found", "Research task does not exist.")
         return ok(self._task_payload(task))
+
+    def list_research_task_events(self, task_id: str):
+        """List lightweight progress events emitted while a research task runs."""
+        try:
+            events = self.research_service.list_task_events(task_id)
+        except TaskNotFoundError:
+            return fail("task_not_found", "Research task does not exist.")
+        return ok({"items": [self._task_event_payload(item) for item in events]})
 
     def run_research_task(self, task_id: str):
         """运行已创建的研究任务。"""
@@ -692,6 +701,19 @@ class ProductApiHandlers:
             "selected_skill_ids": list(getattr(task, "selected_skill_ids", []) or []),
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
+        }
+
+    @staticmethod
+    def _task_event_payload(event) -> dict:
+        return {
+            "event_id": event.event_id,
+            "task_id": event.task_id,
+            "sequence": event.sequence,
+            "stage": event.stage,
+            "status": event.status,
+            "message": event.message,
+            "payload": dict(event.payload),
+            "created_at": event.created_at.isoformat(),
         }
 
     @staticmethod

@@ -25,7 +25,11 @@ def workspace_from_agent_state(*, task_id: str, topic: str, state: Dict[str, Any
     analysis_nodes = state.get("paper_nodes", {})
     papers = [_map_paper(paper) for paper in evidence_pool.values()]
     analysis_papers = [_map_paper(paper) for paper in analysis_nodes.values()]
-    gaps = [_map_gap(task_id, gap) for gap in state.get("detected_gaps", [])]
+    analysis_paper_ids = {paper.paper_id for paper in analysis_papers if paper.paper_id}
+    gaps = [
+        _map_gap(task_id, gap, allowed_paper_ids=analysis_paper_ids)
+        for gap in state.get("detected_gaps", [])
+    ]
     gap_ids = {g.gap_id for g in gaps}
 
     # map graph edges with gap-awareness
@@ -198,6 +202,7 @@ def _map_paper(paper: Any) -> PaperRecord:
         paper_id=str(payload.get("paper_id", "")),
         title=str(payload.get("title", "")),
         abstract=str(payload.get("abstract", "")),
+        review_text=str(payload.get("review_text", "")),
         authors=list(payload.get("authors", [])),
         keywords=[str(item).strip() for item in payload.get("keywords", []) if str(item).strip()],
         publish_date=str(payload.get("publish_date", "")),
@@ -221,11 +226,25 @@ def _map_paper(paper: Any) -> PaperRecord:
     )
 
 
-def _map_gap(task_id: str, raw_gap: str) -> GapRecord:
+def _map_gap(
+    task_id: str,
+    raw_gap: Any,
+    *,
+    allowed_paper_ids: set[str] | None = None,
+) -> GapRecord:
     if isinstance(raw_gap, dict):
         gap_id = str(raw_gap.get("id") or raw_gap.get("gap_id") or f"gap_{abs(hash((task_id, json_safe(raw_gap)))) % 10_000_000}")
         summary = str(raw_gap.get("summary", raw_gap.get("description", raw_gap))).strip()
         evidence = [str(item).strip() for item in raw_gap.get("evidence", []) if str(item).strip()]
+        supporting_paper_ids = _normalize_supporting_paper_ids(
+            raw_gap.get("supporting_paper_ids") or raw_gap.get("related_papers") or [],
+            allowed_paper_ids=allowed_paper_ids,
+        )
+        evidence_level = _normalize_conclusion_evidence_level(
+            raw_gap.get("evidence_level"),
+            supporting_paper_ids=supporting_paper_ids,
+        )
+        evidence_reason = str(raw_gap.get("evidence_reason", "") or "").strip()
         severity = str(raw_gap.get("severity", "")).strip().lower() or (
             "high" if any(token in summary.lower() for token in ["missing", "unsupported", "dangling"]) else "medium"
         )
@@ -233,7 +252,17 @@ def _map_gap(task_id: str, raw_gap: str) -> GapRecord:
         gap_id = f"gap_{abs(hash((task_id, str(raw_gap)))) % 10_000_000}"
         summary = str(raw_gap).strip()
         evidence = []
+        supporting_paper_ids = []
+        evidence_level = "exploratory"
+        evidence_reason = ""
         severity = "high" if any(token in summary.lower() for token in ["missing", "unsupported", "dangling"]) else "medium"
+
+    if not evidence_reason:
+        evidence_reason = _default_evidence_reason(
+            evidence_level=evidence_level,
+            supporting_paper_ids=supporting_paper_ids,
+            conclusion_kind="gap",
+        )
 
     return GapRecord(
         gap_id=gap_id,
@@ -241,6 +270,9 @@ def _map_gap(task_id: str, raw_gap: str) -> GapRecord:
         summary=summary,
         severity=severity,
         evidence=evidence,
+        supporting_paper_ids=supporting_paper_ids,
+        evidence_level=evidence_level,
+        evidence_reason=evidence_reason,
     )
 
 
@@ -347,6 +379,9 @@ def _map_idea(task_id: str, raw_idea: Any, papers: List[PaperRecord], gaps: List
             "contribution": raw_idea.contribution,
             "related_papers": list(raw_idea.related_papers),
             "derived_from_gaps": list(raw_idea.derived_from_gaps),
+            "supporting_paper_ids": list(raw_idea.supporting_paper_ids),
+            "evidence_level": raw_idea.evidence_level,
+            "evidence_reason": raw_idea.evidence_reason,
             "confidence": raw_idea.confidence,
             "tags": list(raw_idea.tags),
             "raw_text": raw_idea.raw_text,
@@ -372,6 +407,22 @@ def _map_idea(task_id: str, raw_idea: Any, papers: List[PaperRecord], gaps: List
     # Auto-link related papers if missing
     if not related_papers and (raw_text or title):
         related_papers = _infer_related_papers(raw_text or title, papers)
+    supporting_paper_ids = _normalize_supporting_paper_ids(
+        payload.get("supporting_paper_ids") or related_papers,
+        allowed_paper_ids={paper.paper_id for paper in papers if paper.paper_id},
+    )
+    related_papers = list(supporting_paper_ids)
+    evidence_level = _normalize_conclusion_evidence_level(
+        payload.get("evidence_level"),
+        supporting_paper_ids=supporting_paper_ids,
+    )
+    evidence_reason = str(payload.get("evidence_reason", "") or "").strip()
+    if not evidence_reason or _is_generic_missing_support_reason(evidence_reason, supporting_paper_ids):
+        evidence_reason = _default_evidence_reason(
+            evidence_level=evidence_level,
+            supporting_paper_ids=supporting_paper_ids,
+            conclusion_kind="idea",
+        )
 
     # Auto-match derived gaps if missing
     if not derived_from_gaps and raw_text:
@@ -387,6 +438,9 @@ def _map_idea(task_id: str, raw_idea: Any, papers: List[PaperRecord], gaps: List
         contribution=contribution,
         related_papers=related_papers,
         derived_from_gaps=derived_from_gaps,
+        supporting_paper_ids=supporting_paper_ids,
+        evidence_level=evidence_level,
+        evidence_reason=evidence_reason,
         confidence=confidence,
         tags=tags,
         raw_text=raw_text,
@@ -530,6 +584,81 @@ def _build_evidence_status(
         "candidate_branches": candidate_branches,
         "message": message,
     }
+
+
+def _normalize_supporting_paper_ids(
+    raw_ids: Any,
+    *,
+    allowed_paper_ids: set[str] | None,
+) -> List[str]:
+    if isinstance(raw_ids, str):
+        values = [raw_ids]
+    elif isinstance(raw_ids, (list, tuple, set)):
+        values = list(raw_ids)
+    else:
+        values = []
+
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for item in values:
+        paper_id = str(item or "").strip()
+        if not paper_id or paper_id in seen:
+            continue
+        if allowed_paper_ids is not None and paper_id not in allowed_paper_ids:
+            continue
+        seen.add(paper_id)
+        normalized.append(paper_id)
+    return normalized
+
+
+def _normalize_conclusion_evidence_level(
+    raw_level: Any,
+    *,
+    supporting_paper_ids: List[str],
+) -> str:
+    level = str(raw_level or "").strip().lower()
+    aliases = {
+        "strong": "direct",
+        "confirmed": "direct",
+        "supported": "direct",
+        "moderate": "indirect",
+        "inferred": "indirect",
+        "weak": "indirect",
+        "candidate": "exploratory",
+        "hypothesis": "exploratory",
+    }
+    level = aliases.get(level, level)
+    if level not in {"direct", "indirect", "exploratory"}:
+        level = "indirect" if supporting_paper_ids else "exploratory"
+    if not supporting_paper_ids:
+        return "exploratory"
+    return level
+
+
+def _default_evidence_reason(
+    *,
+    evidence_level: str,
+    supporting_paper_ids: List[str],
+    conclusion_kind: str,
+) -> str:
+    if evidence_level == "direct":
+        return "The conclusion explicitly declares direct support from papers in the current analysis pool."
+    if evidence_level == "indirect":
+        subject = "research gap" if conclusion_kind == "gap" else "research recommendation"
+        return (
+            f"The {subject} is linked to {len(supporting_paper_ids)} paper(s) in the current "
+            "analysis pool, but full-text claim verification has not been completed."
+        )
+    if supporting_paper_ids:
+        return (
+            f"The {conclusion_kind} is inspired by {len(supporting_paper_ids)} paper(s) in the current "
+            "analysis pool, but still needs full-text claim verification or experiment validation."
+        )
+    return "No eligible supporting paper is bound; treat this conclusion as an exploratory hypothesis."
+
+
+def _is_generic_missing_support_reason(reason: str, supporting_paper_ids: List[str]) -> bool:
+    return bool(supporting_paper_ids) and reason.strip().lower().startswith("no eligible supporting paper")
 
 
 def json_safe(value: Any) -> str:

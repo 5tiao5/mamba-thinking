@@ -154,6 +154,40 @@ class RetrievalQueryFamilyTests(unittest.TestCase):
             ],
         )
 
+    def test_chinese_continue_follow_up_extracts_direction_facets(self) -> None:
+        request = (
+            "\u7ee7\u7eed\u5c55\u5f00\uff1a\u9762\u5411\u673a\u5668\u4eba\u89c6\u89c9"
+            "\u7684\u8f7b\u91cf\u7ea7\u591a\u6a21\u6001\u878d\u5408\u67b6\u6784\u8bbe\u8ba1"
+        )
+        topic = "\u9762\u5411\u5927\u6a21\u578b\u7684\u591a\u6a21\u6001\u878d\u5408"
+        intent = derive_query_intent(
+            raw_user_request=request,
+            task_topic=f"{topic} - {request}",
+            conversation_topic=topic,
+            knowledge_scope="shared",
+            reference_year=2026,
+        )
+
+        plan = build_retrieval_plan(
+            topic=intent.core_topic,
+            query_intent=intent.to_dict(),
+            mode="balanced",
+        )
+
+        self.assertEqual(intent.user_goal, "extend_context")
+        self.assertEqual(
+            intent.request_focus_terms[:3],
+            ["robot vision", "lightweight", "fusion architecture"],
+        )
+        self.assertTrue(
+            any(
+                "robot vision" in query
+                and "lightweight" in query
+                and "fusion architecture" in query
+                for query in plan.strict_queries[:3]
+            )
+        )
+
     def test_arxiv_query_does_not_wrap_the_entire_request_as_one_phrase(self) -> None:
         compiled = _build_arxiv_search_query(
             "AI Agent tool-use reliability evaluation benchmarks"
@@ -400,6 +434,54 @@ class RetrievalQueryFamilyTests(unittest.TestCase):
             plan.recall_queries[:3],
             max_results=12,
         )
+
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+    )
+    @patch("product_agent.research_agent.nodes.searcher.search_papers", return_value=[])
+    def test_balanced_mode_calls_semantic_scholar_for_primary_recall(
+        self,
+        _search_arxiv,
+        search_s2,
+    ) -> None:
+        search_s2.return_value = [
+            PaperNode(
+                paper_id="s2-causal",
+                title="Causal Reasoning with Large Language Models",
+                abstract=(
+                    "We study causal reasoning, causal discovery, and "
+                    "counterfactual reasoning with large language models."
+                ),
+                source="semantic_scholar",
+            )
+        ]
+        plan = build_retrieval_plan(
+            topic="large language models causal reasoning",
+            query_intent={
+                "core_topic": "large language models causal reasoning",
+                "topic_anchor": "large language models causal reasoning",
+                "topic_alias_queries": ["large language models causal reasoning"],
+                "user_goal": "survey",
+            },
+            mode="balanced",
+        )
+
+        result = searcher_node(
+            {
+                "topic": plan.topic,
+                "mode": "balanced",
+                "max_results": 6,
+                "retrieval_plan": plan.to_dict(),
+                "paper_nodes": {},
+                "logs": [],
+                "decisions": [],
+                "tool_events": [],
+                "error_events": [],
+            }
+        )
+
+        self.assertGreaterEqual(search_s2.call_count, 1)
+        self.assertIn("s2-causal", result["evidence_pool"])
 
     @patch("product_agent.research_agent.nodes.searcher.search_papers")
     def test_broad_queries_continue_to_expand_the_evidence_pool(

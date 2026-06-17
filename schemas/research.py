@@ -56,6 +56,42 @@ class ListResearchTasksResponse(BaseModel):
     items: List[ResearchTaskSummaryView] = Field(default_factory=list)
 
 
+class ResearchTaskEventView(BaseModel):
+    event_id: str
+    task_id: str
+    sequence: int
+    stage: str
+    status: str
+    message: str = ""
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class ListResearchTaskEventsResponse(BaseModel):
+    items: List[ResearchTaskEventView] = Field(default_factory=list)
+
+
+class WorkspacePaperClaimCheckView(BaseModel):
+    claim_type: str = ""
+    claim: str = ""
+    status: str = "unknown"
+    evidence: str = ""
+    source_level: str = "metadata"
+    section: str = "metadata"
+    caveat: str = ""
+
+
+class WorkspacePaperBriefView(BaseModel):
+    problem: str = ""
+    method: str = ""
+    contribution: str = ""
+    limitation: str = ""
+    relation_to_topic: str = ""
+    tags: List[str] = Field(default_factory=list)
+    source: str = "metadata"
+    claim_checks: List[WorkspacePaperClaimCheckView] = Field(default_factory=list)
+
+
 class WorkspacePaperView(BaseModel):
     paper_id: str
     title: str
@@ -73,6 +109,7 @@ class WorkspacePaperView(BaseModel):
     paper_pool_status: str = ""
     document_id: str = ""
     origin: str = ""
+    paper_brief: WorkspacePaperBriefView = Field(default_factory=WorkspacePaperBriefView)
 
 
 class WorkspaceGraphEdgeView(BaseModel):
@@ -92,6 +129,9 @@ class WorkspaceGapView(BaseModel):
     summary: str
     severity: str = "medium"
     evidence: List[str] = Field(default_factory=list)
+    supporting_paper_ids: List[str] = Field(default_factory=list)
+    evidence_level: str = "exploratory"
+    evidence_reason: str = ""
 
 
 class WorkspaceIdeaView(BaseModel):
@@ -100,6 +140,9 @@ class WorkspaceIdeaView(BaseModel):
     approach: str = ""
     feasibility: str = ""
     contribution: str = ""
+    supporting_paper_ids: List[str] = Field(default_factory=list)
+    evidence_level: str = "exploratory"
+    evidence_reason: str = ""
     raw_text: str = ""
 
 
@@ -135,6 +178,8 @@ class WorkspaceSourceTraceView(BaseModel):
     retrieval_status: str = ""
     retrieval_message: str = ""
     filtered_out_count: int = 0
+    real_paper_count: int = 0
+    total_paper_count: int = 0
     fallback_used: bool = False
     external_search_skipped: bool = False
     refresh_triggered: bool = False
@@ -143,6 +188,11 @@ class WorkspaceSourceTraceView(BaseModel):
     direct_paper_count: int = 0
     adjacent_paper_count: int = 0
     low_relevance_filtered_count: int = 0
+    evidence_pool_count: int = 0
+    analysis_paper_count: int = 0
+    broad_search_triggered: bool = False
+    recall_rescue_triggered: bool = False
+    facet_rescue_triggered: bool = False
     knowledge_hit_count: int = 0
     knowledge_hits: List[WorkspaceKnowledgeHitView] = Field(default_factory=list)
     workspace_hint_count: int = 0
@@ -193,10 +243,39 @@ class WorkspaceEvidenceSnapshotView(BaseModel):
     alignment_score: float = 0.0
 
 
+class WorkspaceBriefItemView(BaseModel):
+    text: str = ""
+    supporting_paper_ids: List[str] = Field(default_factory=list)
+    source_task_ids: List[str] = Field(default_factory=list)
+    evidence_level: str = "exploratory"
+
+
+class WorkspaceBriefPaperView(BaseModel):
+    paper_id: str = ""
+    title: str = ""
+    reason: str = ""
+    source_task_ids: List[str] = Field(default_factory=list)
+    evidence_level: str = "direct"
+
+
+class WorkspaceResearchBriefView(BaseModel):
+    mode: str = "task"
+    headline: str = ""
+    executive_summary: str = ""
+    key_findings: List[WorkspaceBriefItemView] = Field(default_factory=list)
+    must_read_papers: List[WorkspaceBriefPaperView] = Field(default_factory=list)
+    open_gaps: List[WorkspaceBriefItemView] = Field(default_factory=list)
+    recommended_next_steps: List[WorkspaceBriefItemView] = Field(default_factory=list)
+    evidence_warnings: List[str] = Field(default_factory=list)
+    round_evolution: List[WorkspaceBriefItemView] = Field(default_factory=list)
+    source: str = "deterministic"
+
+
 class WorkspaceSnapshotResponse(BaseModel):
     task_id: str
     topic: str
     summary: str = ""
+    research_brief: WorkspaceResearchBriefView = Field(default_factory=WorkspaceResearchBriefView)
     papers: List[WorkspacePaperView] = Field(default_factory=list)
     analysis_paper_ids: List[str] = Field(default_factory=list)
     taxonomy: Dict[str, Any] = Field(default_factory=dict)

@@ -10,7 +10,7 @@ import type { SkillItem, ToolItem } from "../types/api";
 export function SettingsPage() {
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
-  const [status, setStatus] = useState("正在加载工具与能力...");
+  const [status, setStatus] = useState("正在加载工具与研究策略模板...");
   const [loading, setLoading] = useState(true);
   const [updatingToolId, setUpdatingToolId] = useState("");
 
@@ -20,7 +20,7 @@ export function SettingsPage() {
       .then(([toolResponse, skillResponse]) => {
         setTools(toolResponse.data);
         setSkills(skillResponse.data);
-        setStatus("工具与能力加载成功。");
+        setStatus("工具与研究策略模板加载成功。");
       })
       .catch((error) => {
         setTools([]);
@@ -69,7 +69,7 @@ export function SettingsPage() {
             <strong>{tools.filter((tool) => tool.enabled).length}</strong>
           </div>
           <div>
-            <span>已注册能力</span>
+            <span>研究策略模板</span>
             <strong>{skills.filter((skill) => skill.enabled).length}</strong>
           </div>
           <div>
@@ -135,7 +135,7 @@ export function SettingsPage() {
 
       <section className="settings-grid settings-grid-secondary">
         <div className="pane">
-          <SectionHeader title="能力" eyebrow={`${skills.length} 项能力`} />
+          <SectionHeader title="研究策略模板" eyebrow={`${skills.length} 项模板`} />
           <div className="data-table-wrap">
             {skills.length ? (
               <table className="data-table">
@@ -143,7 +143,7 @@ export function SettingsPage() {
                   <tr>
                     <th>名称</th>
                     <th>状态</th>
-                    <th>依赖工具</th>
+                    <th>建议配套工具</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -177,7 +177,13 @@ export function SettingsPage() {
               </table>
             ) : (
               <div className="content-pad">
-                <div className="empty-state">{loading ? "正在加载能力..." : "暂无可展示的能力。"}</div>
+                <div className="settings-empty-card">
+                  <strong>{loading ? "正在加载研究策略模板..." : "暂未创建研究策略模板"}</strong>
+                  <span>
+                    模板用于沉淀常用研究方法和分析偏好，会影响研究规划与追问方式，但不会被当作论文证据。
+                    可以先使用默认流程，后续在对话页的“工具能力”里创建模板。
+                  </span>
+                </div>
               </div>
             )}
           </div>

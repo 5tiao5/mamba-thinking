@@ -8,6 +8,7 @@ from product_agent.repositories import (
     ConversationRepository,
     MessageRepository,
     ResearchPaperRepository,
+    ResearchTaskEventRepository,
     ResearchTaskRepository,
     WorkingMemoryRepository,
     WorkspaceRepository,
@@ -33,6 +34,7 @@ class ConversationService:
         *,
         message_repository: MessageRepository | None = None,
         task_repository: ResearchTaskRepository | None = None,
+        task_event_repository: ResearchTaskEventRepository | None = None,
         workspace_repository: WorkspaceRepository | None = None,
         working_memory_repository: WorkingMemoryRepository | None = None,
         research_paper_repository: ResearchPaperRepository | None = None,
@@ -40,6 +42,7 @@ class ConversationService:
         self.repository = repository
         self.message_repository = message_repository
         self.task_repository = task_repository
+        self.task_event_repository = task_event_repository
         self.workspace_repository = workspace_repository
         self.working_memory_repository = working_memory_repository
         self.research_paper_repository = research_paper_repository
@@ -107,6 +110,7 @@ class ConversationService:
                 "deleted": False,
                 "deleted_messages": 0,
                 "deleted_tasks": 0,
+                "deleted_task_events": 0,
                 "deleted_workspaces": 0,
                 "deleted_working_memory": 0,
                 "deleted_research_papers": 0,
@@ -114,6 +118,15 @@ class ConversationService:
 
         deleted_workspaces = 0
         deleted_task_ids: list[str] = []
+        if self.task_repository is not None:
+            deleted_task_ids = [
+                task.task_id
+                for task in self.task_repository.list_all()
+                if task.conversation_id == conversation_id
+            ]
+        deleted_task_events = 0
+        if self.task_event_repository is not None:
+            deleted_task_events = self.task_event_repository.delete_by_task_ids(deleted_task_ids)
         if self.task_repository is not None:
             deleted_task_ids = self.task_repository.delete_by_conversation(conversation_id)
         if self.workspace_repository is not None:
@@ -136,6 +149,7 @@ class ConversationService:
             "deleted": deleted,
             "deleted_messages": deleted_messages,
             "deleted_tasks": len(deleted_task_ids),
+            "deleted_task_events": deleted_task_events,
             "deleted_workspaces": deleted_workspaces,
             "deleted_working_memory": deleted_working_memory,
             "deleted_research_papers": deleted_research_papers,

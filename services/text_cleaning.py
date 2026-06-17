@@ -24,6 +24,22 @@ _INTERNAL_PHRASE_PATTERN = re.compile(
 _TRUNCATED_TASK_TAG_PATTERN = re.compile(r"\[t(?:ask)?\.{2,}.*?(?=\s|$)", flags=re.IGNORECASE)
 _FOLLOW_UP_LABEL_PATTERN = re.compile(r"\s+-\s+(?:follow\s*up|focus\s*on)\s*:\s*", flags=re.IGNORECASE)
 _INFORMED_BY_SUFFIX_PATTERN = re.compile(r"\s+-\s+informed\s+by\s+.*$", flags=re.IGNORECASE)
+_OPAQUE_PAPER_ID_PATTERN = re.compile(
+    r"\b(?:[a-f0-9]{24,64}|imported:[a-z0-9_-]+)\b",
+    flags=re.IGNORECASE,
+)
+_OPAQUE_ID_PAREN_PATTERN = re.compile(
+    r"\s*[\(（]\s*(?:[a-f0-9]{24,64}|imported:[a-z0-9_-]+)\s*[\)）]",
+    flags=re.IGNORECASE,
+)
+_INTERNAL_RELEVANCE_ONLY_PATTERN = re.compile(
+    r"^(?:(?:focus|title|abstract|query|category|keywords|score|user_selected)\s*:\s*[^:;，。]+[:;，。]?\s*)+$",
+    flags=re.IGNORECASE,
+)
+_INLINE_INTERNAL_FIELD_PATTERN = re.compile(
+    r"\b(?:focus|title|abstract|query|category|keywords|score|user_selected)\s*:\s*([^;，。]{0,80})",
+    flags=re.IGNORECASE,
+)
 
 
 def clean_internal_context_text(value: object, *, max_length: int | None = None) -> str:
@@ -57,6 +73,11 @@ def clean_internal_context_text(value: object, *, max_length: int | None = None)
     text = _TRUNCATED_TASK_TAG_PATTERN.sub(" ", text)
     text = _FOLLOW_UP_LABEL_PATTERN.sub(" - ", text)
     text = _INFORMED_BY_SUFFIX_PATTERN.sub("", text)
+    if _INTERNAL_RELEVANCE_ONLY_PATTERN.fullmatch(text.strip()):
+        return ""
+    text = _OPAQUE_ID_PAREN_PATTERN.sub("", text)
+    text = _INLINE_INTERNAL_FIELD_PATTERN.sub("", text)
+    text = _OPAQUE_PAPER_ID_PATTERN.sub("未识别论文", text)
     text = re.sub(r"\[\s*\]", " ", text)
     text = re.sub(r"\s+", " ", text).strip(" \t\r\n:;-")
 

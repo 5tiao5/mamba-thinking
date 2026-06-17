@@ -14,6 +14,7 @@ from product_agent.services.workspace_service import (
     _merge_workspace_gaps,
     _merge_workspace_ideas,
     _merge_workspace_papers,
+    _workspace_paper_view,
     _select_conversation_analysis_paper_ids,
 )
 
@@ -185,6 +186,135 @@ def test_existing_follow_up_snapshot_recovers_historical_citation_metadata() -> 
     assert snapshot is not None
     assert snapshot.papers[0].citation_count == 70
     assert snapshot.papers[0].citation_count_known is True
+    assert snapshot.papers[0].is_new_this_round is False
+
+
+def test_historical_metadata_inheritance_does_not_pollute_current_round_marker() -> None:
+    base_time = datetime(2026, 6, 14, tzinfo=timezone.utc)
+    historical_task = ResearchTask(
+        task_id="task-historical",
+        conversation_id="conversation-old",
+        topic="topic",
+        status="completed",
+        created_at=base_time,
+        updated_at=base_time,
+    )
+    current_task = ResearchTask(
+        task_id="task-current",
+        conversation_id="conversation-new",
+        topic="topic follow-up",
+        status="completed",
+        created_at=base_time + timedelta(minutes=1),
+        updated_at=base_time + timedelta(minutes=1),
+    )
+    historical_workspace = ResearchWorkspace(
+        task_id=historical_task.task_id,
+        topic=historical_task.topic,
+        papers=[
+            PaperRecord(
+                paper_id="paper-a",
+                title="Paper A",
+                citation_count=88,
+                citation_count_known=True,
+                is_new_this_round=True,
+            )
+        ],
+    )
+    current_workspace = ResearchWorkspace(
+        task_id=current_task.task_id,
+        topic=current_task.topic,
+        papers=[
+            PaperRecord(
+                paper_id="paper-a",
+                title="Paper A",
+                citation_count=0,
+                citation_count_known=False,
+                is_new_this_round=False,
+            )
+        ],
+    )
+    service = WorkspaceService(
+        _WorkspaceRepository(
+            {
+                historical_task.task_id: historical_workspace,
+                current_task.task_id: current_workspace,
+            }
+        ),
+        task_repository=_TaskRepository([historical_task, current_task]),
+    )
+
+    snapshot = service.get_workspace_snapshot(current_task.task_id)
+
+    assert snapshot is not None
+    assert snapshot.papers[0].citation_count == 88
+    assert snapshot.papers[0].citation_count_known is True
+    assert snapshot.papers[0].is_new_this_round is False
+
+
+def test_paper_brief_filters_internal_relevance_signals() -> None:
+    paper = PaperRecord(
+        paper_id="paper-a",
+        title="QCaption: Video Captioning and Q&A through Fusion of Large Multimodal Models",
+        source="arxiv",
+        relevance_reasons=["focus:multimodal:title:multimodal", "user_selected:candidate"],
+    )
+
+    view = _workspace_paper_view(paper, topic="面向大模型的多模态融合")
+
+    assert "focus:" not in view.paper_brief.contribution
+    assert "user_selected:" not in view.paper_brief.contribution
+    assert "focus:" not in view.paper_brief.relation_to_topic
+    assert "user_selected:" not in view.paper_brief.relation_to_topic
+
+
+def test_paper_brief_exposes_claim_checks_with_verification_boundary() -> None:
+    paper = PaperRecord(
+        paper_id="paper-a",
+        title="Lightweight Multimodal Fusion for Robot Vision",
+        abstract=(
+            "This paper proposes a lightweight multimodal fusion architecture for robot vision. "
+            "The method aligns visual and language features under missing-modality conditions."
+        ),
+        source="arxiv",
+        taxonomy_category="Robot Vision Fusion",
+        citation_count=0,
+        citation_count_known=False,
+    )
+
+    view = _workspace_paper_view(paper, topic="面向机器人视觉的轻量级多模态融合")
+
+    assert view.paper_brief.claim_checks
+    assert view.paper_brief.claim_checks[0].status == "partial"
+    assert view.paper_brief.claim_checks[0].source_level == "abstract"
+    assert "lightweight multimodal fusion" in view.paper_brief.claim_checks[0].evidence.lower()
+    assert any(check.claim_type == "impact" and check.status == "unknown" for check in view.paper_brief.claim_checks)
+
+
+def test_paper_brief_prefers_uploaded_full_text_claim_evidence() -> None:
+    paper = PaperRecord(
+        paper_id="paper-full-text",
+        title="Lightweight Multimodal Fusion for Robot Vision",
+        abstract="A short abstract.",
+        review_text=(
+            "Introduction. Robot vision systems require lightweight multimodal fusion. "
+            "Method. We propose a compact fusion architecture that aligns camera and language features. "
+            "Experiments evaluate robustness under missing modalities."
+        ),
+        source="user_upload",
+        origin="user_upload",
+        document_id="doc-1",
+        citation_count_known=True,
+    )
+
+    view = _workspace_paper_view(paper, topic="面向机器人视觉的轻量级多模态融合")
+
+    assert view.paper_brief.source == "full_text"
+    assert view.paper_brief.claim_checks
+    assert view.paper_brief.claim_checks[0].source_level == "full_text"
+    assert "robot vision systems require" in " ".join(
+        check.evidence.lower() for check in view.paper_brief.claim_checks
+    )
+    assert "正文片段级核查" in view.paper_brief.claim_checks[0].caveat
 
 
 def test_new_conversation_recovers_known_citations_from_historical_workspace() -> None:

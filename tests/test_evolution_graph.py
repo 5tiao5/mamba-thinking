@@ -204,6 +204,81 @@ class EvolutionGraphTests(unittest.TestCase):
         self.assertEqual(edge.provenance, "landscape_profile")
         self.assertEqual(edge.evidence_level, "inferred")
 
+    def test_multimodal_method_and_survey_are_complementary(self) -> None:
+        survey = paper(
+            "paper-a",
+            title="Multimodal Fusion and Vision-Language Models: A Survey",
+            year="2024",
+            keywords=["multimodal fusion", "vision language"],
+            abstract=(
+                "We provide a comprehensive survey and taxonomy of multimodal "
+                "fusion architectures and cross-modal alignment."
+            ),
+        )
+        method = paper(
+            "paper-b",
+            title="Adaptive Sparse Fusion for Multimodal Large Language Models",
+            year="2025",
+            keywords=["multimodal fusion", "vision language"],
+            abstract=(
+                "We propose an efficient adaptive fusion architecture with sparse "
+                "routing for vision-language models."
+            ),
+        )
+
+        result = evolution_node(
+            {
+                "topic": "large-model multimodal fusion",
+                "mode": "full",
+                "paper_nodes": {
+                    survey.paper_id: survey,
+                    method.paper_id: method,
+                },
+            }
+        )
+
+        edge = result["evolution_graph"][0]
+        self.assertEqual(edge.relationship, "complements")
+        self.assertEqual(edge.provenance, "landscape_profile")
+        self.assertIn("fusion architecture", edge.evidence_snippets[-1])
+
+    def test_multimodal_benchmark_adds_robustness_dimension(self) -> None:
+        earlier = paper(
+            "paper-a",
+            title="A Benchmark for Multimodal Fusion",
+            year="2024",
+            keywords=["multimodal fusion"],
+            abstract=(
+                "We introduce a benchmark for evaluating multimodal fusion "
+                "architectures."
+            ),
+        )
+        later = paper(
+            "paper-b",
+            title="Robust Multimodal Fusion Benchmark with Missing Modalities",
+            year="2025",
+            keywords=["multimodal fusion"],
+            abstract=(
+                "We introduce a benchmark for robust multimodal fusion under "
+                "missing modality and modality dropout settings."
+            ),
+        )
+
+        result = evolution_node(
+            {
+                "topic": "large-model multimodal fusion",
+                "mode": "full",
+                "paper_nodes": {
+                    earlier.paper_id: earlier,
+                    later.paper_id: later,
+                },
+            }
+        )
+
+        edge = result["evolution_graph"][0]
+        self.assertEqual(edge.relationship, "scope_extension")
+        self.assertIn("missing-modality robustness", edge.evidence_snippets[-1])
+
     def test_later_benchmark_with_new_dimension_is_scope_extension(self) -> None:
         earlier = paper(
             "paper-a",

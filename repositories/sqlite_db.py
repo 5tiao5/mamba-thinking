@@ -60,6 +60,23 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS research_task_events (
+        event_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        stage TEXT NOT NULL,
+        status TEXT NOT NULL,
+        message TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES research_tasks(task_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_research_task_events_task_sequence
+    ON research_task_events(task_id, sequence ASC, created_at ASC)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS conversation_working_memory (
         conversation_id TEXT PRIMARY KEY,
         current_focus TEXT NOT NULL,
@@ -99,7 +116,7 @@ SCHEMA_STATEMENTS = (
         updated_at TEXT NOT NULL,
         UNIQUE(conversation_id, canonical_key),
         FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
-        FOREIGN KEY (document_id) REFERENCES knowledge_documents(document_id)
+        FOREIGN KEY (document_id) REFERENCES knowledge_documents(document_id) ON DELETE CASCADE
     )
     """,
     """

@@ -160,6 +160,7 @@ def _context_paper_nodes(
             paper_id=paper_id,
             title=title,
             abstract=str(item.get("abstract", "") or "").strip(),
+            review_text=str(item.get("review_text", "") or "").strip(),
             authors=_as_string_list(item.get("authors")),
             keywords=_as_string_list(item.get("keywords")),
             publish_date=str(item.get("publish_date", "") or "").strip(),
@@ -182,9 +183,8 @@ def _context_paper_nodes(
             origin=str(item.get("origin", "") or item.get("source", "") or "").strip(),
         )
         nodes[paper_id] = node
-        review_text = str(item.get("review_text", "") or "").strip()
-        if review_text:
-            review_texts.append(f"{title}\n{review_text}")
+        if node.review_text:
+            review_texts.append(f"{title}\n{node.review_text}")
         elif node.abstract:
             review_texts.append(f"{title}\n{node.abstract}")
     return nodes, review_texts

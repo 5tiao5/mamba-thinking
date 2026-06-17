@@ -3,14 +3,22 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { WorkspaceEvidenceBoard } from "../components/workspace/WorkspaceEvidenceBoard";
 import { WorkspaceInsightsPanel } from "../components/workspace/WorkspaceInsightsPanel";
+import { WorkspaceRunFlow } from "../components/workspace/WorkspaceRunFlow";
 import { WorkspaceSummarySection } from "../components/workspace/WorkspaceSummarySection";
 import { WorkspaceTaxonomyRail } from "../components/workspace/WorkspaceTaxonomyRail";
 import { api, toErrorMessage } from "../lib/api";
 import { DEMO_CONVERSATION_ID, DEMO_WORKSPACE_TASK_ID } from "../lib/demoData";
+import { cleanDisplayText } from "../lib/displayText";
 import { taskStatusLabel } from "../lib/productText";
-import type { ResearchTaskDetailItem, WorkspacePaper, WorkspaceSnapshot } from "../types/api";
+import type {
+  ResearchTaskDetailItem,
+  ResearchTaskEventItem,
+  WorkspacePaper,
+  WorkspaceSnapshot,
+} from "../types/api";
 
 type WorkspaceView = "conversation" | "task";
+type WorkspaceSection = "overview" | "evidence" | "map" | "context" | "run";
 
 function taskStatusMessage(task: ResearchTaskDetailItem) {
   if (task.status === "running") {
@@ -42,6 +50,39 @@ function resolveWorkspaceView(
   return "task";
 }
 
+function splitWorkspaceTopic(topic?: string) {
+  const text = cleanDisplayText(topic ?? "", 220);
+  if (!text) {
+    return { root: "", focus: "" };
+  }
+
+  const separatorMatch = text.match(/\s[-–—]\s/);
+  if (separatorMatch?.index !== undefined) {
+    const root = text.slice(0, separatorMatch.index).trim();
+    const focus = text.slice(separatorMatch.index + separatorMatch[0].length).trim();
+    if (root && focus && /[\u4e00-\u9fa5]|继续|补充|扩展|缩小|关注|对比|梳理|近\d|近[一二三四五六七八九十]/.test(focus)) {
+      return { root, focus };
+    }
+  }
+
+  return { root: text, focus: "" };
+}
+
+function isTerminalTaskEvent(event?: ResearchTaskEventItem) {
+  if (!event) {
+    return false;
+  }
+  const stage = (event.stage || "").toLowerCase();
+  const status = (event.status || "").toLowerCase();
+  if (status.includes("failed") || status.includes("error")) {
+    return true;
+  }
+  if (!stage.includes("runtime")) {
+    return false;
+  }
+  return status.includes("completed") || status.includes("degraded") || status.includes("step_limit");
+}
+
 export function WorkspacePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -59,6 +100,10 @@ export function WorkspacePage() {
   const [selectedPaperId, setSelectedPaperId] = useState("");
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [evidenceViewMode, setEvidenceViewMode] = useState<"analysis" | "extended">("analysis");
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>("overview");
+  const [runEvents, setRunEvents] = useState<ResearchTaskEventItem[]>([]);
+  const [runEventsLoading, setRunEventsLoading] = useState(false);
+  const [runEventsError, setRunEventsError] = useState("");
 
   function syncWorkspaceRoute(next: {
     view: WorkspaceView;
@@ -113,6 +158,7 @@ export function WorkspacePage() {
     () => (workspace?.papers ?? []).filter((paper) => analysisPaperIds.has(paper.paper_id)),
     [analysisPaperIds, workspace]
   );
+  const paperLookupPool = workspace?.papers ?? analysisPapers;
   const visibleEvidencePapers = evidenceViewMode === "analysis" ? analysisPapers : workspace?.papers ?? [];
 
   const paperCategories = useMemo(() => {
@@ -181,11 +227,128 @@ export function WorkspacePage() {
     return `建议先围绕“${topIdea}”继续细化，并补充真实论文证据。`;
   }, [workspace]);
 
+  const runEventTaskId = useMemo(() => {
+    const workspaceTaskId = workspace?.task_id ?? "";
+    if (workspaceTaskId && !workspaceTaskId.startsWith("conversation::")) {
+      return workspaceTaskId;
+    }
+    return taskId || taskIdFromQuery;
+  }, [taskId, taskIdFromQuery, workspace?.task_id]);
+
+  useEffect(() => {
+    const targetTaskId = runEventTaskId.trim();
+    if (activeSection !== "run" || !targetTaskId || targetTaskId.startsWith("conversation::")) {
+      setRunEvents([]);
+      setRunEventsError("");
+      setRunEventsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof window.setInterval> | undefined;
+    setRunEventsError("");
+
+    const fetchEvents = async (showLoading: boolean) => {
+      if (showLoading) {
+        setRunEventsLoading(true);
+      }
+      try {
+        const response = await api.listTaskEvents(targetTaskId);
+        if (cancelled) {
+          return false;
+        }
+        const items = response.data.items ?? [];
+        setRunEvents(items);
+        const latestEvent = [...items].sort((left, right) => right.sequence - left.sequence)[0];
+        return isTerminalTaskEvent(latestEvent);
+      } catch (error) {
+        if (cancelled) {
+          return false;
+        }
+        setRunEvents([]);
+        setRunEventsError(toErrorMessage(error));
+        return true;
+      } finally {
+        if (!cancelled) {
+          setRunEventsLoading(false);
+        }
+      }
+    };
+
+    void fetchEvents(true).then((isTerminal) => {
+      if (cancelled || (isTerminal && !running)) {
+        return;
+      }
+      intervalId = window.setInterval(() => {
+        void fetchEvents(false).then((nextTerminal) => {
+          if (nextTerminal && !running && intervalId) {
+            window.clearInterval(intervalId);
+            intervalId = undefined;
+          }
+        });
+      }, 1600);
+    });
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [activeSection, runEventTaskId, running]);
+
   const viewHeadline = activeView === "conversation" ? "本研究总览" : "本次结果";
   const viewDescription =
     activeView === "conversation"
       ? "聚合同一研究主题下所有已完成任务的累计结果，适合看全局脉络。"
       : "聚焦某一次生成或某一次追问的局部结果，适合回看这轮具体增量。";
+  const workspaceTopic = splitWorkspaceTopic(workspace?.topic);
+  const workspaceTitle = workspaceTopic.root || "研究工作台";
+  const workspaceSectionItems: Array<{
+    id: WorkspaceSection;
+    label: string;
+    title: string;
+    description: string;
+    badge: string;
+  }> = [
+    {
+      id: "overview",
+      label: "Overview",
+      title: "研究简报",
+      description: "先看结论、风险和下一步。",
+      badge: workspace?.research_brief?.must_read_papers.length
+        ? `${workspace.research_brief.must_read_papers.length} 篇必读`
+        : "简报",
+    },
+    {
+      id: "evidence",
+      label: "Evidence",
+      title: "论文证据",
+      description: "核查核心论文和扩展证据池。",
+      badge: `${analysisPapers.length}/${workspace?.papers.length ?? 0}`,
+    },
+    {
+      id: "map",
+      label: "Map",
+      title: "研究结构",
+      description: "浏览 taxonomy 与论文关系。",
+      badge: `${taxonomyBranches.length} 分支`,
+    },
+    {
+      id: "context",
+      label: "Context",
+      title: "知识上下文",
+      description: "区分 RAG、记忆和论文证据。",
+      badge: `${workspace?.source_trace?.knowledge_hit_count ?? 0} 命中`,
+    },
+    {
+      id: "run",
+      label: "Run",
+      title: "运行轨迹",
+      description: "查看 Agent 步骤和降级点。",
+      badge: `${workspace?.trace?.action_history.length ?? 0} 动作`,
+    },
+  ];
 
   async function handleLoadWorkspace(
     targetId = taskId,
@@ -254,6 +417,7 @@ export function WorkspacePage() {
     }
 
     setRunning(true);
+    setActiveSection("run");
     setStatus("任务运行中，分析可能需要一点时间...");
     try {
       await api.runTask(trimmedId);
@@ -320,7 +484,12 @@ export function WorkspacePage() {
         <div className="workspace-toolbar">
           <div className="workspace-context-summary">
             <div className="section-eyebrow">研究工作台</div>
-            <strong>{workspace?.topic || "研究工作台"}</strong>
+            <div className="workspace-topic-row">
+              <strong>{workspaceTitle}</strong>
+              {workspaceTopic.focus ? (
+                <span className="workspace-focus-pill">本轮聚焦：{cleanDisplayText(workspaceTopic.focus, 96)}</span>
+              ) : null}
+            </div>
             <span>{workspace ? `当前查看：${viewHeadline}。${viewDescription}` : "从左侧研究记录进入后，这里会展示证据、方向和建议。"}</span>
           </div>
           <div className="workspace-toolbar-actions">
@@ -395,36 +564,64 @@ export function WorkspacePage() {
         </div>
       </section>
 
-      <WorkspaceSummarySection
-        alignmentScore={workspace?.alignment_score ?? 0}
-        evidenceSnapshot={workspace?.evidence_snapshot ?? null}
-        evidenceStatus={workspace?.evidence_status}
-        gapCount={workspace?.gaps.length ?? 0}
-        ideaCount={workspace?.ideas.length ?? 0}
-        paperCount={workspace?.papers.length ?? 0}
-        analysisPaperCount={analysisPapers.length}
-        priorityNote={priorityNote}
-        recommendation={recommendation}
-        sourceTrace={workspace?.source_trace ?? null}
-        summary={workspace?.summary}
-        topic={workspace?.topic}
-        usesFallbackPapers={usesFallbackPapers}
-      />
+      <section className="workspace-section-nav surface" aria-label="工作台分区导航">
+        {workspaceSectionItems.map((item) => (
+          <button
+            className={
+              activeSection === item.id
+                ? "workspace-section-tab workspace-section-tab-active"
+                : "workspace-section-tab"
+            }
+            key={item.id}
+            onClick={() => setActiveSection(item.id)}
+            type="button"
+          >
+            <span>{item.label}</span>
+            <strong>{item.title}</strong>
+            <small>{item.description}</small>
+            <em>{item.badge}</em>
+          </button>
+        ))}
+      </section>
 
-      <section className="workspace-grid">
-        <WorkspaceTaxonomyRail
-          branches={taxonomyBranches}
-          categories={paperCategories}
-          coverage={taxonomyCoverage}
-          evidenceStatus={workspace?.evidence_status}
-          onSelectBranch={setSelectedBranchId}
-          onSelectCategory={setSelectedCategory}
-          paperCount={analysisPapers.length}
-          papers={taxonomyEvidencePapers}
-          selectedBranchId={selectedBranchId}
-          selectedCategory={selectedCategory}
-          topic={workspace?.topic ?? ""}
-        />
+      {activeSection === "overview" ? (
+        <>
+          <WorkspaceSummarySection
+            alignmentScore={workspace?.alignment_score ?? 0}
+            evidenceSnapshot={workspace?.evidence_snapshot ?? null}
+            evidenceStatus={workspace?.evidence_status}
+            gapCount={workspace?.gaps.length ?? 0}
+            ideaCount={workspace?.ideas.length ?? 0}
+            paperCount={workspace?.papers.length ?? 0}
+            analysisPaperCount={analysisPapers.length}
+            analysisPapers={analysisPapers}
+            gaps={workspace?.gaps ?? []}
+            ideas={workspace?.ideas ?? []}
+            priorityNote={priorityNote}
+            recommendation={recommendation}
+            researchBrief={workspace?.research_brief ?? null}
+            sourceTrace={workspace?.source_trace ?? null}
+            summary={workspace?.summary}
+            topic={workspace?.topic}
+            usesFallbackPapers={usesFallbackPapers}
+          />
+          <WorkspaceInsightsPanel
+            evidenceStatus={workspace?.evidence_status}
+            gaps={workspace?.gaps ?? []}
+            graphEdges={workspace?.graph_edges ?? []}
+            inheritedContext={workspace?.inherited_context ?? null}
+            ideas={workspace?.ideas ?? []}
+            papers={paperLookupPool}
+            sectionMode="insights"
+            sourceTrace={workspace?.source_trace ?? null}
+            trace={workspace?.trace ?? null}
+            workingMemory={workspace?.working_memory ?? null}
+            showWorkingMemory={activeView === "conversation"}
+          />
+        </>
+      ) : null}
+
+      {activeSection === "evidence" ? (
         <WorkspaceEvidenceBoard
           analysisPaperCount={analysisPapers.length}
           onSelectPaper={setSelectedPaperId}
@@ -440,20 +637,79 @@ export function WorkspacePage() {
           totalPaperCount={workspace?.papers.length ?? 0}
           viewMode={evidenceViewMode}
         />
-      </section>
+      ) : null}
 
-      <WorkspaceInsightsPanel
-        evidenceStatus={workspace?.evidence_status}
-        gaps={workspace?.gaps ?? []}
-        graphEdges={workspace?.graph_edges ?? []}
-        inheritedContext={workspace?.inherited_context ?? null}
-        ideas={workspace?.ideas ?? []}
-        papers={analysisPapers}
-        sourceTrace={workspace?.source_trace ?? null}
-        trace={workspace?.trace ?? null}
-        workingMemory={workspace?.working_memory ?? null}
-        showWorkingMemory={activeView === "conversation"}
-      />
+      {activeSection === "map" ? (
+        <section className="workspace-grid workspace-map-grid">
+          <WorkspaceTaxonomyRail
+            branches={taxonomyBranches}
+            categories={paperCategories}
+            coverage={taxonomyCoverage}
+            evidenceStatus={workspace?.evidence_status}
+            onSelectBranch={setSelectedBranchId}
+            onSelectCategory={setSelectedCategory}
+            paperCount={analysisPapers.length}
+            papers={taxonomyEvidencePapers}
+            selectedBranchId={selectedBranchId}
+            selectedCategory={selectedCategory}
+            topic={workspace?.topic ?? ""}
+          />
+          <WorkspaceInsightsPanel
+            evidenceStatus={workspace?.evidence_status}
+            gaps={workspace?.gaps ?? []}
+            graphEdges={workspace?.graph_edges ?? []}
+            inheritedContext={workspace?.inherited_context ?? null}
+            ideas={workspace?.ideas ?? []}
+            papers={paperLookupPool}
+            sectionMode="map"
+            sourceTrace={workspace?.source_trace ?? null}
+            trace={workspace?.trace ?? null}
+            workingMemory={workspace?.working_memory ?? null}
+            showWorkingMemory={activeView === "conversation"}
+          />
+        </section>
+      ) : null}
+
+      {activeSection === "context" ? (
+        <WorkspaceInsightsPanel
+          evidenceStatus={workspace?.evidence_status}
+          gaps={workspace?.gaps ?? []}
+          graphEdges={workspace?.graph_edges ?? []}
+          inheritedContext={workspace?.inherited_context ?? null}
+          ideas={workspace?.ideas ?? []}
+          papers={paperLookupPool}
+          sectionMode="context"
+          sourceTrace={workspace?.source_trace ?? null}
+          trace={workspace?.trace ?? null}
+          workingMemory={workspace?.working_memory ?? null}
+          showWorkingMemory={activeView === "conversation"}
+        />
+      ) : null}
+
+      {activeSection === "run" ? (
+        <>
+          <WorkspaceRunFlow
+            eventError={runEventsError}
+            events={runEvents}
+            loadingEvents={runEventsLoading}
+            workspace={workspace}
+            viewLabel={viewHeadline}
+          />
+          <WorkspaceInsightsPanel
+            evidenceStatus={workspace?.evidence_status}
+            gaps={workspace?.gaps ?? []}
+            graphEdges={workspace?.graph_edges ?? []}
+            inheritedContext={workspace?.inherited_context ?? null}
+            ideas={workspace?.ideas ?? []}
+            papers={paperLookupPool}
+            sectionMode="run"
+            sourceTrace={workspace?.source_trace ?? null}
+            trace={workspace?.trace ?? null}
+            workingMemory={workspace?.working_memory ?? null}
+            showWorkingMemory={activeView === "conversation"}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

@@ -9,11 +9,14 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
 
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
 from product_agent.models import PaperNode
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 _REQUEST_TIMEOUT = 15
+_RETRYABLE_HTTP_CODES = {500, 502, 503, 504}
 
 
 def _semantic_scholar_headers() -> Dict[str, str]:
@@ -22,6 +25,31 @@ def _semantic_scholar_headers() -> Dict[str, str]:
     if api_key:
         headers["x-api-key"] = api_key
     return headers
+
+
+def _is_retryable_network_error(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in _RETRYABLE_HTTP_CODES
+    return isinstance(exc, (urllib.error.URLError, TimeoutError))
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable_network_error),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.4, min=0.4, max=2.0),
+    reraise=True,
+)
+def _urlopen_bytes(request: urllib.request.Request) -> bytes:
+    with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
+        return response.read()
+
+
+def _urlopen_text(request: urllib.request.Request) -> str:
+    return _urlopen_bytes(request).decode("utf-8")
+
+
+def _urlopen_json(request: urllib.request.Request) -> Any:
+    return json.loads(_urlopen_text(request))
 
 
 # ── arXiv ────────────────────────────────────────────────────────────────────
@@ -42,8 +70,7 @@ def search_papers(query: str, max_results: int = 10) -> List[PaperNode]:
     url = f"{_ARXIV_API}?{params}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode("utf-8")
+        raw = _urlopen_text(req)
         return _parse_arxiv_atom(raw, query)
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
@@ -80,8 +107,7 @@ def search_papers_recall(
     url = f"{_ARXIV_API}?{params}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode("utf-8")
+        raw = _urlopen_text(req)
         return _parse_arxiv_atom(raw, " OR ".join(queries))
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
@@ -240,8 +266,7 @@ def search_semantic_scholar(query: str, max_results: int = 10) -> List[PaperNode
     url = f"{_S2_API}?{params}"
     try:
         req = urllib.request.Request(url, headers=_semantic_scholar_headers())
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = _urlopen_json(req)
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
             raise RuntimeError(
@@ -371,8 +396,7 @@ def _request_s2_metadata_batch(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = _urlopen_json(request)
     except urllib.error.HTTPError as exc:
         if exc.code == 400 and len(identifiers) > 1:
             midpoint = len(identifiers) // 2
@@ -383,6 +407,8 @@ def _request_s2_metadata_batch(
         if exc.code == 400:
             return [None]
         raise
+    except (urllib.error.URLError, TimeoutError):
+        return [None] * len(identifiers)
     if not isinstance(payload, list):
         return [None] * len(identifiers)
     return [item if isinstance(item, dict) else None for item in payload[: len(identifiers)]] + [
@@ -415,9 +441,8 @@ def _fetch_s2_references(paper: PaperNode) -> List[Dict[str, str]]:
         )
         req = urllib.request.Request(url, headers=_semantic_scholar_headers())
         try:
-            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.HTTPError, urllib.error.URLError):
+            data = _urlopen_json(req)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
             continue
 
         references: List[Dict[str, str]] = []

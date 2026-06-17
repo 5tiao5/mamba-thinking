@@ -9,6 +9,7 @@ class PaperNode:
     paper_id: str
     title: str = ""
     abstract: str = ""
+    review_text: str = ""
     authors: List[str] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)
     publish_date: str = ""
@@ -36,6 +37,7 @@ class PaperNode:
             "paper_id": self.paper_id,
             "title": self.title,
             "abstract": self.abstract,
+            "review_text": self.review_text,
             "authors": self.authors,
             "keywords": self.keywords,
             "publish_date": self.publish_date,

@@ -281,9 +281,9 @@ def _sparsify_candidate_edges(
     selected: list[EvolutionEdge] = []
     max_inferred_edges = max(len(papers), 1)
     relationship_caps = {
-        "addresses": 3,
-        "scope_extension": 3,
-        "complements": 2,
+        "addresses": 4,
+        "scope_extension": 4,
+        "complements": 4,
         "related": 2,
     }
     relationship_counts: Dict[str, int] = {}

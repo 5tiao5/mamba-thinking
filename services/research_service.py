@@ -6,8 +6,13 @@ import re
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
-from product_agent.domain import ResearchTask, ResearchWorkspace
-from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
+from product_agent.domain import ResearchTask, ResearchTaskEvent, ResearchWorkspace
+from product_agent.repositories import (
+    ConversationRepository,
+    ResearchTaskEventRepository,
+    ResearchTaskRepository,
+    WorkspaceRepository,
+)
 from product_agent.services.query_intent import QueryIntent, build_search_seed, derive_query_intent
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
 from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
@@ -96,6 +101,7 @@ class ResearchService:
         conversation_repository: ConversationRepository,
         task_repository: ResearchTaskRepository,
         workspace_repository: WorkspaceRepository,
+        task_event_repository: ResearchTaskEventRepository | None = None,
         workspace_service=None,
         message_service: MessageService | None = None,
         knowledge_service: KnowledgeService | None = None,
@@ -105,6 +111,7 @@ class ResearchService:
     ) -> None:
         self.conversation_repository = conversation_repository
         self.task_repository = task_repository
+        self.task_event_repository = task_event_repository
         self.workspace_repository = workspace_repository
         self.workspace_service = workspace_service
         self.message_service = message_service
@@ -158,6 +165,17 @@ class ResearchService:
             updated_at=datetime.now(timezone.utc),
         )
         created_task = self.task_repository.create(task)
+        self._append_task_event(
+            task_id=created_task.task_id,
+            stage="task",
+            status="created",
+            message="Research task created.",
+            payload={
+                "mode": created_task.mode,
+                "knowledge_scope": created_task.knowledge_scope,
+                "research_mode": created_task.research_mode,
+            },
+        )
         conversation.latest_task_id = created_task.task_id
         conversation.updated_at = datetime.now(timezone.utc)
         self.conversation_repository.update(conversation)
@@ -228,6 +246,12 @@ class ResearchService:
             return items[:limit]
         return items
 
+    def list_task_events(self, task_id: str) -> list[ResearchTaskEvent]:
+        self.get_task(task_id)
+        if self.task_event_repository is None:
+            return []
+        return self.task_event_repository.list_by_task(task_id)
+
     def run_task(self, task: ResearchTask) -> ResearchWorkspace:
         """
         运行一条研究任务，并把 Agent 结果投影为产品工作台数据。
@@ -241,17 +265,31 @@ class ResearchService:
         task.status = "running"
         task.updated_at = datetime.now(timezone.utc)
         self.task_repository.update(task)
+        self._append_task_event(
+            task_id=task.task_id,
+            stage="runtime",
+            status="started",
+            message="Research task started.",
+            payload={
+                "topic": task.topic,
+                "mode": task.mode,
+                "knowledge_scope": task.knowledge_scope,
+                "research_mode": task.research_mode,
+            },
+        )
 
         try:
             from product_agent.research_agent.pipeline import run_pipeline
 
             research_context = self._build_research_context(task)
+            state_event_recorder = self._build_state_event_recorder(task.task_id)
             state = run_pipeline(
                 task.topic,
                 mode=task.mode,
                 conversation_workspace_context=research_context.conversation_workspace_context,
                 research_context=research_context.to_pipeline_payload(),
                 show_progress=False,
+                state_callback=state_event_recorder,
             )
             workspace: ResearchWorkspace = workspace_from_agent_state(
                 task_id=task.task_id,
@@ -275,12 +313,115 @@ class ResearchService:
             task.status = run_status
             task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
+            self._append_task_event(
+                task_id=task.task_id,
+                stage="runtime",
+                status=run_status,
+                message=f"Research task finished with status {run_status}.",
+                payload={
+                    "termination_reason": str(state.get("termination_reason", "") or ""),
+                    "degraded_reason": str(state.get("degraded_reason", "") or ""),
+                    "paper_count": len(workspace.papers),
+                    "gap_count": len(workspace.gaps),
+                    "idea_count": len(workspace.ideas),
+                },
+            )
             return saved_workspace
-        except Exception:
+        except Exception as error:
             task.status = "failed"
             task.updated_at = datetime.now(timezone.utc)
             self.task_repository.update(task)
+            self._append_task_event(
+                task_id=task.task_id,
+                stage="runtime",
+                status="failed",
+                message="Research task failed.",
+                payload={"error": str(error)},
+            )
             raise
+
+    def _append_task_event(
+        self,
+        *,
+        task_id: str,
+        stage: str,
+        status: str,
+        message: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> ResearchTaskEvent | None:
+        if self.task_event_repository is None:
+            return None
+
+        try:
+            existing = self.task_event_repository.list_by_task(task_id)
+            next_sequence = (existing[-1].sequence + 1) if existing else 1
+            event = ResearchTaskEvent(
+                event_id=f"event_{uuid4().hex[:12]}",
+                task_id=task_id,
+                sequence=next_sequence,
+                stage=stage,
+                status=status,
+                message=message,
+                payload=dict(payload or {}),
+                created_at=datetime.now(timezone.utc),
+            )
+            return self.task_event_repository.append(event)
+        except Exception:
+            return None
+
+    def _build_state_event_recorder(self, task_id: str):
+        last_log_count = 0
+
+        def record_state_event(state: dict[str, Any]) -> None:
+            nonlocal last_log_count
+            logs = list(state.get("logs", []) or [])
+            new_logs = logs[last_log_count:]
+            last_log_count = len(logs)
+            if not new_logs:
+                return
+
+            for log in new_logs:
+                stage, status = self._stage_status_from_log(str(log))
+                self._append_task_event(
+                    task_id=task_id,
+                    stage=stage,
+                    status=status,
+                    message=str(log),
+                    payload=self._state_event_payload(state),
+                )
+
+        return record_state_event
+
+    @staticmethod
+    def _stage_status_from_log(log: str) -> tuple[str, str]:
+        if log.startswith("Action started:"):
+            return log.split(":", 1)[1].strip() or "pipeline", "started"
+        match = re.match(r"Action\s+([A-Za-z0-9_\-]+)\s+complete:", log)
+        if match:
+            return match.group(1), "completed"
+        if log.startswith("Run terminated:"):
+            status_match = re.search(r"status=([^,\s]+)", log)
+            return "runtime", status_match.group(1) if status_match else "completed"
+        return "pipeline", "progress"
+
+    @staticmethod
+    def _state_event_payload(state: dict[str, Any]) -> dict[str, Any]:
+        paper_nodes = state.get("paper_nodes", {}) or {}
+        evidence_pool = state.get("evidence_pool", paper_nodes) or {}
+        taxonomy = state.get("expert_taxonomy", {}) or {}
+        branches = taxonomy.get("branches", []) if isinstance(taxonomy, dict) else []
+        return {
+            "next_action": str(state.get("next_action", "") or ""),
+            "current_goal": str(state.get("current_goal", "") or ""),
+            "pending_actions": list(state.get("pending_actions", []) or [])[:8],
+            "paper_count": len(paper_nodes) if hasattr(paper_nodes, "__len__") else 0,
+            "evidence_pool_count": len(evidence_pool) if hasattr(evidence_pool, "__len__") else 0,
+            "taxonomy_branch_count": len(branches) if hasattr(branches, "__len__") else 0,
+            "graph_edge_count": len(state.get("evolution_graph", []) or []),
+            "gap_count": len(state.get("detected_gaps", []) or []),
+            "idea_count": len(state.get("generated_ideas", []) or []),
+            "run_status": str(state.get("run_status", "") or ""),
+        }
 
     @staticmethod
     def _derive_follow_up_topic(
@@ -849,6 +990,7 @@ class ResearchService:
                 "paper_id": str(getattr(paper, "paper_id", "") or "").strip(),
                 "title": str(getattr(paper, "title", "") or ""),
                 "abstract": str(getattr(paper, "abstract", "") or ""),
+                "review_text": str(getattr(paper, "review_text", "") or ""),
                 "authors": list(getattr(paper, "authors", []) or []),
                 "keywords": list(getattr(paper, "keywords", []) or []),
                 "publish_date": str(getattr(paper, "publish_date", "") or ""),

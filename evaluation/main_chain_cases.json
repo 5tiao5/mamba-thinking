@@ -1,0 +1,263 @@
+{
+  "version": "1.0",
+  "description": "Small but strict end-to-end acceptance cases for Product Agent. These cases capture historical bad cases from manual testing and should be used alongside retrieval_cases.json.",
+  "global_hard_gates": [
+    {
+      "id": "no_silent_fallback",
+      "description": "Seed or fallback papers must not be used to make a failed search look successful."
+    },
+    {
+      "id": "follow_up_must_refresh_when_constrained",
+      "description": "A follow-up that adds years, methods, facets, or expansion scope must trigger retrieval refresh or explain why no new papers were found."
+    },
+    {
+      "id": "no_off_topic_core_papers",
+      "description": "Clearly off-topic papers must not enter the core analysis pool."
+    },
+    {
+      "id": "unknown_citations_not_zero",
+      "description": "Unknown citation counts must be displayed as unknown, not as literal zero citations."
+    },
+    {
+      "id": "taxonomy_counts_match_details",
+      "description": "If a taxonomy branch reports matched papers, the UI must show the paper names."
+    },
+    {
+      "id": "strong_graph_edges_need_evidence",
+      "description": "Citation, improvement, extension, and comparison edges need metadata or text evidence; generic related edges must not be upgraded."
+    },
+    {
+      "id": "conclusions_need_contract",
+      "description": "Research gaps and ideas must expose evidence_level, evidence_reason, and valid supporting_paper_ids when claimed as supported."
+    },
+    {
+      "id": "knowledge_hits_are_not_paper_evidence",
+      "description": "Knowledge hits may guide context but cannot directly support conclusions unless the underlying paper enters the current analysis pool."
+    },
+    {
+      "id": "overview_must_merge_not_overwrite",
+      "description": "The conversation overview must not blindly replace earlier high-value papers and conclusions with the latest round."
+    }
+  ],
+  "cases": [
+    {
+      "id": "agent_tool_use_eval",
+      "priority": "P0",
+      "title": "AI Agent tool-use evaluation main chain",
+      "setup": {
+        "research_title": "Agent 工具使用评测验收",
+        "topic": "AI Agent 工具使用的评测方法，重点关注工具选择、函数调用和失败恢复",
+        "research_mode": "hybrid",
+        "knowledge_scope": "shared",
+        "run_mode": "balanced"
+      },
+      "follow_ups": [
+        "补充近三年的新论文，重点关注真实工具调用、MCP/函数调用和失败恢复",
+        "缩小到近两年的 benchmark/evaluation 论文"
+      ],
+      "must_cover": [
+        "AI or LLM agents",
+        "tool use, tool calling, function calling, or API calling",
+        "evaluation, benchmark, reliability, robustness, or failure recovery"
+      ],
+      "forbidden_signals": [
+        "generic AI agent survey without tool-use evaluation",
+        "seed or fallback papers in core analysis",
+        "citation count displayed as 0 when unknown",
+        "all graph edges presented as strong evolution without evidence"
+      ],
+      "workspace_checks": [
+        "source_trace shows retrieval refresh or explicit no-new-paper reason for constrained follow-up",
+        "core papers remain topic-aligned",
+        "graph edge labels are conservative",
+        "gaps and ideas expose conclusion evidence contract"
+      ],
+      "historical_bad_cases": [
+        "Follow-up did not search new papers and only reused old papers.",
+        "Fallback seed papers appeared as if they were real evidence.",
+        "Citation counts showed 0 for papers whose citations were not fetched.",
+        "Evolution graph contained only related edges or over-confident relationships."
+      ]
+    },
+    {
+      "id": "multimodal_fusion_facets",
+      "priority": "P0",
+      "title": "Large multimodal model fusion with facet follow-up",
+      "setup": {
+        "research_title": "多模态融合验收",
+        "topic": "大模型多模态融合",
+        "research_mode": "hybrid",
+        "knowledge_scope": "conversation_only",
+        "run_mode": "balanced"
+      },
+      "follow_ups": [
+        "补充近三年的新论文，重点关注融合架构、跨模态对齐和缺失模态鲁棒性"
+      ],
+      "must_cover": [
+        "multimodal fusion",
+        "large multimodal models or vision-language models",
+        "fusion architecture, cross-modal alignment, or missing modality robustness"
+      ],
+      "forbidden_signals": [
+        "battery discovery papers",
+        "public dataset accessibility papers unrelated to multimodal fusion",
+        "software engineering agent papers",
+        "only old imported papers after the follow-up asks for new papers"
+      ],
+      "workspace_checks": [
+        "query intent extracts the three user facets",
+        "follow-up result includes retrieval attempt for recent papers",
+        "taxonomy branch counts match displayed paper names",
+        "overview preserves useful earlier papers while incorporating new ones"
+      ],
+      "historical_bad_cases": [
+        "Follow-up kept using only original PDF papers.",
+        "Search returned battery or unrelated accessibility papers.",
+        "Evolution graph showed two papers while the evidence pool contained more.",
+        "Research overview paper metadata lost citation status."
+      ]
+    },
+    {
+      "id": "software_engineering_agents_recent",
+      "priority": "P0",
+      "title": "Software engineering agents with time constraint",
+      "setup": {
+        "research_title": "软件工程 Agent 验收",
+        "topic": "AI Agent for software engineering",
+        "research_mode": "hybrid",
+        "knowledge_scope": "shared",
+        "run_mode": "balanced"
+      },
+      "follow_ups": [
+        "缩小到近两年的代码 Agent 评测论文"
+      ],
+      "must_cover": [
+        "AI or LLM agents",
+        "software engineering, code generation, repositories, or program repair",
+        "evaluation or benchmark",
+        "recent-year constraint"
+      ],
+      "forbidden_signals": [
+        "robotics or biology papers",
+        "methodology expansion that ignores the requested time window",
+        "overview overwriting all earlier high-value papers"
+      ],
+      "workspace_checks": [
+        "time range enters retrieval plan",
+        "current result differs from overall overview",
+        "overview synthesis does not claim the requested direction is uncovered if the follow-up is expanding it",
+        "gaps and ideas remain evidence-gated"
+      ],
+      "historical_bad_cases": [
+        "Narrowing to recent papers did not trigger new retrieval.",
+        "Summary claimed a direction was uncovered while the user was explicitly expanding it.",
+        "Overview core paper merge was too biased toward the latest round."
+      ]
+    },
+    {
+      "id": "pdf_hybrid_import_and_search",
+      "priority": "P1",
+      "title": "PDF import plus system search",
+      "setup": {
+        "research_title": "PDF 混合研究验收",
+        "topic": "大模型多模态融合",
+        "research_mode": "hybrid",
+        "knowledge_scope": "conversation_only",
+        "run_mode": "balanced",
+        "manual_setup": "Import 2 to 5 local PDFs before or during the research."
+      },
+      "follow_ups": [
+        "在已有论文基础上补充近三年的系统检索论文"
+      ],
+      "must_cover": [
+        "user-uploaded PDFs remain visible as user_upload",
+        "system search contributes papers in hybrid mode",
+        "follow-up can add new system-search papers"
+      ],
+      "forbidden_signals": [
+        "hybrid mode only re-ranks uploaded PDFs",
+        "uploaded PDF metadata overwrites system-search metadata",
+        "paper origin disappears in overview"
+      ],
+      "workspace_checks": [
+        "paper table shows user upload and system search origins",
+        "citation unknown stays unknown",
+        "taxonomy and graph can include both imported and searched papers when relevant"
+      ],
+      "historical_bad_cases": [
+        "Follow-up failed to supplement search results after PDF import.",
+        "Citation and source identity were lost in research overview."
+      ]
+    },
+    {
+      "id": "shared_knowledge_pollution",
+      "priority": "P1",
+      "title": "Shared knowledge should not pollute unrelated research",
+      "setup": {
+        "research_title": "共享知识边界验收",
+        "topic": "大模型多模态融合",
+        "research_mode": "hybrid",
+        "knowledge_scope": "shared",
+        "run_mode": "balanced",
+        "manual_setup": "Create or keep a shared knowledge document about AI Agent software engineering before running this case."
+      },
+      "follow_ups": [
+        "重点关注跨模态对齐和缺失模态鲁棒性"
+      ],
+      "must_cover": [
+        "irrelevant shared knowledge is filtered or clearly marked as low relevance",
+        "knowledge hits do not become paper evidence",
+        "supporting_paper_ids only reference current analysis papers"
+      ],
+      "forbidden_signals": [
+        "AI Agent software engineering shared knowledge supports multimodal fusion conclusions",
+        "knowledge hit UI implies the hit proves a final conclusion",
+        "shared document paper IDs appear in conclusion evidence without entering analysis pool"
+      ],
+      "workspace_checks": [
+        "source_trace.filtered_out_count or retrieval_message explains filtering when applicable",
+        "RAG panel separates shared and current research knowledge",
+        "conclusion evidence block references only current workspace papers"
+      ],
+      "historical_bad_cases": [
+        "AI Agent for Software Engineering knowledge polluted multimodal research.",
+        "Knowledge hit display was too abstract for users to understand source usage."
+      ]
+    },
+    {
+      "id": "skill_context_boundary",
+      "priority": "P1",
+      "title": "Skill selection enters context but not evidence",
+      "setup": {
+        "research_title": "Skill 链路验收",
+        "topic": "AI Agent 工具使用评测",
+        "research_mode": "hybrid",
+        "knowledge_scope": "conversation_only",
+        "run_mode": "balanced",
+        "manual_setup": "Create and enable a skill such as literature_review_matrix, then select it before running."
+      },
+      "follow_ups": [
+        "用矩阵方式比较工具选择、函数调用和失败恢复三个维度"
+      ],
+      "must_cover": [
+        "skill can be created, enabled, selected, and persisted",
+        "selected_skill_ids appear in task trace",
+        "skill description guides structure without becoming paper evidence"
+      ],
+      "forbidden_signals": [
+        "disabled or invalid dependency skill silently accepted",
+        "skill text appears as if it were a cited paper",
+        "selection disappears after refresh"
+      ],
+      "workspace_checks": [
+        "trace includes selected_skill_ids",
+        "gaps and ideas still rely on paper supporting_paper_ids",
+        "skill management UI remains consistent after refresh"
+      ],
+      "historical_bad_cases": [
+        "Docs promised skill features before they were implemented.",
+        "Skill context risked being confused with evidence."
+      ]
+    }
+  ]
+}

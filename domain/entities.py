@@ -65,12 +65,27 @@ class ResearchTask:
 
 
 @dataclass
+class ResearchTaskEvent:
+    """A lightweight user-facing event emitted while a research task runs."""
+
+    event_id: str
+    task_id: str
+    sequence: int
+    stage: str
+    status: str
+    message: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
 class PaperRecord:
     """工作台中展示的一篇论文。"""
 
     paper_id: str
     title: str
     abstract: str = ""
+    review_text: str = ""
     authors: List[str] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)
     publish_date: str = ""
@@ -98,6 +113,9 @@ class GapRecord:
     summary: str
     severity: str = "medium"
     evidence: List[str] = field(default_factory=list)
+    supporting_paper_ids: List[str] = field(default_factory=list)
+    evidence_level: str = "exploratory"
+    evidence_reason: str = ""
 
 
 @dataclass
@@ -112,6 +130,9 @@ class ResearchIdea:
     contribution: str
     related_papers: List[str] = field(default_factory=list)
     derived_from_gaps: List[str] = field(default_factory=list)
+    supporting_paper_ids: List[str] = field(default_factory=list)
+    evidence_level: str = "exploratory"
+    evidence_reason: str = ""
     confidence: float = 0.0
     tags: List[str] = field(default_factory=list)
     raw_text: str = ""
@@ -130,6 +151,9 @@ class ResearchIdea:
             "contribution": self.contribution,
             "related_papers": list(self.related_papers),
             "derived_from_gaps": list(self.derived_from_gaps),
+            "supporting_paper_ids": list(self.supporting_paper_ids),
+            "evidence_level": self.evidence_level,
+            "evidence_reason": self.evidence_reason,
             "confidence": float(self.confidence),
             "tags": list(self.tags),
             "raw_text": self.raw_text,
@@ -149,6 +173,9 @@ class ResearchIdeaRecord:
     contribution: str
     related_papers: List[str] = field(default_factory=list)
     derived_from_gaps: List[str] = field(default_factory=list)
+    supporting_paper_ids: List[str] = field(default_factory=list)
+    evidence_level: str = "exploratory"
+    evidence_reason: str = ""
     confidence: float = 0.0
     tags: List[str] = field(default_factory=list)
     raw_text: str = ""

@@ -46,6 +46,17 @@ export type FollowUpTaskItem = {
   research_mode?: ResearchMode;
 };
 
+export type ResearchTaskEventItem = {
+  event_id: string;
+  task_id: string;
+  sequence: number;
+  stage: string;
+  status: string;
+  message: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
 export type ResearchTaskSummaryItem = {
   task_id: string;
   conversation_id: string;
@@ -74,6 +85,28 @@ export type ContinueConversationPayload = {
   knowledge_hits?: WorkspaceKnowledgeHit[];
   workspace_context?: string[];
   follow_up_task?: FollowUpTaskItem | null;
+  follow_up_run_scheduled?: boolean;
+};
+
+export type WorkspacePaperBrief = {
+  problem: string;
+  method: string;
+  contribution: string;
+  limitation: string;
+  relation_to_topic: string;
+  tags: string[];
+  source: string;
+  claim_checks?: WorkspacePaperClaimCheck[];
+};
+
+export type WorkspacePaperClaimCheck = {
+  claim_type: string;
+  claim: string;
+  status: "verified" | "partial" | "unknown" | "conflict" | string;
+  evidence: string;
+  source_level: "full_text" | "abstract" | "metadata" | string;
+  section: string;
+  caveat: string;
 };
 
 export type WorkspacePaper = {
@@ -93,6 +126,7 @@ export type WorkspacePaper = {
   paper_pool_status?: "candidate" | "core" | "";
   document_id?: string;
   origin?: string;
+  paper_brief?: WorkspacePaperBrief;
 };
 
 export type WorkspaceGraphEdge = {
@@ -122,6 +156,9 @@ export type WorkspaceGap = {
   summary: string;
   severity: string;
   evidence: string[];
+  supporting_paper_ids?: string[];
+  evidence_level?: "direct" | "indirect" | "exploratory";
+  evidence_reason?: string;
 };
 
 export type WorkspaceIdea = {
@@ -130,6 +167,9 @@ export type WorkspaceIdea = {
   approach: string;
   feasibility: string;
   contribution: string;
+  supporting_paper_ids?: string[];
+  evidence_level?: "direct" | "indirect" | "exploratory";
+  evidence_reason?: string;
   raw_text: string;
 };
 
@@ -198,6 +238,34 @@ export type WorkspaceEvidenceSnapshot = {
   alignment_score: number;
 };
 
+export type WorkspaceBriefItem = {
+  text: string;
+  supporting_paper_ids: string[];
+  source_task_ids: string[];
+  evidence_level: string;
+};
+
+export type WorkspaceBriefPaper = {
+  paper_id: string;
+  title: string;
+  reason: string;
+  source_task_ids: string[];
+  evidence_level: string;
+};
+
+export type WorkspaceResearchBrief = {
+  mode: "task" | "conversation" | string;
+  headline: string;
+  executive_summary: string;
+  key_findings: WorkspaceBriefItem[];
+  must_read_papers: WorkspaceBriefPaper[];
+  open_gaps: WorkspaceBriefItem[];
+  recommended_next_steps: WorkspaceBriefItem[];
+  evidence_warnings: string[];
+  round_evolution: WorkspaceBriefItem[];
+  source: string;
+};
+
 export type WorkspaceKnowledgeHit = {
   title: string;
   snippet: string;
@@ -217,6 +285,8 @@ export type WorkspaceSourceTrace = {
   retrieval_status: string;
   retrieval_message: string;
   filtered_out_count: number;
+  real_paper_count?: number;
+  total_paper_count?: number;
   fallback_used: boolean;
   external_search_skipped?: boolean;
   refresh_triggered: boolean;
@@ -225,6 +295,11 @@ export type WorkspaceSourceTrace = {
   direct_paper_count?: number;
   adjacent_paper_count?: number;
   low_relevance_filtered_count?: number;
+  evidence_pool_count?: number;
+  analysis_paper_count?: number;
+  broad_search_triggered?: boolean;
+  recall_rescue_triggered?: boolean;
+  facet_rescue_triggered?: boolean;
   knowledge_hit_count: number;
   knowledge_hits: WorkspaceKnowledgeHit[];
   workspace_hint_count: number;
@@ -255,6 +330,7 @@ export type WorkspaceSnapshot = {
   task_id: string;
   topic: string;
   summary: string;
+  research_brief?: WorkspaceResearchBrief | null;
   papers: WorkspacePaper[];
   analysis_paper_ids: string[];
   taxonomy: WorkspaceTaxonomy;
@@ -319,6 +395,7 @@ export type DeleteConversationPayload = {
   deleted: boolean;
   deleted_messages: number;
   deleted_tasks: number;
+  deleted_task_events?: number;
   deleted_workspaces: number;
 };
 

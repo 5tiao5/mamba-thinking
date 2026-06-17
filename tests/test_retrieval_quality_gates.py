@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from product_agent.research_agent.nodes.corrector import corrector_node
+from product_agent.research_agent.nodes.searcher import _refine_outcome_for_relevance
 from product_agent.research_agent.nodes.synthesizer import (
     _should_suppress_research_ideas,
 )
@@ -195,6 +196,37 @@ def test_balanced_mode_still_skips_optional_repair_when_evidence_is_healthy() ->
 
     assert updated["retry_requested"] is False
     assert updated["repair_stop_reason"] == "speed_mode"
+
+
+def test_retrieval_outcome_marks_thin_evidence_after_low_relevance_filtering() -> None:
+    outcome = {
+        "status": "normal",
+        "direct_paper_count": 0,
+        "adjacent_paper_count": 0,
+        "analysis_paper_count": 2,
+        "low_relevance_filtered_count": 32,
+    }
+
+    _refine_outcome_for_relevance(outcome)
+
+    assert outcome["status"] == "thin_after_filter"
+    assert "Filtered 32 low-relevance" in outcome["message"]
+
+
+def test_retrieval_outcome_marks_partial_direct_evidence() -> None:
+    outcome = {
+        "status": "fresh_evidence_added",
+        "direct_paper_count": 1,
+        "adjacent_paper_count": 4,
+        "novel_paper_count": 2,
+        "reused_paper_count": 3,
+    }
+
+    _refine_outcome_for_relevance(outcome)
+
+    assert outcome["status"] == "partial_direct_evidence"
+    assert "1 direct and 4 neighboring" in outcome["message"]
+    assert "added 2 newly matched" in outcome["message"]
 
 
 def test_zero_direct_evidence_suppresses_ideas_and_recommendations() -> None:

@@ -29,7 +29,7 @@ def main() -> None:
         description="Start the Product Agent FastAPI backend from inside the product_agent repo."
     )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to.")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind to.")
+    parser.add_argument("--port", type=int, default=8001, help="Port to bind to.")
     parser.add_argument("--no-reload", action="store_true", help="Disable hot reload.")
     args = parser.parse_args()
 

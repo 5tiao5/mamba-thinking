@@ -53,6 +53,7 @@ class ContinueConversationRequest(BaseModel):
     content: str
     focus: Optional[str] = Field(default=None, description="Optional sub-problem to focus on in this follow-up")
     create_follow_up_task: bool = Field(default=True, description="Whether to create a follow-up research task")
+    run_follow_up_task: bool = Field(default=True, description="Whether to run the follow-up research task in background")
     mode: str = Field(default="default", description="Follow-up task mode: default / fast / balanced")
     knowledge_scope: Optional[KnowledgeScopeLiteral] = Field(
         default=None,
@@ -93,6 +94,7 @@ class ContinueConversationResponse(BaseModel):
     knowledge_hits: list[KnowledgeHitView] = Field(default_factory=list, description="Structured knowledge hits")
     workspace_context: list[str] = Field(default_factory=list, description="Conversation workspace guidance")
     follow_up_task: Optional[FollowUpTaskPreview] = None
+    follow_up_run_scheduled: bool = False
 
 
 class ListConversationsResponse(BaseModel):

@@ -14,6 +14,7 @@ from product_agent.domain import (
     PaperRecord,
     ResearchIdeaRecord,
     ResearchTask,
+    ResearchTaskEvent,
     ResearchWorkspace,
     SkillDescriptor,
 )
@@ -391,6 +392,7 @@ class SQLiteWorkspaceRepository:
             "paper_id": paper.paper_id,
             "title": paper.title,
             "abstract": paper.abstract,
+            "review_text": str(getattr(paper, "review_text", "") or ""),
             "authors": list(paper.authors),
             "keywords": list(paper.keywords),
             "publish_date": paper.publish_date,
@@ -417,6 +419,9 @@ class SQLiteWorkspaceRepository:
             "summary": gap.summary,
             "severity": gap.severity,
             "evidence": list(gap.evidence),
+            "supporting_paper_ids": list(gap.supporting_paper_ids),
+            "evidence_level": gap.evidence_level,
+            "evidence_reason": gap.evidence_reason,
         }
 
     @staticmethod
@@ -431,10 +436,78 @@ class SQLiteWorkspaceRepository:
             "contribution": idea.contribution,
             "related_papers": list(idea.related_papers),
             "derived_from_gaps": list(idea.derived_from_gaps),
+            "supporting_paper_ids": list(idea.supporting_paper_ids),
+            "evidence_level": idea.evidence_level,
+            "evidence_reason": idea.evidence_reason,
             "confidence": idea.confidence,
             "tags": list(idea.tags),
             "raw_text": idea.raw_text,
         }
+
+
+class SQLiteResearchTaskEventRepository:
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+
+    def append(self, event: ResearchTaskEvent) -> ResearchTaskEvent:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO research_task_events (
+                    event_id, task_id, sequence, stage, status,
+                    message, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.event_id,
+                    event.task_id,
+                    int(event.sequence),
+                    event.stage,
+                    event.status,
+                    event.message,
+                    _dump_json(dict(event.payload)),
+                    _dump_datetime(event.created_at),
+                ),
+            )
+            connection.commit()
+        return event
+
+    def list_by_task(self, task_id: str) -> list[ResearchTaskEvent]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM research_task_events
+                WHERE task_id = ?
+                ORDER BY sequence ASC, created_at ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return [self._row_to_entity(row) for row in rows]
+
+    def delete_by_task_ids(self, task_ids: list[str]) -> int:
+        if not task_ids:
+            return 0
+        placeholders = ",".join("?" for _ in task_ids)
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                f"DELETE FROM research_task_events WHERE task_id IN ({placeholders})",
+                tuple(task_ids),
+            )
+            connection.commit()
+        return cursor.rowcount
+
+    @staticmethod
+    def _row_to_entity(row) -> ResearchTaskEvent:
+        return ResearchTaskEvent(
+            event_id=row["event_id"],
+            task_id=row["task_id"],
+            sequence=int(row["sequence"]),
+            stage=row["stage"],
+            status=row["status"],
+            message=row["message"],
+            payload=dict(_load_json(row["payload_json"]) or {}),
+            created_at=_load_datetime(row["created_at"]),
+        )
 
 
 class SQLiteWorkingMemoryRepository:
@@ -573,6 +646,14 @@ class SQLiteKnowledgeRepository:
 
     def delete(self, document_id: str) -> bool:
         with self.database.connect() as connection:
+            connection.execute(
+                "DELETE FROM conversation_research_papers WHERE document_id = ?",
+                (document_id,),
+            )
+            connection.execute(
+                "DELETE FROM vector_chunks WHERE document_id = ?",
+                (document_id,),
+            )
             cursor = connection.execute(
                 "DELETE FROM knowledge_documents WHERE document_id = ?",
                 (document_id,),

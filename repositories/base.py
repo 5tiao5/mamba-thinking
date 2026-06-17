@@ -9,6 +9,7 @@ from product_agent.domain import (
     KnowledgeDocument,
     MessageRecord,
     ResearchTask,
+    ResearchTaskEvent,
     ResearchWorkspace,
 )
 
@@ -55,6 +56,17 @@ class ResearchTaskRepository(Protocol):
         ...
 
     def delete_by_conversation(self, conversation_id: str) -> list[str]:
+        ...
+
+
+class ResearchTaskEventRepository(Protocol):
+    def append(self, event: ResearchTaskEvent) -> ResearchTaskEvent:
+        ...
+
+    def list_by_task(self, task_id: str) -> list[ResearchTaskEvent]:
+        ...
+
+    def delete_by_task_ids(self, task_ids: list[str]) -> int:
         ...
 
 

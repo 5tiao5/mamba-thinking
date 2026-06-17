@@ -501,6 +501,19 @@ code {
   font-weight: 800;
 }
 
+.knowledge-scope-control {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.knowledge-scope-control small {
+  max-width: 320px;
+  color: #6b7d93;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
 .toggle-switch {
   position: relative;
   width: 34px;

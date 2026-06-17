@@ -174,6 +174,46 @@ class GeneralQueryDecompositionTests(unittest.TestCase):
         self.assertEqual(expanded["focus_facets"], intent.focus_facets)
 
     @patch(
+        "product_agent.research_agent.query_expansion.call_openai_json",
+        return_value={
+            "topic_anchor": "large language models causal reasoning",
+            "topic_alias_queries": [
+                "large language models causal reasoning",
+                "LLM causal discovery",
+            ],
+            "broad_queries": ["counterfactual reasoning language models"],
+            "recall_queries": ["causal discovery LLM"],
+            "facets": [],
+        },
+    )
+    @patch(
+        "product_agent.research_agent.query_expansion.has_openai_key",
+        return_value=True,
+    )
+    def test_llm_expands_chinese_topic_anchor_without_required_facets(
+        self,
+        _has_key,
+        _call_llm,
+    ) -> None:
+        topic = "\u5927\u6a21\u578b\u56e0\u679c\u63a8\u7406"
+        expanded, outcome = expand_focus_facets(
+            query_intent={"core_topic": topic, "focus_facets": []},
+            topic=topic,
+            mode="balanced",
+        )
+        plan = build_retrieval_plan(
+            topic=topic,
+            query_intent=expanded,
+            mode="balanced",
+        )
+
+        self.assertEqual(outcome["status"], "expanded")
+        self.assertEqual(plan.topic_anchor, "large language models causal reasoning")
+        self.assertIn("LLM causal discovery", plan.strict_queries)
+        self.assertIn("counterfactual reasoning language models", plan.broad_queries)
+        self.assertIn("causal discovery LLM", plan.recall_queries)
+
+    @patch(
         "product_agent.research_agent.query_expansion.has_openai_key",
         return_value=False,
     )

@@ -14,6 +14,7 @@ import type {
   ResearchPaperItem,
   ResearchPaperStatus,
   ResearchMode,
+  ResearchTaskEventItem,
   ResearchTaskDetailItem,
   ResearchTaskSummaryItem,
   RunTaskPayload,
@@ -34,8 +35,8 @@ import {
   demoWorkspace,
 } from "./demoData";
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
-const API_BASE_URLS = [API_BASE_URL, "http://127.0.0.1:8001"].filter(
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001";
+const API_BASE_URLS = [API_BASE_URL, "http://127.0.0.1:8000"].filter(
   (url, index, urls) => urls.indexOf(url) === index
 );
 
@@ -144,6 +145,7 @@ export const api = {
     content: string;
     focus?: string;
     create_follow_up_task?: boolean;
+    run_follow_up_task?: boolean;
     mode?: string;
     knowledge_scope?: KnowledgeScope;
     research_mode?: ResearchMode;
@@ -157,6 +159,7 @@ export const api = {
           message: payload.content,
           next_focus: payload.focus || demoContinueResponse.next_focus,
           follow_up_task: payload.create_follow_up_task === false ? null : demoContinueResponse.follow_up_task,
+          follow_up_run_scheduled: false,
         },
       });
     }
@@ -197,6 +200,35 @@ export const api = {
   },
   getTask: (taskId: string) =>
     request<ApiResponse<ResearchTaskDetailItem>>(`/research/tasks/${taskId}`),
+  listTaskEvents: (taskId: string) => {
+    if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
+      return Promise.resolve({
+        success: true,
+        data: {
+          items: [
+            {
+              event_id: "demo-event-001",
+              task_id: taskId,
+              sequence: 1,
+              stage: "runtime",
+              status: "completed",
+              message: "Demo research task completed.",
+              payload: {
+                paper_count: demoWorkspace.papers.length,
+                graph_edge_count: demoWorkspace.graph_edges.length,
+                gap_count: demoWorkspace.gaps.length,
+                idea_count: demoWorkspace.ideas.length,
+              },
+              created_at: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+    }
+    return request<ApiResponse<{ items: ResearchTaskEventItem[] }>>(
+      `/research/tasks/${taskId}/events`
+    );
+  },
   runTask: (taskId: string) => {
     if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
       return Promise.resolve({

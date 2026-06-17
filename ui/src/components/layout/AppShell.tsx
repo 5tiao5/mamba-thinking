@@ -14,11 +14,13 @@ import type {
   MessageItem,
   PaperImportCandidateItem,
   ResearchMode,
+  ResearchTaskEventItem,
   ResearchTaskSummaryItem,
   SkillItem,
   ToolItem,
   WorkspaceSnapshot,
 } from "../../types/api";
+import { AgentRunGraph } from "../chat/AgentRunGraph";
 import { AssistantMessageContent } from "../chat/AssistantMessageContent";
 import { MessageSourceTrace } from "../chat/MessageSourceTrace";
 import { ResearchPaperPanel } from "../research/ResearchPaperPanel";
@@ -133,6 +135,59 @@ function getDisplayMessageContent(message: MessageItem) {
   );
 }
 
+const terminalTaskStatuses = new Set(["completed", "degraded", "failed", "step_limit_reached"]);
+
+function taskEventStageLabel(stage?: string) {
+  switch (stage) {
+    case "planner":
+      return "理解问题与拆解查询";
+    case "searcher":
+      return "检索论文与筛选证据";
+    case "taxonomy":
+      return "组织研究方向图";
+    case "evolution":
+      return "构建论文演进关系";
+    case "auditor":
+      return "审计证据覆盖";
+    case "corrector":
+      return "检查是否需要补搜";
+    case "synthesizer":
+      return "生成研究结论";
+    case "runtime":
+      return "运行研究任务";
+    case "task":
+      return "创建研究任务";
+    default:
+      return stage || "推进研究流程";
+  }
+}
+
+function latestTaskEventText(event?: ResearchTaskEventItem) {
+  if (!event) {
+    return "追问任务已进入后台队列，正在等待 Agent 接手。";
+  }
+
+  const stage = taskEventStageLabel(event.stage);
+  if (event.status === "started") {
+    return `Agent 正在${stage}...`;
+  }
+  if (event.status === "completed") {
+    return `${stage}已完成，继续推进下一步。`;
+  }
+  if (event.status === "failed") {
+    return `${stage}失败，请稍后查看失败信息。`;
+  }
+  if (event.stage === "runtime" && terminalTaskStatuses.has(event.status)) {
+    return `研究任务已结束：${taskStatusLabel(event.status)}。`;
+  }
+
+  const paperCount = Number(event.payload?.paper_count ?? event.payload?.evidence_pool_count ?? 0);
+  if (paperCount > 0) {
+    return `${stage}进行中，目前已整理 ${paperCount} 篇相关论文。`;
+  }
+  return `${stage}进行中。`;
+}
+
 export function AppShell({ children }: PropsWithChildren) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -161,6 +216,9 @@ export function AppShell({ children }: PropsWithChildren) {
   const [latestFollowUpTask, setLatestFollowUpTask] = useState<FollowUpTaskItem | null>(null);
   const [latestFollowUpTaskScope, setLatestFollowUpTaskScope] = useState<KnowledgeScope>("shared");
   const [runningTaskId, setRunningTaskId] = useState("");
+  const [runEventTaskId, setRunEventTaskId] = useState("");
+  const [runEvents, setRunEvents] = useState<ResearchTaskEventItem[]>([]);
+  const [dismissedRunGraphTaskId, setDismissedRunGraphTaskId] = useState("");
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
@@ -317,6 +375,9 @@ export function AppShell({ children }: PropsWithChildren) {
   useEffect(() => {
     setLatestFollowUpTask(null);
     setLatestFollowUpTaskScope("shared");
+    setRunEventTaskId("");
+    setRunEvents([]);
+    setDismissedRunGraphTaskId("");
     setPaperPanelOpen(false);
   }, [activeConversationId]);
 
@@ -461,6 +522,9 @@ export function AppShell({ children }: PropsWithChildren) {
     }
 
     setRunningTaskId(activeTaskId || "creating");
+    setRunEventTaskId("");
+    setRunEvents([]);
+    setDismissedRunGraphTaskId("");
     const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     const shouldCreateFreshTask =
       activeConversationId !== DEMO_CONVERSATION_ID &&
@@ -489,17 +553,69 @@ export function AppShell({ children }: PropsWithChildren) {
         });
         taskId = created.data.task_id;
       }
-      await api.runTask(taskId);
+      setRunningTaskId(taskId);
+      setRunEventTaskId(taskId);
+      setAskStatus(`研究任务已启动，Agent 正在按「${scopeLabel}」推进...`);
+
+      let runError: unknown = null;
+      const runPromise = api.runTask(taskId).catch((error) => {
+        runError = error;
+        return null;
+      });
+      const finalStatus = await waitForTaskCompletion(taskId, scopeLabel);
+      await runPromise;
+      if (runError && !terminalTaskStatuses.has(finalStatus)) {
+        throw runError;
+      }
       await loadHistory();
-      setAskStatus(
-        `结果已生成，本轮使用「${researchModeLabel(researchMode)}」和「${scopeLabel}」。可以继续追问来调整方向。`
-      );
-      navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      if (finalStatus === "completed" || finalStatus === "degraded") {
+        setAskStatus(
+          `结果已生成，本轮使用「${researchModeLabel(researchMode)}」和「${scopeLabel}」。可以继续追问来调整方向。`
+        );
+        navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      } else if (finalStatus === "failed") {
+        setAskStatus("研究任务生成失败，已保留失败记录，可以调整问题后重试。");
+      } else {
+        setAskStatus("研究任务仍在后台运行，可稍后刷新或打开本次结果查看。");
+      }
     } catch (error) {
       setAskStatus(toErrorMessage(error));
     } finally {
       setRunningTaskId("");
     }
+  }
+
+  async function waitForTaskCompletion(taskId: string, scopeLabel: string) {
+    let latestStatus = "created";
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 800 : 1500));
+
+      const [taskResult, eventsResult] = await Promise.allSettled([
+        api.getTask(taskId),
+        api.listTaskEvents(taskId),
+      ]);
+
+      if (eventsResult.status === "fulfilled") {
+        const events = eventsResult.value.data.items;
+        const latestEvent = events[events.length - 1];
+        setRunEvents(events);
+        setAskStatus(latestTaskEventText(latestEvent));
+      }
+
+      if (taskResult.status === "fulfilled") {
+        latestStatus = taskResult.value.data.status;
+        setLatestFollowUpTask((current) =>
+          current?.task_id === taskId ? { ...current, status: latestStatus } : current
+        );
+        if (terminalTaskStatuses.has(latestStatus)) {
+          return latestStatus;
+        }
+      } else if (eventsResult.status === "rejected") {
+        setAskStatus(`追问任务已提交，正在按「${scopeLabel}」后台运行...`);
+      }
+    }
+
+    return latestStatus;
   }
 
   async function submitSideQuestion() {
@@ -513,6 +629,9 @@ export function AppShell({ children }: PropsWithChildren) {
     }
 
     setAsking(true);
+    setRunEventTaskId("");
+    setRunEvents([]);
+    setDismissedRunGraphTaskId("");
     const scopeLabel = knowledgeScopeLabel(knowledgeScope);
     setAskStatus("正在继续追问...");
     try {
@@ -521,41 +640,85 @@ export function AppShell({ children }: PropsWithChildren) {
         conversation_id: activeConversationId,
         content: askContent.trim(),
         create_follow_up_task: true,
+        run_follow_up_task: true,
         mode: runMode,
         knowledge_scope: knowledgeScope,
         research_mode: researchMode,
         selected_skill_ids: selectedSkillIds,
       });
       const appliedScope = response.data.knowledge_scope_applied ?? knowledgeScope;
+      const appliedScopeLabel = knowledgeScopeLabel(appliedScope);
+      const followUpTask = response.data.follow_up_task ?? null;
       setAskContent("");
-      setLatestFollowUpTask(response.data.follow_up_task ?? null);
+      setLatestFollowUpTask(followUpTask);
       setLatestFollowUpTaskScope(appliedScope);
-      setAskStatus(response.data.follow_up_task ? "已生成后续研究任务，可运行后刷新结果。" : "追问已发送。");
+      if (followUpTask && response.data.follow_up_run_scheduled) {
+        setRunningTaskId(followUpTask.task_id);
+        setRunEventTaskId(followUpTask.task_id);
+        setAskStatus(`追问已提交，Agent 正在按「${appliedScopeLabel}」后台运行...`);
+        await loadHistory();
+        navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}`);
+
+        const finalStatus = await waitForTaskCompletion(followUpTask.task_id, appliedScopeLabel);
+        await loadHistory();
+        if (finalStatus === "completed" || finalStatus === "degraded") {
+          setLatestFollowUpTask(null);
+          setAskStatus(`新的结果已生成，本轮沿用「${appliedScopeLabel}」，已自动刷新。`);
+          navigate(
+            `/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(followUpTask.task_id)}`
+          );
+        } else if (finalStatus === "failed") {
+          setAskStatus("追问任务生成失败，已保留失败记录，可以调整问题后重试。");
+        } else {
+          setAskStatus("追问任务仍在后台运行，可稍后刷新或打开本次结果查看。");
+        }
+        return;
+      }
+
+      setAskStatus(followUpTask ? "已生成后续研究任务，可运行后刷新结果。" : "追问已发送。");
       await loadHistory();
       setAskStatus(
-        response.data.follow_up_task
-          ? `已按「${knowledgeScopeLabel(appliedScope)}」生成后续研究任务，可运行后刷新结果。`
-          : `追问已按「${knowledgeScopeLabel(appliedScope)}」发送。`
+        followUpTask
+          ? `已按「${appliedScopeLabel}」生成后续研究任务，可运行后刷新结果。`
+          : `追问已按「${appliedScopeLabel}」发送。`
       );
       navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}`);
     } catch (error) {
       setAskStatus(toErrorMessage(error));
     } finally {
       setAsking(false);
+      setRunningTaskId("");
     }
   }
 
   async function runFollowUpTask(taskId: string) {
     setRunningTaskId(taskId);
+    setRunEventTaskId(taskId);
+    setRunEvents([]);
+    setDismissedRunGraphTaskId("");
     const scopeLabel = knowledgeScopeLabel(latestFollowUpTaskScope);
     setAskStatus("正在运行后续研究任务...");
     try {
       setAskStatus(`正在按「${scopeLabel}」运行后续研究任务...`);
-      await api.runTask(taskId);
-      setAskStatus("新的结果已生成，右侧窗口已刷新。");
+      let runError: unknown = null;
+      const runPromise = api.runTask(taskId).catch((error) => {
+        runError = error;
+        return null;
+      });
+      const finalStatus = await waitForTaskCompletion(taskId, scopeLabel);
+      await runPromise;
+      if (runError && !terminalTaskStatuses.has(finalStatus)) {
+        throw runError;
+      }
       await loadHistory();
-      setAskStatus(`新的结果已生成，本轮沿用「${scopeLabel}」，右侧窗口已刷新。`);
-      navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      if (finalStatus === "completed" || finalStatus === "degraded") {
+        setAskStatus(`新的结果已生成，本轮沿用「${scopeLabel}」，右侧窗口已刷新。`);
+        navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
+      } else if (finalStatus === "failed") {
+        setAskStatus("后续研究任务生成失败，已保留失败记录，可以调整问题后重试。");
+      } else {
+        setAskStatus("后续研究任务仍在后台运行，可稍后刷新或打开本次结果查看。");
+      }
     } catch (error) {
       setAskStatus(toErrorMessage(error));
     } finally {
@@ -672,12 +835,12 @@ export function AppShell({ children }: PropsWithChildren) {
   async function saveSkill() {
     const skillId = editingSkillId || skillDraft.skill_id.trim();
     if (!skillId || !skillDraft.display_name.trim()) {
-      setToolStatus("请填写能力 ID 和显示名称。");
+      setToolStatus("请填写模板 ID 和显示名称。");
       return;
     }
 
     setSavingSkillId(skillId);
-    setToolStatus(editingSkillId ? "正在保存研究能力..." : "正在创建研究能力...");
+    setToolStatus(editingSkillId ? "正在保存研究策略模板..." : "正在创建研究策略模板...");
     try {
       const payload = {
         display_name: skillDraft.display_name.trim(),
@@ -698,9 +861,9 @@ export function AppShell({ children }: PropsWithChildren) {
       resetSkillDraft();
       setToolDialogOpen(true);
       setToolDialogTab("skills");
-      setToolStatus(editingSkillId ? "研究能力已更新。" : "研究能力已创建。");
+      setToolStatus(editingSkillId ? "研究策略模板已更新。" : "研究策略模板已创建。");
     } catch (error) {
-      setToolStatus(`研究能力保存失败：${toErrorMessage(error)}`);
+      setToolStatus(`研究策略模板保存失败：${toErrorMessage(error)}`);
     } finally {
       setSavingSkillId("");
     }
@@ -716,14 +879,14 @@ export function AppShell({ children }: PropsWithChildren) {
       }
       setToolStatus(`${response.data.display_name} 已${response.data.enabled ? "启用" : "停用"}。`);
     } catch (error) {
-      setToolStatus(`研究能力更新失败：${toErrorMessage(error)}`);
+      setToolStatus(`研究策略模板更新失败：${toErrorMessage(error)}`);
     } finally {
       setSavingSkillId("");
     }
   }
 
   async function deleteSkill(skill: SkillItem) {
-    const confirmed = window.confirm(`确定删除研究能力「${skill.display_name}」吗？`);
+    const confirmed = window.confirm(`确定删除研究策略模板「${skill.display_name}」吗？`);
     if (!confirmed) return;
 
     setDeletingSkillId(skill.skill_id);
@@ -731,9 +894,9 @@ export function AppShell({ children }: PropsWithChildren) {
       await api.deleteSkill(skill.skill_id);
       setSkills((current) => current.filter((item) => item.skill_id !== skill.skill_id));
       setSelectedSkillIds((current) => current.filter((skillId) => skillId !== skill.skill_id));
-      setToolStatus("研究能力已删除。");
+      setToolStatus("研究策略模板已删除。");
     } catch (error) {
-      setToolStatus(`研究能力删除失败：${toErrorMessage(error)}`);
+      setToolStatus(`研究策略模板删除失败：${toErrorMessage(error)}`);
     } finally {
       setDeletingSkillId("");
     }
@@ -850,6 +1013,16 @@ export function AppShell({ children }: PropsWithChildren) {
   }
 
   const shouldShowGenerateButton = Boolean(activeConversationId && !workspace && !latestFollowUpTask);
+  const latestRunEvent = runEvents[runEvents.length - 1];
+  const latestRunEventIsTerminal = Boolean(
+    latestRunEvent && latestRunEvent.stage === "runtime" && terminalTaskStatuses.has(latestRunEvent.status)
+  );
+  const shouldShowRunGraph = Boolean(
+    runEventTaskId &&
+      runningTaskId === runEventTaskId &&
+      dismissedRunGraphTaskId !== runEventTaskId &&
+      !latestRunEventIsTerminal
+  );
 
   return (
     <div className="app-shell app-shell-single">
@@ -999,6 +1172,11 @@ export function AppShell({ children }: PropsWithChildren) {
                             <>
                               <AssistantMessageContent content={getDisplayMessageContent(message)} />
                               <MessageSourceTrace
+                                detailsHref={
+                                  getMessageTaskId(message)
+                                    ? `/workspace?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(getMessageTaskId(message))}&view=task`
+                                    : undefined
+                                }
                                 inheritedContext={message.metadata?.inherited_context}
                                 sourceTrace={message.metadata?.source_trace}
                               />
@@ -1043,6 +1221,13 @@ export function AppShell({ children }: PropsWithChildren) {
                       </button>
                     </div>
                   </div>
+                ) : null}
+
+                {shouldShowRunGraph ? (
+                  <AgentRunGraph
+                    events={runEvents}
+                    onDismiss={() => setDismissedRunGraphTaskId(runEventTaskId)}
+                  />
                 ) : null}
 
                 <div className="unified-composer">
@@ -1390,7 +1575,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 onClick={() => setToolDialogTab("skills")}
                 type="button"
               >
-                研究能力
+                策略模板
               </button>
               <button
                 className={toolDialogTab === "knowledge" ? "tool-dialog-tab tool-dialog-tab-active" : "tool-dialog-tab"}
@@ -1477,7 +1662,7 @@ export function AppShell({ children }: PropsWithChildren) {
               <>
               <section className="tool-dialog-section">
                 <div className="tool-dialog-section-head">
-                  <strong>本轮启用能力</strong>
+                  <strong>本轮启用策略模板</strong>
                   <StatusPill tone="info" compact>
                     已选 {selectedSkillIds.length} 项
                   </StatusPill>
@@ -1501,7 +1686,7 @@ export function AppShell({ children }: PropsWithChildren) {
                       ))}
                     </div>
                   ) : (
-                    <strong>未选择研究能力</strong>
+                    <strong>未选择策略模板，系统将使用默认研究流程</strong>
                   )}
                 </div>
                 <div className="skill-select-list">
@@ -1533,14 +1718,17 @@ export function AppShell({ children }: PropsWithChildren) {
                       );
                     })
                   ) : (
-                    <div className="sidebar-empty">暂无可选研究能力。可以先创建一个。</div>
+                    <div className="sidebar-empty">暂无可选策略模板。可以先用默认流程，或创建一个常用研究方法模板。</div>
                   )}
                 </div>
               </section>
 
               <section className="tool-dialog-section">
                 <div className="tool-dialog-section-head">
-                  <strong>研究能力库</strong>
+                  <div>
+                    <strong>研究策略模板库</strong>
+                    <p className="section-help">把常用分析方法沉淀成提示模板；它会影响规划，但不会作为论文证据。</p>
+                  </div>
                   <button
                     className="primary-button"
                     onClick={() => {
@@ -1550,7 +1738,7 @@ export function AppShell({ children }: PropsWithChildren) {
                     }}
                     type="button"
                   >
-                    创建能力
+                    创建模板
                   </button>
                 </div>
                 <div className="skill-chip-list">
@@ -1593,7 +1781,7 @@ export function AppShell({ children }: PropsWithChildren) {
                             className="history-delete-button"
                             disabled={deletingSkillId === skill.skill_id}
                             onClick={() => deleteSkill(skill)}
-                            title="删除研究能力"
+                            title="删除研究策略模板"
                             type="button"
                           >
                             {deletingSkillId === skill.skill_id ? "..." : "x"}
@@ -1602,7 +1790,7 @@ export function AppShell({ children }: PropsWithChildren) {
                       </div>
                     ))
                   ) : (
-                    <div className="sidebar-empty">暂无研究能力。点击“创建能力”添加一个。</div>
+                    <div className="sidebar-empty">暂无研究策略模板。点击“创建模板”沉淀一个常用分析方法。</div>
                   )}
                 </div>
               </section>
@@ -1818,12 +2006,12 @@ export function AppShell({ children }: PropsWithChildren) {
       ) : null}
 
       {skillDialogOpen ? (
-        <div className="modal-backdrop modal-backdrop-blur" role="dialog" aria-modal="true" aria-label="研究能力设置">
+        <div className="modal-backdrop modal-backdrop-blur" role="dialog" aria-modal="true" aria-label="研究策略模板设置">
           <div className="create-dialog skill-edit-dialog">
             <div className="create-dialog-head">
               <div>
-                <div className="section-eyebrow">研究能力</div>
-                <h2>{editingSkillId ? "编辑研究能力" : "创建研究能力"}</h2>
+                <div className="section-eyebrow">研究策略模板</div>
+                <h2>{editingSkillId ? "编辑策略模板" : "创建策略模板"}</h2>
               </div>
               <button
                 className="ghost-button"
@@ -1841,7 +2029,7 @@ export function AppShell({ children }: PropsWithChildren) {
             <div className="workspace-side-status">{toolStatus}</div>
             <div className="skill-form-grid">
               <label className="field">
-                <span>能力 ID</span>
+                <span>模板 ID</span>
                 <input
                   className="input"
                   disabled={Boolean(editingSkillId)}
@@ -1861,16 +2049,16 @@ export function AppShell({ children }: PropsWithChildren) {
               </label>
             </div>
             <label className="field">
-              <span>能力说明</span>
+              <span>策略说明</span>
               <textarea
                 className="input textarea skill-description-input"
                 onChange={(event) => setSkillDraft((current) => ({ ...current, description: event.target.value }))}
-                placeholder="说明这个能力适合什么时候使用，以及会如何影响研究规划。"
+                placeholder="说明这个模板适合什么时候使用，以及会如何影响研究规划、检索侧重点或结论组织方式。"
                 value={skillDraft.description}
               />
             </label>
             <div className="field">
-              <span>依赖工具</span>
+              <span>建议配套工具</span>
               {tools.length ? (
                 <div className="skill-tool-picker" aria-label="选择依赖工具">
                   {tools.map((tool) => {
@@ -1917,7 +2105,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   取消
                 </button>
                 <button className="primary-button" disabled={Boolean(savingSkillId)} onClick={saveSkill} type="button">
-                  {savingSkillId ? "保存中" : editingSkillId ? "保存能力" : "创建能力"}
+                  {savingSkillId ? "保存中" : editingSkillId ? "保存模板" : "创建模板"}
                 </button>
               </div>
             </div>

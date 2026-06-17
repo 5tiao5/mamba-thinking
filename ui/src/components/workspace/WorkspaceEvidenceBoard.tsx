@@ -16,7 +16,7 @@ type WorkspaceEvidenceBoardProps = {
 function sourceLabel(source: string) {
   const normalized = (source || "").toLowerCase();
   if (normalized === "fallback") return "系统回退";
-  if (normalized === "user_upload") return "用户上传 PDF";
+  if (normalized === "user_upload") return "用户上传";
   if (normalized === "user_import") return "用户导入";
   if (normalized === "arxiv") return "ArXiv";
   if (normalized === "semantic_scholar") return "Semantic Scholar";
@@ -34,6 +34,17 @@ function evidenceOriginLabel(paper: WorkspacePaper) {
   return "系统检索";
 }
 
+function sourceDetailLabel(paper: WorkspacePaper) {
+  const origin = (paper.origin || paper.source || "").toLowerCase();
+  const source = (paper.source || "").toLowerCase();
+  if (origin === "user_upload" || source === "user_upload") return "本地 PDF";
+  if (origin === "user_import" || source === "user_import") return "手动录入";
+  if (source === "arxiv") return "外部论文库";
+  if (source === "semantic_scholar") return "元数据增强";
+  if (source === "fallback") return "保底结果";
+  return evidenceOriginLabel(paper);
+}
+
 function poolStatusLabel(paper: WorkspacePaper) {
   if (paper.paper_pool_status === "core") return "用户指定核心";
   if (paper.paper_pool_status === "candidate") return "导入候选";
@@ -42,12 +53,16 @@ function poolStatusLabel(paper: WorkspacePaper) {
 
 function PaperBadges({ paper, showRoundMarkers }: { paper: WorkspacePaper; showRoundMarkers?: boolean }) {
   const poolLabel = poolStatusLabel(paper);
+  const briefTags = paper.paper_brief?.tags ?? [];
   return (
     <span className="workspace-paper-badges">
       <span className="message-source-trace-chip">{evidenceOriginLabel(paper)}</span>
       {poolLabel ? (
         <span className="message-source-trace-chip message-source-trace-chip-info">{poolLabel}</span>
       ) : null}
+      {briefTags.slice(0, 2).map((tag) => (
+        <span className="message-source-trace-chip" key={tag}>{formatPaperBriefTag(tag)}</span>
+      ))}
       {showRoundMarkers ? (
         <span className={`message-source-trace-chip ${noveltyToneClass(paper)}`}>{noveltyLabel(paper)}</span>
       ) : null}
@@ -67,6 +82,228 @@ function citationLabel(paper: WorkspacePaper) {
   return paper.citation_count_known ? String(paper.citation_count) : "未获取";
 }
 
+function formatPaperBriefTag(tag: string) {
+  const labels: Record<string, string> = {
+    benchmark: "基准",
+    dataset: "数据",
+    "high-citation": "高引用",
+    llm: "LLM",
+    method: "方法",
+    multimodal: "多模态",
+    recent: "近期",
+    retrieval: "检索",
+    robustness: "鲁棒",
+    survey: "综述",
+    "user-provided": "用户上传",
+  };
+  return labels[tag] ?? tag;
+}
+
+function formatBriefSource(source: string) {
+  if (source === "full_text") return "正文片段";
+  if (source === "abstract+metadata") return "摘要 + 元数据";
+  if (source === "metadata") return "仅元数据";
+  return source || "来源未知";
+}
+
+function paperReadingRole(paper: WorkspacePaper) {
+  const tags = paper.paper_brief?.tags ?? [];
+  if (paper.origin === "user_upload" || paper.source === "user_upload") {
+    return "用户上传论文：适合作为你已掌握材料和系统检索结果之间的对照锚点。";
+  }
+  if (tags.includes("survey")) {
+    return "综述/路线型论文：适合先读，用来快速建立方向地图。";
+  }
+  if (tags.includes("benchmark") || tags.includes("dataset")) {
+    return "评测/数据型论文：适合判断后续方案如何被验证。";
+  }
+  if (paper.citation_count_known && paper.citation_count >= 50) {
+    return `高影响力论文：当前引用约 ${paper.citation_count} 次，可优先作为背景或基线。`;
+  }
+  if (paper.is_new_this_round) {
+    return "本轮检索补入：建议检查它是否回应了本次追问的新约束。";
+  }
+  return "核心候选证据：可用于理解当前 taxonomy、研究空白或后续建议。";
+}
+
+function paperReadFocus(paper: WorkspacePaper) {
+  const tags = paper.paper_brief?.tags ?? [];
+  if (tags.includes("survey")) return "建议先看分类框架、开放问题和代表论文表。";
+  if (tags.includes("benchmark")) return "建议先看任务定义、指标、数据集和实验协议。";
+  if (tags.includes("robustness")) return "建议重点看失败模式、缺失信息处理和鲁棒性实验。";
+  if (tags.includes("retrieval")) return "建议重点看表征学习、相似度匹配和检索评测设置。";
+  if (tags.includes("multimodal")) return "建议重点看融合位置、跨模态对齐方式和消融实验。";
+  return "建议先读摘要、方法图和实验设置，再判断是否进入精读。";
+}
+
+function paperEvidenceCaveat(paper: WorkspacePaper) {
+  if (!paper.citation_count_known) {
+    return "引用数据未获取，影响力判断暂时不能按 0 引用理解。";
+  }
+  if (!paper.paper_brief || paper.paper_brief.source === "metadata") {
+    return "当前解释主要来自标题/元数据，仍需要打开原文核查。";
+  }
+  return "当前解释来自摘要/元数据级分析，还不是全文 claim verification。";
+}
+
+function PaperReadingCard({ paper }: { paper: WorkspacePaper }) {
+  return (
+    <div className="workspace-paper-reading-card">
+      <div>
+        <span>为什么先看</span>
+        <strong>{paperReadingRole(paper)}</strong>
+      </div>
+      <div>
+        <span>建议读法</span>
+        <strong>{paperReadFocus(paper)}</strong>
+      </div>
+      <div>
+        <span>可信边界</span>
+        <strong>{paperEvidenceCaveat(paper)}</strong>
+      </div>
+    </div>
+  );
+}
+
+function paperVerificationLevel(paper: WorkspacePaper) {
+  const source = paper.paper_brief?.source ?? "";
+  const hasLocalPdf = paper.origin === "user_upload" || paper.source === "user_upload" || Boolean(paper.document_id);
+  if (source === "full_text" && hasLocalPdf) return "本地 PDF 正文片段级核查";
+  if (source === "full_text") return "正文片段级核查";
+  if (hasLocalPdf && source === "abstract+metadata") return "本地 PDF + 摘要级核查";
+  if (source === "abstract+metadata") return "摘要 + 元数据级核查";
+  if (source === "metadata") return "元数据级核查";
+  return "初步相关性核查";
+}
+
+function paperVerificationBoundary(paper: WorkspacePaper) {
+  const source = paper.paper_brief?.source ?? "";
+  if (source === "full_text") {
+    return "已使用导入/上传材料中的正文片段，但还不是全篇逐 claim 自动审稿。";
+  }
+  if (paper.origin === "user_upload" || paper.source === "user_upload") {
+    return "已知道它来自用户资料，但仍需要抽取正文片段来验证具体 claim。";
+  }
+  if (source === "abstract+metadata") {
+    return "已能判断研究问题、方法和贡献，但尚未逐条核对实验结果与局限。";
+  }
+  return "目前主要依靠标题、来源和检索相关性，适合先判断是否值得进入精读。";
+}
+
+function claimStatusLabel(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === "verified") return "已验证";
+  if (normalized === "partial") return "部分支持";
+  if (normalized === "conflict") return "存在冲突";
+  return "待核查";
+}
+
+function claimStatusClass(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === "verified") return "workspace-paper-claim-status-verified";
+  if (normalized === "partial") return "workspace-paper-claim-status-partial";
+  if (normalized === "conflict") return "workspace-paper-claim-status-conflict";
+  return "workspace-paper-claim-status-unknown";
+}
+
+function claimSourceLabel(sourceLevel: string, section: string) {
+  if (sourceLevel === "full_text") return section ? `正文片段：${section}` : "正文片段证据";
+  if (sourceLevel === "abstract") return "摘要证据";
+  return "元数据证据";
+}
+
+function PaperVerificationPanel({ paper }: { paper: WorkspacePaper }) {
+  const claimChecks = paper.paper_brief?.claim_checks ?? [];
+  return (
+    <div className="workspace-paper-verification-panel">
+      <div>
+        <span>当前验证级别</span>
+        <strong>{paperVerificationLevel(paper)}</strong>
+        <p>{paperVerificationBoundary(paper)}</p>
+      </div>
+      <div>
+        <span>为什么还不是全文验证</span>
+        <strong>未逐条抽取正文 claim</strong>
+        <p>现在的 Paper Brief 主要服务快速筛读；正式 claim verification 需要解析 PDF/全文，定位方法、实验、结论和限制段落。</p>
+      </div>
+      <div>
+        <span>可并行升级路径</span>
+        <strong>Paper Analyst 逐篇并行</strong>
+        <p>后端后续可对核心论文并发抽取正文证据，再把 verified / disputed / unknown 状态回写到论文详情和研究建议。</p>
+      </div>
+      {claimChecks.length ? (
+        <section className="workspace-paper-claim-checks" aria-label="Claim verification checks">
+          <div className="workspace-paper-claim-checks-head">
+            <span>Claim checks</span>
+            <strong>{claimChecks.length} 条待核验主张</strong>
+          </div>
+          <div className="workspace-paper-claim-check-list">
+            {claimChecks.map((check, index) => (
+              <article className="workspace-paper-claim-check" key={`${check.claim_type}-${index}`}>
+                <div className="workspace-paper-claim-check-title">
+                  <span className={claimStatusClass(check.status)}>{claimStatusLabel(check.status)}</span>
+                  <strong>{cleanDisplayText(check.claim, 180)}</strong>
+                </div>
+                <p>{cleanDisplayText(check.evidence, 180)}</p>
+                <small>
+                  {claimSourceLabel(check.source_level, check.section)}
+                  {check.caveat ? ` · ${cleanDisplayText(check.caveat, 120)}` : ""}
+                </small>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function PaperBriefPanel({ paper }: { paper: WorkspacePaper }) {
+  const brief = paper.paper_brief;
+  if (!brief) {
+    return (
+      <div className="workspace-paper-brief-empty">
+        当前论文还没有结构化 Paper Brief。后续运行任务后，系统会尽量根据摘要、标题和相关性理由补齐。
+      </div>
+    );
+  }
+
+  const items = [
+    { label: "研究问题", text: brief.problem },
+    { label: "方法/模型", text: brief.method },
+    { label: "主要贡献", text: brief.contribution },
+    { label: "局限/注意", text: brief.limitation },
+    { label: "与当前主题关系", text: brief.relation_to_topic },
+  ].filter((item) => item.text.trim());
+
+  return (
+    <div className="workspace-paper-brief">
+      <div className="workspace-paper-brief-head">
+        <div>
+          <span className="section-eyebrow">Paper Brief</span>
+          <strong>为什么这篇值得读</strong>
+        </div>
+        <span className="workspace-paper-brief-source">{formatBriefSource(brief.source)}</span>
+      </div>
+      {brief.tags.length ? (
+        <div className="workspace-paper-brief-tags">
+          {brief.tags.map((tag) => (
+            <span key={tag}>{formatPaperBriefTag(tag)}</span>
+          ))}
+        </div>
+      ) : null}
+      <div className="workspace-paper-brief-grid">
+        {items.map((item) => (
+          <div className="workspace-paper-brief-item" key={item.label}>
+            <span>{item.label}</span>
+            <p>{cleanDisplayText(item.text, 220)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; showRoundMarkers?: boolean }) {
   if (!paper) {
     return <div className="empty-state">选择一篇论文后，这里会显示来源、年份、分类和外链。</div>;
@@ -81,6 +318,8 @@ function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; s
           <PaperBadges paper={paper} showRoundMarkers={showRoundMarkers} />
         </div>
       </div>
+      <PaperReadingCard paper={paper} />
+      <PaperVerificationPanel paper={paper} />
       <div className="workspace-paper-meta-grid">
         <div className="workspace-paper-meta-item">
           <span>来源</span>
@@ -109,6 +348,7 @@ function PaperInspector({ paper, showRoundMarkers }: { paper?: WorkspacePaper; s
           </div>
         ) : null}
       </div>
+      <PaperBriefPanel paper={paper} />
       {paper.url ? (
         <a className="secondary-button" href={paper.url} rel="noreferrer" target="_blank">
           打开论文来源
@@ -195,7 +435,7 @@ export function WorkspaceEvidenceBoard({
                     <td>
                       <div className="workspace-paper-source-cell">
                         <strong>{sourceLabel(paper.source)}</strong>
-                        <span>{evidenceOriginLabel(paper)}</span>
+                        <span>{sourceDetailLabel(paper)}</span>
                       </div>
                     </td>
                     <td>{paper.publish_date || "-"}</td>

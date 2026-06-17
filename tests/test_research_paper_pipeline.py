@@ -113,6 +113,7 @@ def test_initial_state_seeds_imported_papers_without_running_research() -> None:
     assert list(state["evidence_pool"]) == ["imported:core"]
     assert state["evidence_pool"]["imported:core"].paper_pool_status == "core"
     assert state["evidence_pool"]["imported:core"].relevance_tier == "direct"
+    assert state["evidence_pool"]["imported:core"].review_text == "Fuller uploaded evidence for taxonomy construction."
     assert "uploaded evidence" in state["review_texts"][0]
     assert state["paper_nodes"] == {}
 
@@ -177,6 +178,113 @@ def test_core_papers_survive_deduplication_and_analysis_limits() -> None:
     assert retained.paper_pool_status == "core"
     assert retained.document_id == "doc-core"
     assert retained.citation_count == 42
+
+
+def test_hybrid_analysis_keeps_external_search_papers_when_imports_dominate() -> None:
+    papers = {
+        f"core-{index}": PaperNode(
+            paper_id=f"core-{index}",
+            title=f"User Imported Causal Paper {index}",
+            source="user_upload",
+            paper_pool_status="core",
+            relevance_tier="direct",
+            relevance_score=1.0,
+        )
+        for index in range(8)
+    }
+    papers.update(
+        {
+            "arxiv-causal": PaperNode(
+                paper_id="arxiv-causal",
+                title="Causal Reasoning with Large Language Models",
+                abstract="Causal discovery and counterfactual reasoning with LLMs.",
+                source="arxiv",
+                relevance_tier="direct",
+                relevance_score=0.92,
+            ),
+            "s2-causal": PaperNode(
+                paper_id="s2-causal",
+                title="LLM Causal Discovery Benchmarks",
+                abstract="Benchmarking causal discovery for large language models.",
+                source="semantic_scholar",
+                relevance_tier="direct",
+                relevance_score=0.9,
+            ),
+        }
+    )
+
+    selected = _select_papers_for_analysis(
+        papers,
+        state={"mode": "balanced", "research_mode": "hybrid"},
+        max_results=8,
+    )
+
+    assert "arxiv-causal" in selected
+    assert "s2-causal" in selected
+    assert all(f"core-{index}" in selected for index in range(8))
+
+
+def test_follow_up_analysis_reserves_slots_for_new_external_papers() -> None:
+    papers = {
+        "core-upload": PaperNode(
+            paper_id="core-upload",
+            title="Uploaded Multimodal Fusion Survey",
+            source="user_upload",
+            origin="user_upload",
+            paper_pool_status="core",
+            relevance_tier="direct",
+            relevance_score=1.0,
+        )
+    }
+    papers.update(
+        {
+            f"old-{index}": PaperNode(
+                paper_id=f"old-{index}",
+                title=f"Previously Selected Fusion Paper {index}",
+                source="arxiv",
+                relevance_tier="direct",
+                relevance_score=0.95 - index * 0.01,
+            )
+            for index in range(7)
+        }
+    )
+    papers.update(
+        {
+            f"novel-{index}": PaperNode(
+                paper_id=f"novel-{index}",
+                title=f"Robot Vision Lightweight Fusion Architecture {index}",
+                abstract="A recent robot vision paper about lightweight multimodal fusion architecture.",
+                source="arxiv",
+                relevance_tier="direct",
+                relevance_score=0.72 - index * 0.01,
+            )
+            for index in range(3)
+        }
+    )
+
+    selected = _select_papers_for_analysis(
+        papers,
+        state={
+            "topic": "multimodal large language model fusion",
+            "mode": "balanced",
+            "research_mode": "hybrid",
+            "previous_round_paper_ids": ["core-upload", *[f"old-{index}" for index in range(7)]],
+            "retrieval_plan": {
+                "topic": "multimodal large language model fusion",
+                "user_goal": "extend_context",
+                "strict_queries": [
+                    "multimodal large language model fusion robot vision lightweight fusion architecture"
+                ],
+                "broad_queries": [],
+                "filters": {},
+                "rerank_signals": ["robot vision", "lightweight", "fusion architecture"],
+            },
+        },
+        max_results=8,
+    )
+
+    assert "core-upload" in selected
+    assert len([paper_id for paper_id in selected if paper_id.startswith("novel-")]) >= 2
 
 
 def test_search_only_excludes_conversation_papers_from_formal_and_rag_context() -> None:

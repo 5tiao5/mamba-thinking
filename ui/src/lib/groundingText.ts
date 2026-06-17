@@ -47,10 +47,16 @@ export function retrievalStatusLabel(status?: string) {
       return "已补入新增论文";
     case "refresh_reused_only":
       return "已尝试刷新证据";
+    case "thin_after_filter":
+      return "高相关证据不足";
+    case "adjacent_evidence_only":
+      return "仅邻近证据";
+    case "partial_direct_evidence":
+      return "直接证据偏少";
     case "fallback_only":
       return "仅背景参考";
     case "normal":
-      return "检索策略已对齐";
+      return "检索完成";
     default:
       return "";
   }
@@ -62,12 +68,15 @@ export function retrievalStatusTone(status?: string): StatusTone {
       return "danger";
     case "partial_constrained_results":
     case "fallback_only":
+    case "thin_after_filter":
+    case "adjacent_evidence_only":
+    case "partial_direct_evidence":
       return "warning";
     case "constraint_preserved":
     case "fresh_evidence_added":
       return "info";
     case "refresh_reused_only":
-      return "neutral";
+      return "warning";
     default:
       return "neutral";
   }
@@ -131,8 +140,21 @@ export function formatRetrievalMessage(
   maxLength = 220
 ) {
   const filteredOutCount = sourceTrace?.filtered_out_count ?? 0;
+  const lowRelevanceFilteredCount = sourceTrace?.low_relevance_filtered_count ?? 0;
   const novelPaperCount = sourceTrace?.novel_paper_count ?? 0;
   const reusedPaperCount = sourceTrace?.reused_paper_count ?? 0;
+  const directPaperCount = sourceTrace?.direct_paper_count ?? 0;
+  const adjacentPaperCount = sourceTrace?.adjacent_paper_count ?? 0;
+  const realPaperCount = sourceTrace?.real_paper_count ?? 0;
+  const analysisPaperCount = sourceTrace?.analysis_paper_count ?? 0;
+  const rescueTriggered = Boolean(
+    sourceTrace?.broad_search_triggered ||
+      sourceTrace?.recall_rescue_triggered ||
+      sourceTrace?.facet_rescue_triggered
+  );
+  const lowRelevancePhrase =
+    lowRelevanceFilteredCount > 0 ? `，已过滤 ${lowRelevanceFilteredCount} 条低相关候选` : "";
+  const rescuePhrase = rescueTriggered ? "，并尝试过扩展/补救检索" : "";
 
   switch (sourceTrace?.retrieval_status) {
     case "constrained_fallback_background":
@@ -148,11 +170,23 @@ export function formatRetrievalMessage(
         ? `系统已按当前追问重新检索，并补入 ${novelPaperCount} 篇本轮新增论文${reusedPaperCount > 0 ? `，同时保留 ${reusedPaperCount} 篇仍然高相关的旧证据` : ""}。`
         : "系统已按当前追问重新检索，并补入了新的高相关论文。";
     case "refresh_reused_only":
-      return "系统已经按新的范围重新检索过了，但高相关结果仍与上一轮重合，暂时没有更合适的新论文。";
+      return `系统已经按新的范围重新检索过了${rescuePhrase}${lowRelevancePhrase}；高相关结果仍与上一轮重合，暂时没有更合适的新论文。`;
+    case "thin_after_filter":
+      return `系统执行了本轮检索${rescuePhrase}${lowRelevancePhrase}，但没有留下足够的直接/邻近论文证据；当前结论应视为证据受限，建议放宽主题、补充论文或换检索方向。`;
+    case "adjacent_evidence_only":
+      return `系统找到 ${adjacentPaperCount} 篇邻近论文，但还缺少能直接覆盖问题核心概念的论文${lowRelevancePhrase}；适合用于定方向，不适合下强结论。`;
+    case "partial_direct_evidence":
+      return `系统找到 ${directPaperCount} 篇直接论文和 ${adjacentPaperCount} 篇邻近论文${lowRelevancePhrase}；可以做初步分析，但仍建议继续补充更直接的证据。`;
     case "fallback_only":
       return "检索工具暂时没有拿到可用证据，当前只展示背景参考材料。";
     case "normal":
-      return "当前检索结果足以支撑后续分析。";
+      if (directPaperCount + adjacentPaperCount === 0 && (lowRelevanceFilteredCount > 0 || realPaperCount <= 2)) {
+        return `本轮检索已完成${lowRelevancePhrase}，但高相关论文证据偏薄；当前结果更适合探索方向，建议继续补搜或导入论文。`;
+      }
+      if (directPaperCount + adjacentPaperCount > 0) {
+        return `本轮检索已完成，核心分析池包含 ${analysisPaperCount || realPaperCount || directPaperCount + adjacentPaperCount} 篇论文，其中 ${directPaperCount} 篇直接命中、${adjacentPaperCount} 篇邻近支撑。`;
+      }
+      return "本轮检索已完成，当前证据池可用于后续分析。";
     default:
       return cleanDisplayText(sourceTrace?.retrieval_message ?? "", maxLength);
   }
@@ -162,6 +196,10 @@ export function shouldHighlightRetrievalStatus(status?: string) {
   return (
     status === "constrained_fallback_background" ||
     status === "partial_constrained_results" ||
-    status === "fallback_only"
+    status === "fallback_only" ||
+    status === "thin_after_filter" ||
+    status === "adjacent_evidence_only" ||
+    status === "partial_direct_evidence" ||
+    status === "refresh_reused_only"
   );
 }

@@ -7,6 +7,9 @@ from copy import deepcopy
 
 from product_agent.repositories import ConversationRepository, ResearchTaskRepository, WorkspaceRepository
 from product_agent.schemas import (
+    WorkspaceBriefItemView,
+    WorkspaceBriefPaperView,
+    WorkspacePaperClaimCheckView,
     WorkspaceEvidenceStatusView,
     WorkspaceEvidenceSnapshotView,
     WorkspaceGapView,
@@ -14,7 +17,9 @@ from product_agent.schemas import (
     WorkspaceInheritedContextView,
     WorkspaceIdeaView,
     WorkspaceKnowledgeHitView,
+    WorkspacePaperBriefView,
     WorkspacePaperView,
+    WorkspaceResearchBriefView,
     WorkspaceSnapshotResponse,
     WorkspaceSourceTraceView,
     WorkspaceTraceView,
@@ -95,29 +100,26 @@ class WorkspaceService:
         working_memory = self._workspace_working_memory(task_id=task_id)
         evidence_snapshot = _build_evidence_snapshot_view(workspace.summary_payload or {})
         analysis_paper_ids = _workspace_analysis_paper_ids(workspace)
+        research_brief = _build_workspace_research_brief(
+            mode="task",
+            topic=workspace.topic,
+            task_id=workspace.task_id,
+            summary=summary,
+            papers=workspace.papers,
+            analysis_paper_ids=analysis_paper_ids,
+            taxonomy=workspace.taxonomy,
+            gaps=workspace.gaps,
+            ideas=workspace.ideas,
+            evidence_status=evidence_status,
+            source_trace=source_trace,
+        )
         return WorkspaceSnapshotResponse(
             task_id=workspace.task_id,
             topic=workspace.topic,
             summary=summary,
+            research_brief=research_brief,
             papers=[
-                WorkspacePaperView(
-                    paper_id=paper.paper_id,
-                    title=paper.title,
-                    publish_date=paper.publish_date,
-                    source=paper.source,
-                    taxonomy_category=paper.taxonomy_category,
-                    citation_count=paper.citation_count,
-                    citation_count_known=bool(getattr(paper, "citation_count_known", False)),
-                    citation_source=str(getattr(paper, "citation_source", "") or ""),
-                    url=paper.url,
-                    is_new_this_round=bool(getattr(paper, "is_new_this_round", False)),
-                    relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
-                    relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
-                    relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
-                    paper_pool_status=str(getattr(paper, "paper_pool_status", "") or ""),
-                    document_id=str(getattr(paper, "document_id", "") or ""),
-                    origin=str(getattr(paper, "origin", "") or ""),
-                )
+                _workspace_paper_view(paper, topic=workspace.topic)
                 for paper in workspace.papers
             ],
             analysis_paper_ids=analysis_paper_ids,
@@ -148,6 +150,9 @@ class WorkspaceService:
                     summary=gap.summary,
                     severity=gap.severity,
                     evidence=list(gap.evidence),
+                    supporting_paper_ids=list(gap.supporting_paper_ids),
+                    evidence_level=gap.evidence_level,
+                    evidence_reason=gap.evidence_reason,
                 )
                 for gap in workspace.gaps
             ],
@@ -158,6 +163,9 @@ class WorkspaceService:
                     approach=idea.approach,
                     feasibility=idea.feasibility,
                     contribution=idea.contribution,
+                    supporting_paper_ids=list(idea.supporting_paper_ids),
+                    evidence_level=idea.evidence_level,
+                    evidence_reason=idea.evidence_reason,
                     raw_text="",
                 )
                 for idea in workspace.ideas
@@ -214,7 +222,7 @@ class WorkspaceService:
         }
         enriched = deepcopy(workspace)
         enriched.papers = [
-            _merge_workspace_paper_record(historical_by_id[paper.paper_id], paper)
+            _inherit_workspace_paper_metadata(historical_by_id[paper.paper_id], paper)
             if paper.paper_id in historical_by_id
             else paper
             for paper in enriched.papers
@@ -337,29 +345,28 @@ class WorkspaceService:
         working_memory = self._conversation_working_memory_view(conversation_id)
         evidence_snapshot = _build_evidence_snapshot_view(synthetic_workspace.summary_payload or {})
         analysis_paper_ids = _workspace_analysis_paper_ids(synthetic_workspace)
+        research_brief = _build_workspace_research_brief(
+            mode="conversation",
+            topic=synthetic_workspace.topic,
+            task_id=synthetic_workspace.task_id,
+            summary=synthetic_workspace.summary,
+            papers=synthetic_workspace.papers,
+            analysis_paper_ids=analysis_paper_ids,
+            taxonomy=synthetic_workspace.taxonomy,
+            gaps=synthetic_workspace.gaps,
+            ideas=synthetic_workspace.ideas,
+            evidence_status=evidence_status,
+            source_trace=source_trace,
+            workspaces=valid_workspaces,
+            conversation_synthesis=conversation_synthesis,
+        )
         result = WorkspaceSnapshotResponse(
             task_id=synthetic_workspace.task_id,
             topic=synthetic_workspace.topic,
             summary=synthetic_workspace.summary,
+            research_brief=research_brief,
             papers=[
-                WorkspacePaperView(
-                    paper_id=paper.paper_id,
-                    title=paper.title,
-                    publish_date=paper.publish_date,
-                    source=paper.source,
-                    taxonomy_category=paper.taxonomy_category,
-                    citation_count=paper.citation_count,
-                    citation_count_known=bool(getattr(paper, "citation_count_known", False)),
-                    citation_source=str(getattr(paper, "citation_source", "") or ""),
-                    url=paper.url,
-                    is_new_this_round=False,
-                    relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
-                    relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
-                    relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
-                    paper_pool_status=str(getattr(paper, "paper_pool_status", "") or ""),
-                    document_id=str(getattr(paper, "document_id", "") or ""),
-                    origin=str(getattr(paper, "origin", "") or ""),
-                )
+                _workspace_paper_view(paper, topic=synthetic_workspace.topic, force_not_new=True)
                 for paper in synthetic_workspace.papers
             ],
             analysis_paper_ids=analysis_paper_ids,
@@ -394,6 +401,9 @@ class WorkspaceService:
                     summary=gap.summary,
                     severity=gap.severity,
                     evidence=list(gap.evidence),
+                    supporting_paper_ids=list(gap.supporting_paper_ids),
+                    evidence_level=gap.evidence_level,
+                    evidence_reason=gap.evidence_reason,
                 )
                 for gap in synthetic_workspace.gaps
             ],
@@ -404,6 +414,9 @@ class WorkspaceService:
                     approach=idea.approach,
                     feasibility=idea.feasibility,
                     contribution=idea.contribution,
+                    supporting_paper_ids=list(idea.supporting_paper_ids),
+                    evidence_level=idea.evidence_level,
+                    evidence_reason=idea.evidence_reason,
                     raw_text="",
                 )
                 for idea in synthetic_workspace.ideas
@@ -602,6 +615,861 @@ def _build_evidence_snapshot_view(
         retrieval_outcome=dict(snapshot.get("retrieval_outcome", {}) or {}),
         alignment_score=float(snapshot.get("alignment_score", 0.0) or 0.0),
     )
+
+
+def _workspace_paper_view(paper, *, topic: str, force_not_new: bool = False) -> WorkspacePaperView:
+    return WorkspacePaperView(
+        paper_id=str(getattr(paper, "paper_id", "") or ""),
+        title=str(getattr(paper, "title", "") or ""),
+        publish_date=str(getattr(paper, "publish_date", "") or ""),
+        source=str(getattr(paper, "source", "") or ""),
+        taxonomy_category=str(getattr(paper, "taxonomy_category", "") or ""),
+        citation_count=max(int(getattr(paper, "citation_count", 0) or 0), 0),
+        citation_count_known=bool(getattr(paper, "citation_count_known", False)),
+        citation_source=str(getattr(paper, "citation_source", "") or ""),
+        url=str(getattr(paper, "url", "") or ""),
+        is_new_this_round=False if force_not_new else bool(getattr(paper, "is_new_this_round", False)),
+        relevance_score=float(getattr(paper, "relevance_score", 0.0) or 0.0),
+        relevance_tier=str(getattr(paper, "relevance_tier", "candidate") or "candidate"),
+        relevance_reasons=list(getattr(paper, "relevance_reasons", []) or []),
+        paper_pool_status=str(getattr(paper, "paper_pool_status", "") or ""),
+        document_id=str(getattr(paper, "document_id", "") or ""),
+        origin=str(getattr(paper, "origin", "") or ""),
+        paper_brief=_build_workspace_paper_brief(paper, topic=topic),
+    )
+
+
+def _build_workspace_paper_brief(paper, *, topic: str) -> WorkspacePaperBriefView:
+    title = _clean_brief_text(getattr(paper, "title", ""), 180)
+    review_text = _clean_brief_text(getattr(paper, "review_text", ""), 2500)
+    abstract = _clean_brief_text(getattr(paper, "abstract", ""), 520)
+    category = _clean_brief_text(getattr(paper, "taxonomy_category", ""), 100)
+    reasons = [
+        _clean_brief_text(reason, 140)
+        for reason in list(getattr(paper, "relevance_reasons", []) or [])
+        if _clean_brief_text(reason, 140)
+    ]
+    tags = _paper_brief_tags(paper)
+    source = "full_text" if review_text else ("abstract+metadata" if abstract else "metadata")
+    problem = _paper_brief_problem(title=title, abstract=abstract, category=category, topic=topic)
+    method = _paper_brief_method(title=title, abstract=abstract, tags=tags, paper=paper)
+    contribution = _paper_brief_contribution(
+        title=title,
+        category=category,
+        reasons=reasons,
+        tags=tags,
+        topic=topic,
+    )
+    limitation = _paper_brief_limitation(paper=paper, review_text=review_text, abstract=abstract)
+    relation_to_topic = _paper_brief_relation(category=category, reasons=reasons, topic=topic)
+    return WorkspacePaperBriefView(
+        problem=problem,
+        method=method,
+        contribution=contribution,
+        limitation=limitation,
+        relation_to_topic=relation_to_topic,
+        tags=tags,
+        source=source,
+        claim_checks=_paper_claim_checks(
+            paper=paper,
+            title=title,
+            review_text=review_text,
+            abstract=abstract,
+            category=category,
+            problem=problem,
+            method=method,
+            contribution=contribution,
+            relation_to_topic=relation_to_topic,
+            source=source,
+        ),
+    )
+
+
+def _paper_claim_checks(
+    *,
+    paper,
+    title: str,
+    review_text: str,
+    abstract: str,
+    category: str,
+    problem: str,
+    method: str,
+    contribution: str,
+    relation_to_topic: str,
+    source: str,
+) -> list[WorkspacePaperClaimCheckView]:
+    has_full_text = source == "full_text" and bool(review_text)
+    source_level = "full_text" if has_full_text else ("abstract" if source == "abstract+metadata" else "metadata")
+    section = "uploaded_text" if has_full_text else ("abstract" if abstract else "metadata")
+    base_status = "partial" if (review_text or abstract) else "unknown"
+    base_evidence = _paper_claim_evidence(
+        title=title,
+        review_text=review_text,
+        abstract=abstract,
+        category=category,
+    )
+    base_caveat = (
+        "正文片段级核查：已引用导入/上传材料中的文本，但尚未完成逐 claim 语义判定和冲突检测。"
+        if review_text
+        else (
+        "摘要级核查：可支持快速筛读，但尚未定位正文实验、消融或局限段落。"
+        if abstract
+        else "元数据级核查：缺少摘要/正文片段，只能作为是否精读的候选判断。"
+        )
+    )
+    checks: list[WorkspacePaperClaimCheckView] = []
+
+    def add_check(claim_type: str, claim: str, *, status: str | None = None, caveat: str | None = None) -> None:
+        clean_claim = _clean_brief_text(claim, 220)
+        if not clean_claim:
+            return
+        checks.append(
+            WorkspacePaperClaimCheckView(
+                claim_type=claim_type,
+                claim=clean_claim,
+                status=status or base_status,
+                evidence=base_evidence,
+                source_level=source_level,
+                section=section,
+                caveat=caveat or base_caveat,
+            )
+        )
+
+    add_check("problem", problem)
+    add_check("method", method)
+    add_check("contribution", contribution)
+    if relation_to_topic:
+        add_check(
+            "topic_relation",
+            relation_to_topic,
+            status="partial" if review_text or abstract or category else "unknown",
+        )
+    if not bool(getattr(paper, "citation_count_known", False)):
+        add_check(
+            "impact",
+            "当前无法用引用数判断论文影响力。",
+            status="unknown",
+            caveat="引用元数据未获取，不能把未获取误读为 0 引用。",
+        )
+    return checks[:5]
+
+
+def _paper_claim_evidence(*, title: str, review_text: str, abstract: str, category: str) -> str:
+    if review_text:
+        return _best_full_text_evidence(review_text=review_text, title=title, category=category)
+    if abstract:
+        return _clean_brief_text(_first_brief_sentence(abstract) or abstract, 260)
+    parts = [f"标题：{title}" if title else "", f"分类：{category}" if category else ""]
+    return _clean_brief_text("；".join(part for part in parts if part), 260) or "当前仅有论文元数据。"
+
+
+def _best_full_text_evidence(*, review_text: str, title: str, category: str) -> str:
+    text = _clean_brief_text(review_text, 2500)
+    if not text:
+        return ""
+    keywords = [
+        word.casefold()
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9-]{3,}|[\u4e00-\u9fa5]{2,}", f"{title} {category}")
+    ][:16]
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?。！？])\s+", text)
+        if sentence.strip()
+    ]
+    if not sentences:
+        return _clean_brief_text(text, 300)
+
+    def score_sentence(sentence: str) -> tuple[int, int]:
+        normalized = sentence.casefold()
+        hit_count = sum(1 for keyword in keywords if keyword and keyword in normalized)
+        method_bonus = 1 if re.search(r"\b(propose|present|introduce|method|framework|architecture|evaluate)\b|提出|方法|框架|架构|评估", sentence, flags=re.IGNORECASE) else 0
+        return hit_count + method_bonus, -abs(len(sentence) - 180)
+
+    best = max(sentences[:24], key=score_sentence)
+    return _clean_brief_text(best, 300)
+
+
+def _paper_brief_tags(paper) -> list[str]:
+    title = str(getattr(paper, "title", "") or "")
+    abstract = str(getattr(paper, "abstract", "") or "")
+    review_text = str(getattr(paper, "review_text", "") or "")
+    category = str(getattr(paper, "taxonomy_category", "") or "")
+    keywords = " ".join(str(item) for item in list(getattr(paper, "keywords", []) or []))
+    text = f"{title} {abstract} {review_text[:1600]} {category} {keywords}".lower()
+    tags: list[str] = []
+
+    def add_tag(condition: bool, tag: str) -> None:
+        if condition and tag not in tags:
+            tags.append(tag)
+
+    add_tag(bool(re.search(r"\b(survey|review|overview|taxonomy)\b|综述", text)), "survey")
+    add_tag(bool(re.search(r"\b(benchmark|evaluation|evaluate|leaderboard|protocol)\b|评测|基准", text)), "benchmark")
+    add_tag(bool(re.search(r"\b(dataset|data set|corpus)\b|数据集", text)), "dataset")
+    add_tag(bool(re.search(r"\b(method|framework|architecture|model|system)\b|方法|框架|架构|模型|系统", text)), "method")
+    add_tag(bool(re.search(r"\b(fusion|multimodal|cross-modal|alignment)\b|多模态|跨模态|融合|对齐", text)), "multimodal")
+    add_tag(bool(re.search(r"\b(retrieval|search|ranking|representation)\b|检索|表征|排序", text)), "retrieval")
+    add_tag(bool(re.search(r"\b(robust|failure|missing|uncertainty|noise)\b|鲁棒|失败|缺失|不确定", text)), "robustness")
+    add_tag(bool(re.search(r"\b(llm|large language model|language model|agent)\b|大模型|智能体", text)), "llm")
+    add_tag(bool(getattr(paper, "citation_count_known", False)) and int(getattr(paper, "citation_count", 0) or 0) >= 50, "high-citation")
+    add_tag(_paper_publish_year(paper) >= 2024, "recent")
+    origin = str(getattr(paper, "origin", "") or getattr(paper, "source", "") or "").lower()
+    add_tag(origin in {"user_upload", "user_import"}, "user-provided")
+    return tags[:6]
+
+
+def _paper_publish_year(paper) -> int:
+    match = re.search(r"\d{4}", str(getattr(paper, "publish_date", "") or ""))
+    return int(match.group(0)) if match else 0
+
+
+def _paper_brief_problem(*, title: str, abstract: str, category: str, topic: str) -> str:
+    sentence = _first_brief_sentence(abstract)
+    if sentence:
+        return sentence
+    if category:
+        return f"围绕“{category}”方向中的具体问题展开，当前主要可从标题《{title}》判断其研究对象。"
+    clean_topic = _clean_brief_text(topic, 80) or "当前研究主题"
+    return f"围绕“{clean_topic}”中的相关问题展开；当前缺少摘要或全文，需结合原文进一步确认问题定义。"
+
+
+def _paper_brief_method(*, title: str, abstract: str, tags: list[str], paper) -> str:
+    text = f"{title} {abstract}".lower()
+    if "survey" in tags:
+        return "以综述、分类或路线梳理为主，适合快速建立领域结构和问题清单。"
+    if "benchmark" in tags or "dataset" in tags:
+        return "以评测基准、数据资源或实验协议为主，适合支撑后续方法比较与验证。"
+    if "multimodal" in tags:
+        return "围绕多模态表示、融合架构或跨模态对齐组织方法，适合观察融合路线。"
+    if "retrieval" in tags:
+        return "围绕检索、排序或表征匹配展开，适合支撑检索型研究方向。"
+    if "robustness" in tags:
+        return "关注鲁棒性、失败模式或缺失信息处理，适合作为风险和边界条件证据。"
+    if "method" in tags:
+        return "提出模型、框架或系统方法，适合作为技术路线参考。"
+    keywords = [_clean_brief_text(value, 40) for value in list(getattr(paper, "keywords", []) or [])]
+    keywords = [value for value in keywords if value][:3]
+    if keywords:
+        return f"元数据关键词显示其方法线索集中在：{' / '.join(keywords)}。"
+    if re.search(r"\b(using|via|with|based on|framework|model)\b", text):
+        return "标题显示其可能包含明确方法或系统设计，建议打开原文核查模型结构与实验设置。"
+    return "当前没有足够结构化方法信息；系统先基于标题、分类和相关性理由给出保守判断。"
+
+
+def _paper_brief_contribution(
+    *,
+    title: str,
+    category: str,
+    reasons: list[str],
+    tags: list[str],
+    topic: str,
+) -> str:
+    reason = _first_user_facing_reason(reasons)
+    if reason:
+        return f"与当前任务的主要价值是：{reason}"
+    if "user-provided" in tags:
+        return "来自用户上传资料，可作为当前研究的本地证据或对照论文；建议优先核查它与系统检索论文之间的关系。"
+    if "survey" in tags:
+        return "提供方向综述和问题地图，可帮助判断该主题已有路线与尚未覆盖的分支。"
+    if "benchmark" in tags:
+        return "提供评测视角，可帮助把研究建议落到可验证的任务和指标上。"
+    if "dataset" in tags:
+        return "提供数据资源或任务设定，可作为后续实验设计的候选基础。"
+    if category:
+        return f"可作为“{category}”分支的代表证据，帮助解释该分支为什么进入 taxonomy。"
+    clean_topic = _clean_brief_text(topic, 80) or "当前主题"
+    return f"为“{clean_topic}”提供候选论文证据，适合继续阅读以确认具体贡献。"
+
+
+def _paper_brief_limitation(*, paper, review_text: str, abstract: str) -> str:
+    if review_text:
+        return "当前已使用导入/上传材料中的正文片段，但仍未完成全篇覆盖、逐 claim 语义核验和冲突检测。"
+    if not abstract:
+        return "当前缺少摘要或全文片段，系统只能基于标题、分类和元数据判断；建议打开原文核查实验与局限。"
+    if bool(getattr(paper, "citation_count_known", False)) is False:
+        return "引用数据尚未获取，影响力判断不完整；建议以论文内容和实验设置为主进行人工复核。"
+    return "当前 Paper Brief 仍是元数据/摘要级判断，尚未完成全文级 claim verification。"
+
+
+def _paper_brief_relation(*, category: str, reasons: list[str], topic: str) -> str:
+    reason = _first_user_facing_reason(reasons)
+    if reason:
+        return reason
+    if category:
+        return f"该论文被归入“{category}”，可用于支撑这一研究方向的证据阅读。"
+    clean_topic = _clean_brief_text(topic, 80) or "当前研究主题"
+    return f"系统将其作为“{clean_topic}”的候选证据；关系强度需要结合论文正文进一步确认。"
+
+
+def _first_user_facing_reason(reasons: list[str]) -> str:
+    for reason in reasons:
+        clean_reason = _clean_brief_text(reason, 160)
+        if clean_reason and not _looks_like_internal_relevance_signal(clean_reason):
+            return clean_reason
+    return ""
+
+
+def _looks_like_internal_relevance_signal(reason: str) -> bool:
+    normalized = reason.strip().casefold()
+    if not normalized:
+        return True
+    if normalized.startswith(("focus:", "title:", "abstract:", "query:", "user_selected:")):
+        return True
+    return bool(re.fullmatch(r"[a-z_]+:[a-z0-9_ ./+-]+(?::[a-z0-9_ ./+-]+)*", normalized))
+
+
+def _first_brief_sentence(text: str) -> str:
+    clean_text = _clean_brief_text(text, 300)
+    if not clean_text:
+        return ""
+    parts = re.split(r"(?<=[.!?。！？])\s+", clean_text)
+    first = parts[0].strip() if parts else clean_text
+    return _clean_brief_text(first, 180)
+
+
+def _build_workspace_research_brief(
+    *,
+    mode: str,
+    topic: str,
+    task_id: str,
+    summary: str,
+    papers: list,
+    analysis_paper_ids: list[str],
+    taxonomy: dict,
+    gaps: list,
+    ideas: list,
+    evidence_status: dict,
+    source_trace: WorkspaceSourceTraceView | None,
+    workspaces: list | None = None,
+    conversation_synthesis: dict | None = None,
+) -> WorkspaceResearchBriefView:
+    paper_by_id = {
+        str(getattr(paper, "paper_id", "") or "").strip(): paper
+        for paper in papers
+        if str(getattr(paper, "paper_id", "") or "").strip()
+    }
+    source_task_ids_by_paper = _paper_source_task_id_map(
+        papers=papers,
+        workspaces=workspaces or [],
+        fallback_task_id=task_id,
+    )
+    ordered_analysis_ids = _ordered_existing_paper_ids(analysis_paper_ids, paper_by_id)
+    if not ordered_analysis_ids:
+        ordered_analysis_ids = _ordered_existing_paper_ids(
+            [str(getattr(paper, "paper_id", "") or "") for paper in papers],
+            paper_by_id,
+        )
+    must_read_ids = _select_must_read_paper_ids(ordered_analysis_ids, paper_by_id, limit=4)
+    must_read_papers = [
+        WorkspaceBriefPaperView(
+            paper_id=paper_id,
+            title=_clean_brief_text(getattr(paper_by_id[paper_id], "title", ""), 180),
+            reason=_brief_paper_reason(paper_by_id[paper_id]),
+            source_task_ids=source_task_ids_by_paper.get(paper_id, [task_id] if task_id else []),
+            evidence_level="direct",
+        )
+        for paper_id in must_read_ids
+    ]
+
+    synthesis = conversation_synthesis or {}
+    key_findings = []
+    if synthesis:
+        key_findings.extend(
+            _brief_items_from_synthesis(
+                synthesis=synthesis,
+                field_name="strengthened_findings",
+                source_task_ids_by_paper=source_task_ids_by_paper,
+                fallback_task_id=task_id,
+            )
+        )
+        key_findings.extend(
+            _brief_items_from_synthesis(
+                synthesis=synthesis,
+                field_name="new_findings",
+                source_task_ids_by_paper=source_task_ids_by_paper,
+                fallback_task_id=task_id,
+            )
+        )
+        key_findings.extend(
+            _brief_items_from_synthesis(
+                synthesis=synthesis,
+                field_name="revised_findings",
+                source_task_ids_by_paper=source_task_ids_by_paper,
+                fallback_task_id=task_id,
+            )
+        )
+    if not key_findings:
+        key_findings = _taxonomy_brief_items(
+            taxonomy=taxonomy,
+            source_task_ids_by_paper=source_task_ids_by_paper,
+            fallback_task_id=task_id,
+        )
+
+    open_gaps = (
+        _brief_items_from_synthesis(
+            synthesis=synthesis,
+            field_name="open_questions",
+            source_task_ids_by_paper=source_task_ids_by_paper,
+            fallback_task_id=task_id,
+        )
+        if synthesis
+        else []
+    )
+    if not open_gaps:
+        open_gaps = _gap_brief_items(gaps, fallback_task_id=task_id)
+
+    recommended_next_steps = (
+        _brief_items_from_synthesis(
+            synthesis=synthesis,
+            field_name="current_recommendations",
+            source_task_ids_by_paper=source_task_ids_by_paper,
+            fallback_task_id=task_id,
+        )
+        if synthesis
+        else []
+    )
+    if not recommended_next_steps:
+        recommended_next_steps = _idea_brief_items(ideas, fallback_task_id=task_id)
+
+    round_evolution = _conversation_round_evolution_items(
+        synthesis=synthesis,
+        source_task_ids_by_paper=source_task_ids_by_paper,
+        fallback_task_id=task_id,
+    )
+    if mode == "task" and source_trace is not None:
+        round_evolution = _task_round_evolution_items(
+            source_trace=source_trace,
+            fallback_task_id=task_id,
+        )
+
+    key_findings = _dedupe_brief_items(key_findings)[:4]
+    open_gaps = _dedupe_brief_items(open_gaps)[:4]
+    recommended_next_steps = _dedupe_brief_items(recommended_next_steps)[:4]
+    round_evolution = _dedupe_brief_items(round_evolution)[:5]
+
+    headline = _clean_brief_text(str(synthesis.get("headline", "") or ""), 120)
+    if not headline:
+        headline = f"{topic} 的{'累计' if mode == 'conversation' else '本轮'}研究简报"
+    executive_summary = _build_research_brief_summary(
+        topic=topic,
+        summary=summary,
+        use_summary_as_candidate=bool(synthesis and synthesis.get("source") == "llm"),
+        key_findings=key_findings,
+        must_read_papers=must_read_papers,
+        open_gaps=open_gaps,
+        recommended_next_steps=recommended_next_steps,
+        evidence_status=evidence_status,
+        source_trace=source_trace,
+    )
+
+    return WorkspaceResearchBriefView(
+        mode=mode,
+        headline=headline,
+        executive_summary=executive_summary,
+        key_findings=key_findings,
+        must_read_papers=must_read_papers,
+        open_gaps=open_gaps,
+        recommended_next_steps=recommended_next_steps,
+        evidence_warnings=_brief_evidence_warnings(
+            evidence_status=evidence_status,
+            source_trace=source_trace,
+            analysis_paper_count=len(ordered_analysis_ids),
+        ),
+        round_evolution=round_evolution,
+        source=str(synthesis.get("source", "") or "deterministic"),
+    )
+
+
+def _paper_source_task_id_map(*, papers: list, workspaces: list, fallback_task_id: str) -> dict[str, list[str]]:
+    mapping: dict[str, list[str]] = defaultdict(list)
+    for workspace in workspaces:
+        source_task_id = str(getattr(workspace, "task_id", "") or "").strip()
+        if not source_task_id:
+            continue
+        for paper in list(getattr(workspace, "papers", []) or []):
+            paper_id = str(getattr(paper, "paper_id", "") or "").strip()
+            if paper_id and source_task_id not in mapping[paper_id]:
+                mapping[paper_id].append(source_task_id)
+    fallback = [fallback_task_id] if fallback_task_id else []
+    for paper in papers:
+        paper_id = str(getattr(paper, "paper_id", "") or "").strip()
+        if paper_id and not mapping.get(paper_id):
+            mapping[paper_id] = list(fallback)
+    return dict(mapping)
+
+
+def _ordered_existing_paper_ids(candidate_ids: list[str], paper_by_id: dict[str, object]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for paper_id in candidate_ids:
+        normalized = str(paper_id or "").strip()
+        if normalized and normalized in paper_by_id and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _select_must_read_paper_ids(
+    ordered_analysis_ids: list[str],
+    paper_by_id: dict[str, object],
+    *,
+    limit: int,
+) -> list[str]:
+    indexed_ids = [
+        (index, paper_id)
+        for index, paper_id in enumerate(ordered_analysis_ids)
+        if paper_id in paper_by_id
+    ]
+    indexed_ids.sort(
+        key=lambda item: (
+            _brief_paper_priority(paper_by_id[item[1]]),
+            -item[0],
+        ),
+        reverse=True,
+    )
+    return [paper_id for _, paper_id in indexed_ids[:limit]]
+
+
+def _brief_paper_priority(paper) -> tuple[int, int, int, float, int]:
+    pool_status = str(getattr(paper, "paper_pool_status", "") or "").lower()
+    relevance_tier = str(getattr(paper, "relevance_tier", "") or "").lower()
+    citation_count = max(int(getattr(paper, "citation_count", 0) or 0), 0)
+    citation_known = bool(getattr(paper, "citation_count_known", False))
+    return (
+        1 if pool_status == "core" else 0,
+        2 if relevance_tier == "direct" else 1 if relevance_tier == "adjacent" else 0,
+        1 if bool(getattr(paper, "is_new_this_round", False)) else 0,
+        min(citation_count, 500) / 500 if citation_known else 0.0,
+        1 if _paper_publish_year(paper) >= 2024 else 0,
+    )
+
+
+def _brief_paper_reason(paper) -> str:
+    user_facing_reason = _first_user_facing_reason(
+        [
+            _clean_brief_text(reason, 160)
+            for reason in list(getattr(paper, "relevance_reasons", []) or [])
+            if _clean_brief_text(reason, 160)
+        ]
+    )
+    if user_facing_reason:
+        return user_facing_reason
+    if str(getattr(paper, "paper_pool_status", "") or "").lower() == "core":
+        return "用户指定或导入的核心论文，优先作为本轮研究的本地证据锚点。"
+    if str(getattr(paper, "relevance_tier", "") or "").lower() == "direct":
+        return "与当前问题达到直接相关，适合优先阅读以确认主结论是否站得住。"
+    if bool(getattr(paper, "is_new_this_round", False)):
+        return "本轮新增论文，适合优先检查它是否补上了追问提出的新约束。"
+    category = _clean_brief_text(getattr(paper, "taxonomy_category", ""), 80)
+    if category:
+        return f"覆盖研究方向“{category}”，可作为该分支的代表证据。"
+    citation_count = int(getattr(paper, "citation_count", 0) or 0)
+    citation_known = bool(getattr(paper, "citation_count_known", False))
+    if citation_known and citation_count >= 50:
+        return f"引用影响力较高（{citation_count} 次），适合作为领域背景或方法基线。"
+    return "进入核心分析池，可作为当前结论、方向图或研究建议的基础证据。"
+
+
+def _brief_items_from_synthesis(
+    *,
+    synthesis: dict,
+    field_name: str,
+    source_task_ids_by_paper: dict[str, list[str]],
+    fallback_task_id: str,
+    label: str = "",
+) -> list[WorkspaceBriefItemView]:
+    items: list[WorkspaceBriefItemView] = []
+    for item in list(synthesis.get(field_name, []) or []):
+        if not isinstance(item, dict):
+            continue
+        text = _clean_brief_text(item.get("text", ""), 260)
+        if not text:
+            continue
+        supporting_paper_ids = _paper_ids_from_evidence_ids(item.get("evidence_ids", []))
+        source_task_ids = [
+            str(value).strip()
+            for value in list(item.get("source_task_ids", []) or [])
+            if str(value).strip()
+        ]
+        if not source_task_ids:
+            for paper_id in supporting_paper_ids:
+                source_task_ids.extend(source_task_ids_by_paper.get(paper_id, []))
+        if not source_task_ids and fallback_task_id:
+            source_task_ids = [fallback_task_id]
+        items.append(
+            WorkspaceBriefItemView(
+                text=f"{label}：{text}" if label else text,
+                supporting_paper_ids=supporting_paper_ids,
+                source_task_ids=list(dict.fromkeys(source_task_ids)),
+                evidence_level="direct" if supporting_paper_ids else "exploratory",
+            )
+        )
+    return items
+
+
+def _paper_ids_from_evidence_ids(evidence_ids: list) -> list[str]:
+    paper_ids = []
+    for evidence_id in evidence_ids or []:
+        text = str(evidence_id or "").strip()
+        if text.startswith("paper::"):
+            paper_ids.append(text.split("paper::", 1)[1])
+    return list(dict.fromkeys(paper_ids))
+
+
+def _taxonomy_brief_items(
+    *,
+    taxonomy: dict,
+    source_task_ids_by_paper: dict[str, list[str]],
+    fallback_task_id: str,
+) -> list[WorkspaceBriefItemView]:
+    branches = [
+        branch
+        for branch in list((taxonomy or {}).get("branches", []) or [])
+        if isinstance(branch, dict)
+    ]
+    branches.sort(
+        key=lambda branch: (
+            int(branch.get("paper_count", 0) or 0),
+            float(branch.get("coverage_score", 0.0) or branch.get("branch_confidence", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
+    items: list[WorkspaceBriefItemView] = []
+    for branch in branches[:3]:
+        if not isinstance(branch, dict):
+            continue
+        name = _clean_brief_text(branch.get("name", ""), 100)
+        description = _clean_brief_text(branch.get("description", ""), 180)
+        matched_paper_ids = [
+            str(value).strip()
+            for value in list(branch.get("matched_paper_ids", []) or [])
+            if str(value).strip()
+        ][:6]
+        paper_count = int(branch.get("paper_count", 0) or len(matched_paper_ids))
+        if not name or (paper_count <= 0 and not matched_paper_ids):
+            continue
+        source_task_ids = []
+        for paper_id in matched_paper_ids:
+            source_task_ids.extend(source_task_ids_by_paper.get(paper_id, []))
+        if not source_task_ids and fallback_task_id:
+            source_task_ids = [fallback_task_id]
+        evidence_tier = str(branch.get("evidence_tier", "") or "candidate")
+        items.append(
+            WorkspaceBriefItemView(
+                text=(
+                    f"当前证据主要覆盖方向“{name}”"
+                    + (f"：{description}" if description else f"，匹配 {paper_count} 篇论文。")
+                ),
+                supporting_paper_ids=list(dict.fromkeys(matched_paper_ids)),
+                source_task_ids=list(dict.fromkeys(source_task_ids)),
+                evidence_level=evidence_tier,
+            )
+        )
+    return items
+
+
+def _gap_brief_items(gaps: list, *, fallback_task_id: str) -> list[WorkspaceBriefItemView]:
+    items = []
+    for gap in list(gaps or [])[:4]:
+        text = _clean_brief_text(getattr(gap, "summary", ""), 260)
+        if not text:
+            continue
+        supporting_paper_ids = [
+            str(value).strip()
+            for value in list(getattr(gap, "supporting_paper_ids", []) or [])
+            if str(value).strip()
+        ]
+        items.append(
+            WorkspaceBriefItemView(
+                text=text,
+                supporting_paper_ids=list(dict.fromkeys(supporting_paper_ids)),
+                source_task_ids=[fallback_task_id] if fallback_task_id else [],
+                evidence_level=str(getattr(gap, "evidence_level", "") or "exploratory"),
+            )
+        )
+    return items
+
+
+def _idea_brief_items(ideas: list, *, fallback_task_id: str) -> list[WorkspaceBriefItemView]:
+    items = []
+    for idea in list(ideas or [])[:4]:
+        title = _clean_brief_text(getattr(idea, "title", ""), 150)
+        detail = _clean_brief_text(
+            getattr(idea, "motivation", "")
+            or getattr(idea, "approach", "")
+            or getattr(idea, "contribution", ""),
+            180,
+        )
+        if not title and not detail:
+            continue
+        supporting_paper_ids = [
+            str(value).strip()
+            for value in list(getattr(idea, "supporting_paper_ids", []) or [])
+            if str(value).strip()
+        ]
+        items.append(
+            WorkspaceBriefItemView(
+                text=f"{title}：{detail}" if title and detail else title or detail,
+                supporting_paper_ids=list(dict.fromkeys(supporting_paper_ids)),
+                source_task_ids=[fallback_task_id] if fallback_task_id else [],
+                evidence_level=str(getattr(idea, "evidence_level", "") or "exploratory"),
+            )
+        )
+    return items
+
+
+def _conversation_round_evolution_items(
+    *,
+    synthesis: dict,
+    source_task_ids_by_paper: dict[str, list[str]],
+    fallback_task_id: str,
+) -> list[WorkspaceBriefItemView]:
+    section_labels = (
+        ("new_findings", "本轮新增"),
+        ("strengthened_findings", "得到补强"),
+        ("revised_findings", "发生修正"),
+    )
+    items = []
+    for field_name, label in section_labels:
+        items.extend(
+            _brief_items_from_synthesis(
+                synthesis=synthesis,
+                field_name=field_name,
+                source_task_ids_by_paper=source_task_ids_by_paper,
+                fallback_task_id=fallback_task_id,
+                label=label,
+            )
+        )
+    return items
+
+
+def _task_round_evolution_items(
+    *,
+    source_trace: WorkspaceSourceTraceView,
+    fallback_task_id: str,
+) -> list[WorkspaceBriefItemView]:
+    items: list[WorkspaceBriefItemView] = []
+    novel_count = int(getattr(source_trace, "novel_paper_count", 0) or 0)
+    reused_count = int(getattr(source_trace, "reused_paper_count", 0) or 0)
+    if novel_count or reused_count:
+        items.append(
+            WorkspaceBriefItemView(
+                text=f"本轮补入 {novel_count} 篇新增论文，同时沿用 {reused_count} 篇历史高相关证据。",
+                source_task_ids=[fallback_task_id] if fallback_task_id else [],
+                evidence_level="direct" if novel_count else "exploratory",
+            )
+        )
+    if bool(getattr(source_trace, "refresh_triggered", False)):
+        items.append(
+            WorkspaceBriefItemView(
+                text="追问触发了增补检索，系统已尝试按新约束更新证据池。",
+                source_task_ids=[fallback_task_id] if fallback_task_id else [],
+                evidence_level="direct",
+            )
+        )
+    return items
+
+
+def _dedupe_brief_items(items: list[WorkspaceBriefItemView]) -> list[WorkspaceBriefItemView]:
+    result = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = _normalized_merge_text(item.text)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(item)
+    return result
+
+
+def _build_research_brief_summary(
+    *,
+    topic: str,
+    summary: str,
+    use_summary_as_candidate: bool,
+    key_findings: list[WorkspaceBriefItemView],
+    must_read_papers: list[WorkspaceBriefPaperView],
+    open_gaps: list[WorkspaceBriefItemView],
+    recommended_next_steps: list[WorkspaceBriefItemView],
+    evidence_status: dict,
+    source_trace: WorkspaceSourceTraceView | None,
+) -> str:
+    candidate_summary = _clean_brief_text(summary, 520)
+    clean_topic = _clean_brief_text(topic, 100) or "当前主题"
+
+    parts: list[str] = []
+    if source_trace is not None and bool(getattr(source_trace, "refresh_triggered", False)):
+        novel_count = int(getattr(source_trace, "novel_paper_count", 0) or 0)
+        reused_count = int(getattr(source_trace, "reused_paper_count", 0) or 0)
+        direct_count = int(getattr(source_trace, "direct_paper_count", 0) or 0)
+        adjacent_count = int(getattr(source_trace, "adjacent_paper_count", 0) or 0)
+        parts.append(
+            f"整体进展：围绕“{clean_topic}”已按追问重新检索，"
+            f"新增 {novel_count} 篇论文、沿用 {reused_count} 篇旧证据；"
+            f"当前 {direct_count} 篇为直接证据、{adjacent_count} 篇为邻近证据"
+        )
+    elif key_findings:
+        parts.append(f"整体进展：{_trim_sentence_end(key_findings[0].text)}")
+    elif must_read_papers:
+        first_title = _clean_brief_text(must_read_papers[0].title, 100)
+        parts.append(f"整体进展：当前证据骨架首先由《{first_title}》等核心论文支撑")
+    elif use_summary_as_candidate and candidate_summary and not _looks_like_metric_summary(candidate_summary):
+        parts.append(f"整体进展：{_trim_sentence_end(candidate_summary)}")
+    else:
+        parts.append(f"整体进展：围绕“{clean_topic}”的研究结果已整理为论文证据、方向结构和下一步建议")
+
+    if key_findings and _trim_sentence_end(key_findings[0].text) not in parts[0]:
+        parts.append(f"最稳的观察是{_trim_sentence_end(key_findings[0].text)}")
+    if open_gaps:
+        gap_level = _brief_level_label(open_gaps[0].evidence_level)
+        parts.append(f"主要不确定性在于{_trim_sentence_end(open_gaps[0].text)}（{gap_level}）")
+    if recommended_next_steps:
+        step_level = _brief_level_label(recommended_next_steps[0].evidence_level)
+        parts.append(f"下一步建议{_trim_sentence_end(recommended_next_steps[0].text)}（{step_level}）")
+    if evidence_status.get("insufficient"):
+        parts.append("当前证据仍偏薄，建议把结论视为选题线索而不是最终判断")
+    return "；".join(part for part in parts if part).strip() + "。"
+
+
+def _brief_level_label(level: str) -> str:
+    normalized = str(level or "").lower()
+    if normalized in {"direct", "strong"}:
+        return "有直接论文支撑"
+    if normalized in {"indirect", "moderate", "weak"}:
+        return "间接证据，需复核"
+    return "探索性判断"
+
+
+def _looks_like_metric_summary(value: str) -> bool:
+    text = str(value or "")
+    metric_markers = ("本轮分析共得到", "当前累计", "汇总论文", "论文线索", "研究空白", "研究建议")
+    return sum(marker in text for marker in metric_markers) >= 2
+
+
+def _trim_sentence_end(value: str) -> str:
+    return str(value or "").strip().rstrip("。.;；")
+
+
+def _brief_evidence_warnings(
+    *,
+    evidence_status: dict,
+    source_trace: WorkspaceSourceTraceView | None,
+    analysis_paper_count: int,
+) -> list[str]:
+    warnings: list[str] = []
+    if evidence_status.get("insufficient"):
+        message = _clean_brief_text(evidence_status.get("message", ""), 180)
+        warnings.append(message or "当前证据不足，结论应作为探索性线索阅读。")
+    if int(evidence_status.get("fallback_paper_count", 0) or 0) > 0:
+        warnings.append("结果中仍包含回退论文，展示时应优先核查真实论文证据。")
+    if analysis_paper_count < 4:
+        warnings.append("核心分析论文偏少，暂不适合把研究建议解释为稳定结论。")
+    if source_trace is not None and bool(getattr(source_trace, "external_search_skipped", False)):
+        warnings.append("本轮外部检索未执行，结论主要依赖导入论文或已有上下文。")
+    return list(dict.fromkeys(warnings))[:4]
+
+
+def _clean_brief_text(value, max_length: int) -> str:
+    return clean_internal_context_text(str(value or ""), max_length=max_length)
 
 
 def _merge_workspace_summaries(
@@ -807,6 +1675,8 @@ def _merge_workspace_paper_record(existing, candidate):
         merged.title = candidate.title
     if len(candidate.abstract or "") > len(merged.abstract or ""):
         merged.abstract = candidate.abstract
+    if len(getattr(candidate, "review_text", "") or "") > len(getattr(merged, "review_text", "") or ""):
+        merged.review_text = candidate.review_text
     merged.authors = _merge_string_ids(merged.authors, candidate.authors)
     merged.keywords = _merge_string_ids(merged.keywords, candidate.keywords)
 
@@ -856,6 +1726,13 @@ def _merge_workspace_paper_record(existing, candidate):
         getattr(merged, "is_new_this_round", False)
         or getattr(candidate, "is_new_this_round", False)
     )
+    return merged
+
+
+def _inherit_workspace_paper_metadata(existing, candidate):
+    """Reuse richer historical metadata without changing the current round marker."""
+    merged = _merge_workspace_paper_record(existing, candidate)
+    merged.is_new_this_round = bool(getattr(candidate, "is_new_this_round", False))
     return merged
 
 
@@ -1288,6 +2165,8 @@ def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> Workspace
         retrieval_status=clean_internal_context_text(str(retrieval_outcome.get("status", "") or ""), max_length=80),
         retrieval_message=clean_internal_context_text(str(retrieval_outcome.get("message", "") or ""), max_length=240),
         filtered_out_count=int(retrieval_outcome.get("filtered_out_count", 0) or 0),
+        real_paper_count=int(retrieval_outcome.get("real_paper_count", 0) or 0),
+        total_paper_count=int(retrieval_outcome.get("total_paper_count", 0) or 0),
         fallback_used=bool(retrieval_outcome.get("fallback_used", False)),
         external_search_skipped=bool(retrieval_outcome.get("external_search_skipped", False)),
         refresh_triggered=bool(retrieval_outcome.get("refresh_triggered", False)),
@@ -1298,6 +2177,11 @@ def _build_source_trace_view(*, summary_payload: dict, trace: dict) -> Workspace
         low_relevance_filtered_count=int(
             retrieval_outcome.get("low_relevance_filtered_count", 0) or 0
         ),
+        evidence_pool_count=int(retrieval_outcome.get("evidence_pool_count", 0) or 0),
+        analysis_paper_count=int(retrieval_outcome.get("analysis_paper_count", 0) or 0),
+        broad_search_triggered=bool(retrieval_outcome.get("broad_search_triggered", False)),
+        recall_rescue_triggered=bool(retrieval_outcome.get("recall_rescue_triggered", False)),
+        facet_rescue_triggered=bool(retrieval_outcome.get("facet_rescue_triggered", False)),
         knowledge_hit_count=knowledge_hit_count,
         knowledge_hits=normalized_hits,
         workspace_hint_count=workspace_hint_count,

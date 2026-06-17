@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, File, Path, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Path, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from product_agent.env_loader import load_product_agent_dotenv
@@ -158,8 +158,16 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         return handlers.create_message(conversation_id, request).model_dump()
 
     @app.post("/conversations/continue")
-    def continue_conversation(request: ContinueConversationRequest):
-        return handlers.continue_conversation(request).model_dump()
+    def continue_conversation(request: ContinueConversationRequest, background_tasks: BackgroundTasks):
+        response = handlers.continue_conversation(request)
+        if response.success and request.create_follow_up_task and request.run_follow_up_task:
+            data = response.data if isinstance(response.data, dict) else {}
+            follow_up_task = data.get("follow_up_task")
+            task_id = follow_up_task.get("task_id") if isinstance(follow_up_task, dict) else ""
+            if task_id:
+                data["follow_up_run_scheduled"] = True
+                background_tasks.add_task(handlers.run_research_task, task_id)
+        return response.model_dump()
 
     @app.post("/research/tasks")
     def create_research_task(request: CreateResearchTaskRequest):
@@ -175,6 +183,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.get("/research/tasks/{task_id}")
     def get_research_task(task_id: str = Path(..., description="研究任务 ID")):
         return handlers.get_research_task(task_id).model_dump()
+
+    @app.get("/research/tasks/{task_id}/events")
+    def list_research_task_events(task_id: str = Path(..., description="Research task ID")):
+        return handlers.list_research_task_events(task_id).model_dump()
 
     @app.post("/research/tasks/{task_id}/run")
     def run_research_task(task_id: str = Path(..., description="研究任务 ID")):

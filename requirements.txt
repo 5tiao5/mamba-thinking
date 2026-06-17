@@ -6,3 +6,7 @@ python-multipart>=0.0.20,<1.0
 
 # Open-access paper PDF parsing
 PyMuPDF>=1.27.2,<2.0
+
+# Retrieval robustness and lightweight semantic matching
+rapidfuzz>=3.9,<4.0
+tenacity>=8.5,<10.0

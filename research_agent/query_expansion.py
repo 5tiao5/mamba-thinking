@@ -13,11 +13,13 @@ def expand_focus_facets(
     topic: str,
     mode: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Attach executable English search terms to structured focus facets."""
+    """Attach executable English search terms to the topic and focus facets."""
 
     intent = dict(query_intent or {})
     facets = _normalize_facets(intent.get("focus_facets", []))
-    if not facets:
+    topic = " ".join(str(topic or intent.get("core_topic", "")).split()).strip()
+    needs_topic_expansion = _needs_topic_expansion(topic, intent)
+    if not facets and not needs_topic_expansion:
         return intent, _outcome("not_needed", attempted=False, expanded_count=0)
 
     expanded_count = 0
@@ -32,7 +34,7 @@ def expand_focus_facets(
         else:
             pending_labels.append(label)
 
-    if not pending_labels:
+    if not pending_labels and not needs_topic_expansion:
         intent["focus_facets"] = facets
         return intent, _outcome(
             "direct",
@@ -49,6 +51,12 @@ def expand_focus_facets(
         )
     if not has_openai_key():
         intent["focus_facets"] = facets
+        if needs_topic_expansion and not pending_labels and expanded_count:
+            return intent, _outcome(
+                "direct",
+                attempted=False,
+                expanded_count=expanded_count,
+            )
         return intent, _outcome(
             "no_llm_key",
             attempted=False,
@@ -62,9 +70,13 @@ def expand_focus_facets(
             "language. Preserve meaning exactly and return valid JSON only."
         ),
         temperature=0.1,
-        max_output_tokens=700,
+        max_output_tokens=900,
     )
-    expansions = _parse_expansions(data, allowed_labels=set(pending_labels))
+    topic_expansion = _parse_topic_expansion(data)
+    if topic_expansion:
+        intent.update(topic_expansion)
+        expanded_count += 1
+    expansions = _parse_facet_expansions(data, allowed_labels=set(pending_labels))
     for facet in facets:
         expansion = expansions.get(str(facet["label"]))
         if not expansion:
@@ -75,7 +87,7 @@ def expand_focus_facets(
 
     intent["focus_facets"] = facets
     return intent, _outcome(
-        "expanded" if expansions else "invalid_llm_response",
+        "expanded" if expansions or topic_expansion else "invalid_llm_response",
         attempted=True,
         expanded_count=expanded_count,
     )
@@ -84,12 +96,14 @@ def expand_focus_facets(
 def _expansion_prompt(*, topic: str, labels: list[str]) -> str:
     payload = json.dumps(labels, ensure_ascii=False)
     return f"""
-Convert each required research facet into English academic search language.
+Convert the research topic and each required research facet into English academic search language.
 
 Research topic: {topic}
 Required facets: {payload}
 
 Rules:
+- Return a stable English topic_anchor likely to appear in paper titles or abstracts.
+- Return 2-4 topic_alias_queries, 1-3 broad_queries, and 1-3 recall_queries.
 - Return exactly one item for every supplied facet; do not add new facets.
 - Keep each academic term between 2 and 6 words.
 - Keep each query between 3 and 12 words and anchor it to the research topic.
@@ -98,6 +112,10 @@ Rules:
 
 Return JSON only:
 {{
+  "topic_anchor": "concise English academic topic",
+  "topic_alias_queries": ["topic query", "synonym query"],
+  "broad_queries": ["broader recall query"],
+  "recall_queries": ["short recall query"],
   "facets": [
     {{
       "label": "original facet text",
@@ -109,7 +127,44 @@ Return JSON only:
 """.strip()
 
 
-def _parse_expansions(
+def _parse_topic_expansion(data: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    topic_anchor = _single_valid_english_phrase(
+        data.get("topic_anchor"),
+        min_words=2,
+        max_words=8,
+    )
+    topic_alias_queries = _valid_english_phrases(
+        data.get("topic_alias_queries", []),
+        min_words=2,
+        max_words=12,
+    )
+    broad_queries = _valid_english_phrases(
+        data.get("broad_queries", []),
+        min_words=2,
+        max_words=12,
+    )
+    recall_queries = _valid_english_phrases(
+        data.get("recall_queries", []),
+        min_words=2,
+        max_words=8,
+    )
+    payload: dict[str, Any] = {}
+    if topic_anchor:
+        payload["topic_anchor"] = topic_anchor
+    if topic_alias_queries:
+        payload["topic_alias_queries"] = topic_alias_queries[:4]
+    if broad_queries:
+        payload["llm_broad_queries"] = broad_queries[:3]
+    if recall_queries:
+        payload["llm_recall_queries"] = recall_queries[:3]
+    if payload:
+        payload["query_expansion_source"] = "llm"
+    return payload
+
+
+def _parse_facet_expansions(
     data: dict[str, Any] | None,
     *,
     allowed_labels: set[str],
@@ -132,6 +187,17 @@ def _parse_expansions(
             "query_candidates": queries[:1],
         }
     return expansions
+
+
+def _needs_topic_expansion(topic: str, intent: dict[str, Any]) -> bool:
+    if intent.get("topic_anchor") or intent.get("topic_alias_queries"):
+        return False
+    if not topic:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", topic):
+        return True
+    english_words = re.findall(r"[A-Za-z][A-Za-z0-9-]*", topic)
+    return len(english_words) < 2
 
 
 def _normalize_facets(value: Any) -> list[dict[str, Any]]:
@@ -169,6 +235,18 @@ def _valid_english_phrases(value: Any, *, min_words: int, max_words: int) -> lis
         seen.add(key)
         phrases.append(normalized)
     return phrases
+
+
+def _single_valid_english_phrase(value: Any, *, min_words: int, max_words: int) -> str:
+    phrase = " ".join(str(value or "").split()).strip(" ,.;:")
+    if not phrase:
+        return ""
+    phrases = _valid_english_phrases(
+        [phrase],
+        min_words=min_words,
+        max_words=max_words,
+    )
+    return phrases[0] if phrases else ""
 
 
 def _is_english_search_phrase(value: str) -> bool:

@@ -45,6 +45,70 @@ function stripEllipsis(text: string) {
   return text.replace(/(\.{3,}|…+)\s*$/g, "").trim();
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isOpaquePaperId(value: string) {
+  const normalized = value.trim();
+  return /^[a-f0-9]{24,64}$/i.test(normalized) || /^imported:[a-z0-9_-]+$/i.test(normalized);
+}
+
+function stripOpaqueReferences(value: string) {
+  return value
+    .replace(/\s*[\(（]\s*(?:[a-f0-9]{24,64}|imported:[a-z0-9_-]+)\s*[\)）]/gi, "")
+    .replace(/\bimported:[a-z0-9_-]+\b/gi, "用户导入论文")
+    .replace(/\b[a-f0-9]{24,64}\b/gi, "未识别论文");
+}
+
+function stripInternalSignals(value: string) {
+  const trimmed = value.trim();
+  if (/^(?:(?:focus|title|abstract|query|category|keywords|score|user_selected)\s*:\s*[^:;，。]+[:;，。]?\s*)+$/i.test(trimmed)) {
+    return "";
+  }
+  return trimmed
+    .replace(/\b(?:focus|title|abstract|query|category|keywords|score|user_selected)\s*:\s*([^;，。]{0,80})/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCompareText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "");
+}
+
+function dedupeParentheticalTitle(value: string) {
+  const match = value.match(/^(.+?)\s+\((.+)\)$/);
+  if (!match) return value;
+  const outside = trimPunctuation(match[1]);
+  const inside = trimPunctuation(match[2]);
+  const normalizedOutside = normalizeCompareText(outside);
+  const normalizedInside = normalizeCompareText(inside);
+  if (
+    normalizedOutside &&
+    normalizedInside &&
+    (normalizedOutside === normalizedInside ||
+      normalizedOutside.includes(normalizedInside) ||
+      normalizedInside.includes(normalizedOutside))
+  ) {
+    return outside;
+  }
+  return value;
+}
+
+export function cleanWorkspaceText(value: string | undefined, maxLength?: number) {
+  const cleaned = cleanDisplayText(value ?? "", maxLength);
+  if (!cleaned) return "";
+  return stripEllipsis(
+    trimPunctuation(
+      removeDecorations(
+        stripInternalSignals(
+          stripOpaqueReferences(cleaned.replace(/\(([^()]+)\)\s*\(\1\)/g, "($1)")),
+        ),
+      ),
+    ),
+  );
+}
+
 export function inferEnglishTaxonomyLabel(branch: WorkspaceTaxonomyBranch) {
   const branchName = branch.name.trim();
   if (branchName && /[A-Za-z]/.test(branchName) && !containsChinese(branchName)) {
@@ -156,19 +220,40 @@ export function relationshipBadgeLabel(relationship: string) {
 }
 
 export function categoryTone(category: string) {
-  const value = category.toLowerCase();
+  const raw = category.trim();
+  const value = raw.toLowerCase();
+  const arxivTones: Array<{ keys: string[]; fill: string; stroke: string; label: string }> = [
+    { keys: ["cs.cl"], fill: "#eff6ff", stroke: "#2563eb", label: "cs.CL" },
+    { keys: ["cs.cv"], fill: "#fff7ed", stroke: "#ea580c", label: "cs.CV" },
+    { keys: ["cs.ir"], fill: "#ecfdf5", stroke: "#059669", label: "cs.IR" },
+    { keys: ["cs.ai"], fill: "#f5f3ff", stroke: "#7c3aed", label: "cs.AI" },
+    { keys: ["cs.mm"], fill: "#fdf2f8", stroke: "#db2777", label: "cs.MM" },
+    { keys: ["cs.lg"], fill: "#eef2ff", stroke: "#4f46e5", label: "cs.LG" },
+    { keys: ["cs.ro"], fill: "#f0fdfa", stroke: "#0d9488", label: "cs.RO" },
+    { keys: ["cs.cy"], fill: "#fef2f2", stroke: "#dc2626", label: "cs.CY" },
+    { keys: ["eess.sp"], fill: "#fefce8", stroke: "#ca8a04", label: "eess.SP" },
+    { keys: ["uncategorized", "未分类"], fill: "#f8fbff", stroke: "#94a3b8", label: "Uncategorized" },
+  ];
+  const matchedArxivTone = arxivTones.find((tone) => tone.keys.some((key) => value === key || value.includes(key)));
+  if (matchedArxivTone) {
+    return { fill: matchedArxivTone.fill, stroke: matchedArxivTone.stroke, label: matchedArxivTone.label };
+  }
+
   if (value.includes("method")) return { fill: "#eef5ff", stroke: "#2f6fed", label: "Methods" };
   if (value.includes("evaluation")) return { fill: "#eefcf8", stroke: "#0f766e", label: "Evaluation" };
   if (value.includes("application")) return { fill: "#fff7ed", stroke: "#c2410c", label: "Applications" };
   if (value.includes("interaction")) return { fill: "#faf5ff", stroke: "#9333ea", label: "Interaction" };
   if (value.includes("software")) return { fill: "#f5f3ff", stroke: "#6d28d9", label: "Software Engineering" };
-  return { fill: "#f8fbff", stroke: "#94a3b8", label: category || "Uncategorized" };
+  if (value.startsWith("cs.") || value.startsWith("eess.")) {
+    return { fill: "#f8fbff", stroke: "#64748b", label: raw || "Uncategorized" };
+  }
+  return { fill: "#f8fbff", stroke: "#94a3b8", label: raw || "Uncategorized" };
 }
 
 export function shortPaperLabel(paperId: string, papers: WorkspacePaper[]) {
   const matched = papers.find((paper) => paper.paper_id === paperId);
   if (!matched) {
-    return paperId;
+    return isOpaquePaperId(paperId) ? "未识别论文" : paperId;
   }
   const title = trimPunctuation(removeDecorations(matched.title.trim()));
   if (title.length <= 28) {
@@ -179,7 +264,10 @@ export function shortPaperLabel(paperId: string, papers: WorkspacePaper[]) {
 
 export function resolvePaperTitle(paperId: string, papers: WorkspacePaper[]) {
   const matched = papers.find((paper) => paper.paper_id === paperId);
-  return matched ? trimPunctuation(removeDecorations(cleanDisplayText(matched.title, 200) || paperId)) : paperId;
+  if (matched) {
+    return cleanWorkspaceText(matched.title, 200) || paperId;
+  }
+  return isOpaquePaperId(paperId) ? `未识别论文 (${paperId.slice(0, 8)}…)` : paperId;
 }
 
 export function formatPaperReference(paperId: string, papers: WorkspacePaper[]) {
@@ -288,13 +376,21 @@ export function formatGraphEdgeReasoningByRelationship(
 }
 
 function replacePaperIds(text: string, papers: WorkspacePaper[]) {
-  return text.replace(/\b\d{4}\.\d{5}v\d+\b/g, (paperId) => formatPaperReference(paperId, papers));
+  let result = text.replace(/\b\d{4}\.\d{5}v\d+\b/g, (paperId) => formatPaperReference(paperId, papers));
+  const knownIds = papers
+    .map((paper) => paper.paper_id)
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  for (const paperId of knownIds) {
+    result = result.replace(new RegExp(`\\b${escapeRegExp(paperId)}\\b`, "g"), formatPaperReference(paperId, papers));
+  }
+  return dedupeParentheticalTitle(stripOpaqueReferences(result.replace(/\(([^()]+)\)\s*\(\1\)/g, "($1)")));
 }
 
 export function formatTextWithPaperTitles(text: string, papers: WorkspacePaper[], maxLength?: number) {
   const cleaned = cleanDisplayText(text, maxLength);
   if (!cleaned) return "";
-  return removeDecorations(replacePaperIds(cleaned, papers));
+  return cleanWorkspaceText(replacePaperIds(cleaned, papers));
 }
 
 function normalizeIdeaEnglish(text: string) {

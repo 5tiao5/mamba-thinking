@@ -82,6 +82,14 @@ _PROBLEM_TERMS = (
     "limitation",
     "lack of",
     "unreliable",
+    "missing modality",
+    "modality imbalance",
+    "misalignment",
+    "domain shift",
+    "distribution shift",
+    "noise corruption",
+    "hallucination",
+    "bottleneck",
 )
 _STRONG_FAILURE_TERMS = (
     "failure mode",
@@ -101,6 +109,14 @@ _RESPONSE_TERMS = (
     "improving tool calling reliability",
     "improving generalization",
     "robust",
+    "robustness",
+    "adaptive",
+    "alignment",
+    "calibration",
+    "regularization",
+    "uncertainty",
+    "noise-resistant",
+    "modality-balanced",
 )
 _BENCHMARK_TERMS = (
     "benchmark",
@@ -116,6 +132,14 @@ _METHOD_TERMS = (
     "optimization",
     "schema",
     "policy",
+    "architecture",
+    "network",
+    "model",
+    "fusion",
+    "encoder",
+    "decoder",
+    "mixture of experts",
+    "routing",
 )
 _ANALYSIS_TERMS = (
     "analyze",
@@ -123,6 +147,30 @@ _ANALYSIS_TERMS = (
     "investigate",
     "characterize",
     "quantify",
+    "study",
+    "survey",
+    "review",
+    "systematic review",
+)
+_SURVEY_TERMS = (
+    "survey",
+    "review",
+    "taxonomy",
+    "systematic review",
+    "comprehensive overview",
+)
+_APPLICATION_TERMS = (
+    "application",
+    "system",
+    "deployment",
+    "clinical",
+    "medical",
+    "robot",
+    "retrieval",
+    "captioning",
+    "segmentation",
+    "detection",
+    "translation",
 )
 _DIMENSION_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("trajectory-level behavior", ("trajectory", "execution trace", "agent trace")),
@@ -135,6 +183,70 @@ _DIMENSION_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("execution provenance", ("provenance", "evidence tracing", "audit")),
     ("efficiency and budgets", ("budget", "efficiency", "cost", "latency")),
     ("cross-domain generalization", ("generalization", "across domains", "multi-domain")),
+    (
+        "fusion architecture",
+        (
+            "multimodal fusion",
+            "early fusion",
+            "late fusion",
+            "intermediate fusion",
+            "feature fusion",
+            "mixture of experts",
+            "cross attention",
+            "routing",
+        ),
+    ),
+    (
+        "cross-modal alignment",
+        (
+            "cross modal alignment",
+            "vision language alignment",
+            "modality alignment",
+            "contrastive alignment",
+            "representation alignment",
+        ),
+    ),
+    (
+        "missing-modality robustness",
+        (
+            "missing modality",
+            "incomplete modality",
+            "modality dropout",
+            "modality imbalance",
+            "robust multimodal",
+        ),
+    ),
+    (
+        "efficiency and compression",
+        (
+            "efficient",
+            "efficiency",
+            "lightweight",
+            "compression",
+            "low rank",
+            "sparse",
+            "latency",
+        ),
+    ),
+    (
+        "multimodal reasoning",
+        (
+            "multimodal reasoning",
+            "visual reasoning",
+            "reasoning model",
+            "chain of thought",
+        ),
+    ),
+    (
+        "retrieval and generation",
+        (
+            "multimodal retrieval",
+            "retrieval augmented",
+            "generation",
+            "captioning",
+            "translation",
+        ),
+    ),
 )
 
 
@@ -183,7 +295,7 @@ class RelationshipEvidenceService:
             and "analysis" in source_profile["roles"]
             and target_profile["response"]
             and "method" in target_profile["roles"]
-            and (shared_dimensions or _shared_tool_context(source, target))
+            and (shared_dimensions or _shared_research_context(source, target))
         ):
             return EvolutionEdge(
                 source=source.paper_id,
@@ -210,7 +322,7 @@ class RelationshipEvidenceService:
             source_profile["benchmark"]
             and target_profile["benchmark"]
             and added_dimensions
-            and (shared_dimensions or _shared_tool_context(source, target))
+            and (shared_dimensions or _shared_research_context(source, target))
         ):
             return EvolutionEdge(
                 source=source.paper_id,
@@ -236,7 +348,7 @@ class RelationshipEvidenceService:
             source_profile["roles"] != target_profile["roles"]
             and source_profile["roles"]
             and target_profile["roles"]
-            and (shared_dimensions or _shared_tool_context(source, target))
+            and (shared_dimensions or _shared_research_context(source, target))
         ):
             return EvolutionEdge(
                 source=source.paper_id,
@@ -361,7 +473,12 @@ def _source_aliases(source: PaperNode) -> set[str]:
         aliases.add(normalized_prefix)
 
     for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{3,}", title):
-        if "-" in token or token.isupper() or any(char.isupper() for char in token[1:]):
+        is_identifier = (
+            token.isupper()
+            or any(char.isdigit() for char in token)
+            or ("-" not in token and any(char.isupper() for char in token[1:]))
+        )
+        if is_identifier:
             aliases.add(_normalize(token))
 
     for identifier in (source.paper_id, source.doi):
@@ -420,6 +537,10 @@ def _paper_profile(paper: PaperNode) -> dict[str, set[str] | list[str] | bool]:
         roles.add("method")
     if _contains_any(text, _ANALYSIS_TERMS):
         roles.add("analysis")
+    if _contains_any(text, _SURVEY_TERMS):
+        roles.add("survey")
+    if _contains_any(text, _APPLICATION_TERMS):
+        roles.add("application")
     if "provenance" in text or "evidence tracing" in text or "audit" in text:
         roles.add("provenance")
     return {
@@ -432,10 +553,44 @@ def _paper_profile(paper: PaperNode) -> dict[str, set[str] | list[str] | bool]:
     }
 
 
-def _shared_tool_context(source: PaperNode, target: PaperNode) -> bool:
+def _shared_research_context(source: PaperNode, target: PaperNode) -> bool:
+    shared_branches = set(source.expert_taxonomy_branches) & set(
+        target.expert_taxonomy_branches
+    )
+    if shared_branches:
+        return True
+    if (
+        source.taxonomy_category
+        and target.taxonomy_category
+        and _normalize(source.taxonomy_category) == _normalize(target.taxonomy_category)
+    ):
+        return True
+
+    source_keywords = {
+        _normalize(keyword)
+        for keyword in source.keywords
+        if len(_normalize(keyword)) >= 4
+    }
+    target_keywords = {
+        _normalize(keyword)
+        for keyword in target.keywords
+        if len(_normalize(keyword)) >= 4
+    }
+    if source_keywords & target_keywords:
+        return True
+
     source_text = _normalize(" ".join([source.title or "", source.abstract or ""]))
     target_text = _normalize(" ".join([target.title or "", target.abstract or ""]))
-    context_terms = ("tool use", "tool calling", "tool using", "language agent", "llm agent")
+    context_terms = (
+        "tool use",
+        "tool calling",
+        "language agent",
+        "software engineering",
+        "multimodal",
+        "vision language",
+        "large language model",
+        "information retrieval",
+    )
     return any(term in source_text and term in target_text for term in context_terms)
 
 

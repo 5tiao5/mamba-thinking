@@ -98,15 +98,11 @@ def searcher_node(state: ResearchState) -> ResearchState:
         attempted_queries.append({"phase": phase, "query": query})
 
         per_query_limit = max(3, max_results)
-        tools = (search_papers,) if (fast_mode(state) or balanced_mode(state)) else (search_papers, search_semantic_scholar)
-        if balanced_mode(state):
-            record_tool_event(
-                working,
-                tool_name="Semantic Scholar",
-                input_summary=query,
-                status="skipped",
-                note="Balanced mode skips Semantic Scholar to reduce runtime.",
-            )
+        tools = (
+            (search_papers,)
+            if fast_mode(state)
+            else (search_papers, search_semantic_scholar)
+        )
 
         for tool in tools:
             if tool is search_semantic_scholar and semantic_scholar_empty_runs >= 2:
@@ -465,6 +461,11 @@ def searcher_node(state: ResearchState) -> ResearchState:
 
     if refresh_triggered and previous_round_paper_ids:
         before_novel_count = _count_novel_papers(papers, previous_round_paper_ids)
+        target_novel_count = _follow_up_novel_target(
+            state,
+            retrieval_plan,
+            max_results=max_results,
+        )
         papers = _prefer_novel_evidence(
             papers,
             candidate_pool,
@@ -472,7 +473,7 @@ def searcher_node(state: ResearchState) -> ResearchState:
             scoring_query=scoring_query,
             topic=topic,
             retrieval_plan=retrieval_plan,
-            target_novel_count=1 if (fast_mode(state) or balanced_mode(state)) else 2,
+            target_novel_count=target_novel_count,
         )
         after_novel_count = _count_novel_papers(papers, previous_round_paper_ids)
         if after_novel_count > before_novel_count:
@@ -891,6 +892,10 @@ def _count_fallback_papers(papers: Dict[str, PaperNode]) -> int:
     return sum(1 for paper in papers.values() if (paper.source or "").lower() in {"seed", "fallback"})
 
 
+def _is_background_seed_paper(paper: PaperNode) -> bool:
+    return str(getattr(paper, "source", "") or "").casefold() in {"seed", "fallback"}
+
+
 def _count_novel_papers(papers: Dict[str, PaperNode], previous_round_paper_ids: set[str]) -> int:
     if not previous_round_paper_ids:
         return 0
@@ -898,7 +903,7 @@ def _count_novel_papers(papers: Dict[str, PaperNode], previous_round_paper_ids: 
         1
         for paper in papers.values()
         if paper.paper_id not in previous_round_paper_ids
-        and (paper.source or "").lower() not in {"seed", "fallback"}
+        and not _is_background_seed_paper(paper)
     )
 
 
@@ -1002,6 +1007,7 @@ def _previous_round_papers(state: ResearchState) -> Dict[str, PaperNode]:
             paper_id=paper_id,
             title=str(payload.get("title", "") or ""),
             abstract=str(payload.get("abstract", "") or ""),
+            review_text=str(payload.get("review_text", "") or ""),
             authors=[str(item) for item in payload.get("authors", []) or []],
             keywords=[str(item) for item in payload.get("keywords", []) or []],
             publish_date=str(payload.get("publish_date", "") or ""),
@@ -1086,6 +1092,21 @@ def _should_refresh_for_new_evidence(state: ResearchState, retrieval_plan: dict[
     return _is_broader_year_range(current_year_range, previous_year_range)
 
 
+def _follow_up_novel_target(
+    state: ResearchState,
+    retrieval_plan: dict[str, Any],
+    *,
+    max_results: int,
+) -> int:
+    if not _should_refresh_for_new_evidence(state, retrieval_plan):
+        return 0
+    if fast_mode(state):
+        return 1
+    if balanced_mode(state):
+        return min(3, max(2, max_results // 4))
+    return min(4, max(2, max_results // 3))
+
+
 def _paper_scope_signature(intent: dict[str, Any]) -> tuple[str, ...]:
     raw_scope = intent.get("paper_scope", []) if isinstance(intent, dict) else []
     values = [
@@ -1146,7 +1167,12 @@ def _prefer_novel_evidence(
 
 
 def _weakest_reused_paper_id(papers: Dict[str, PaperNode], previous_round_paper_ids: set[str]) -> str | None:
-    reused = [paper for paper in papers.values() if paper.paper_id in previous_round_paper_ids]
+    reused = [
+        paper
+        for paper in papers.values()
+        if paper.paper_id in previous_round_paper_ids
+        and not _is_protected_analysis_paper(paper)
+    ]
     if not reused:
         return None
     weakest = min(reused, key=_replacement_priority)
@@ -1170,19 +1196,55 @@ def _relevance_tier_counts(papers: Dict[str, PaperNode]) -> dict[str, int]:
 
 
 def _refine_outcome_for_relevance(outcome: dict[str, Any]) -> None:
+    status = str(outcome.get("status", "") or "normal")
+    if status in {"constrained_fallback_background", "fallback_only"}:
+        return
+
     direct_count = int(outcome.get("direct_paper_count", 0) or 0)
     adjacent_count = int(outcome.get("adjacent_paper_count", 0) or 0)
+    low_relevance_filtered_count = int(outcome.get("low_relevance_filtered_count", 0) or 0)
+    filtered_out_count = int(outcome.get("filtered_out_count", 0) or 0)
+    analysis_count = int(outcome.get("analysis_paper_count", 0) or 0)
+    novel_count = int(outcome.get("novel_paper_count", 0) or 0)
+    reused_count = int(outcome.get("reused_paper_count", 0) or 0)
+
+    if direct_count == 0 and adjacent_count == 0:
+        if low_relevance_filtered_count > 0 or filtered_out_count > 0 or analysis_count <= 2:
+            outcome["status"] = "thin_after_filter"
+            filtered_phrase = (
+                f"Filtered {low_relevance_filtered_count} low-relevance candidate(s)"
+                if low_relevance_filtered_count > 0
+                else f"Filtered {filtered_out_count} off-constraint candidate(s)"
+                if filtered_out_count > 0
+                else "Retrieval returned too little high-relevance evidence"
+            )
+            outcome["message"] = (
+                f"{filtered_phrase}, but no paper met the direct or neighboring evidence threshold. "
+                "This result should be treated as evidence-limited; broaden the query or add user papers before "
+                "drawing strong conclusions."
+            )
+        return
+
+    novelty_phrase = ""
+    if novel_count > 0:
+        novelty_phrase = f" This round added {novel_count} newly matched paper(s)"
+        if reused_count > 0:
+            novelty_phrase += f" and kept {reused_count} still-relevant previous paper(s)"
+        novelty_phrase += "."
+
     if direct_count == 0 and adjacent_count > 0:
         outcome["status"] = "adjacent_evidence_only"
         outcome["message"] = (
             f"Retrieved {adjacent_count} neighboring paper(s), but none covers enough independent "
             "concepts to count as direct evidence. Conclusions should remain exploratory."
+            f"{novelty_phrase}"
         )
     elif direct_count < 3 and direct_count + adjacent_count > 0:
         outcome["status"] = "partial_direct_evidence"
         outcome["message"] = (
             f"Retrieved {direct_count} direct and {adjacent_count} neighboring paper(s). "
             "The result is usable for orientation, but more direct evidence is still recommended."
+            f"{novelty_phrase}"
         )
 
 
@@ -1292,6 +1354,10 @@ def _deduplicate_papers_by_title(
 
         if not keep_paper.abstract or (remove_paper.abstract and len(remove_paper.abstract) > len(keep_paper.abstract)):
             keep_paper.abstract = remove_paper.abstract
+        if not keep_paper.review_text or (
+            remove_paper.review_text and len(remove_paper.review_text) > len(keep_paper.review_text)
+        ):
+            keep_paper.review_text = remove_paper.review_text
         if remove_paper.citation_count > keep_paper.citation_count:
             keep_paper.citation_count = remove_paper.citation_count
         if getattr(remove_paper, "citation_count_known", False):
@@ -1337,6 +1403,8 @@ def _paper_metadata_quality(paper: PaperNode) -> int:
     score = 0
     if paper.abstract:
         score += 2
+    if paper.review_text:
+        score += 3
     if paper.citation_count > 0:
         score += 1
     if paper.keywords:
@@ -1373,6 +1441,102 @@ def _ordered_with_core(papers: Dict[str, PaperNode]) -> tuple[list[PaperNode], l
     return core, remaining
 
 
+def _ensure_novel_selection(
+    selected: list[PaperNode],
+    papers: Dict[str, PaperNode],
+    *,
+    state: ResearchState,
+    target_count: int,
+    max_results: int,
+) -> list[PaperNode]:
+    previous_round_paper_ids = _previous_round_paper_ids(state)
+    target_novel_count = _follow_up_novel_target(
+        state,
+        _retrieval_plan(state, str(state.get("topic", "") or "")),
+        max_results=max_results,
+    )
+    if not previous_round_paper_ids or target_novel_count <= 0:
+        return selected[:target_count]
+
+    selected = list(selected)
+    selected_ids = {paper.paper_id for paper in selected}
+    current_novel_count = sum(
+        1
+        for paper in selected
+        if _is_round_novel_external_paper(paper, previous_round_paper_ids)
+    )
+    if current_novel_count >= target_novel_count:
+        return selected[:target_count]
+
+    candidates = sorted(
+        (
+            paper
+            for paper in papers.values()
+            if paper.paper_id not in selected_ids
+            and _is_round_novel_external_paper(paper, previous_round_paper_ids)
+        ),
+        key=_relevance_priority,
+        reverse=True,
+    )
+    for candidate in candidates:
+        if current_novel_count >= target_novel_count:
+            break
+        if len(selected) < target_count:
+            selected.append(candidate)
+            selected_ids.add(candidate.paper_id)
+            current_novel_count += 1
+            continue
+
+        replacement_index = _weakest_reused_selection_index(
+            selected,
+            previous_round_paper_ids,
+        )
+        if replacement_index is None:
+            break
+        selected_ids.discard(selected[replacement_index].paper_id)
+        selected[replacement_index] = candidate
+        selected_ids.add(candidate.paper_id)
+        current_novel_count += 1
+
+    return selected[:target_count]
+
+
+def _weakest_reused_selection_index(
+    selected: list[PaperNode],
+    previous_round_paper_ids: set[str],
+) -> int | None:
+    replacement_candidates = [
+        (index, paper)
+        for index, paper in enumerate(selected)
+        if paper.paper_id in previous_round_paper_ids
+        and not _is_protected_analysis_paper(paper)
+    ]
+    if not replacement_candidates:
+        return None
+    index, _ = min(replacement_candidates, key=lambda item: _replacement_priority(item[1]))
+    return index
+
+
+def _is_round_novel_external_paper(
+    paper: PaperNode,
+    previous_round_paper_ids: set[str],
+) -> bool:
+    if paper.paper_id in previous_round_paper_ids:
+        return False
+    if _is_background_seed_paper(paper):
+        return False
+    return _is_external_search_paper(paper)
+
+
+def _is_protected_analysis_paper(paper: PaperNode) -> bool:
+    if getattr(paper, "paper_pool_status", "") == "core":
+        return True
+    source = str(getattr(paper, "source", "") or "").casefold()
+    origin = str(getattr(paper, "origin", "") or "").casefold()
+    source_detail = str(getattr(paper, "source_detail", "") or "").casefold()
+    return bool({source, origin, source_detail} & {"user_upload", "user_import", "local_pdf"})
+
+
 def _select_analysis_shortlist(
     papers: Dict[str, PaperNode],
     *,
@@ -1385,10 +1549,24 @@ def _select_analysis_shortlist(
         target_count = min(len(papers), max(max_results * 2, 12))
     core, remaining = _ordered_with_core(papers)
     target_count = max(target_count, len(core))
+    novel_floor = _follow_up_novel_target(
+        state,
+        _retrieval_plan(state, str(state.get("topic", "") or "")),
+        max_results=max_results,
+    )
+    if novel_floor and len(core) >= target_count:
+        target_count = min(len(papers), target_count + novel_floor)
     if len(papers) <= target_count:
         return papers
 
     selected = [*core, *remaining[: max(target_count - len(core), 0)]]
+    selected = _ensure_novel_selection(
+        selected,
+        papers,
+        state=state,
+        target_count=target_count,
+        max_results=max_results,
+    )
     return {paper.paper_id: paper for paper in selected}
 
 
@@ -1401,21 +1579,24 @@ def _select_papers_for_analysis(
     if fast_mode(state):
         target_count = min(max_results, 3)
     else:
-        high_quality_count = sum(
-            1
-            for paper in papers.values()
-            if paper.paper_pool_status == "core"
-            or (
-                str(getattr(paper, "relevance_tier", "") or "").lower() == "direct"
-                and float(getattr(paper, "relevance_score", 0.0) or 0.0) >= 0.55
-            )
-        )
-        target_count = min(
-            len(papers),
-            max(max_results, min(high_quality_count, 12)),
-        )
+        target_count = min(len(papers), max(max_results, 1))
     core, relevance_order = _ordered_with_core(papers)
     target_count = max(target_count, len(core))
+    external_floor = _hybrid_external_search_floor(
+        state=state,
+        core=core,
+        relevance_order=relevance_order,
+        target_count=target_count,
+    )
+    novel_floor = _follow_up_novel_target(
+        state,
+        _retrieval_plan(state, str(state.get("topic", "") or "")),
+        max_results=max_results,
+    )
+    if external_floor and len(core) >= target_count:
+        target_count = min(len(papers), target_count + external_floor)
+    if novel_floor and len(core) >= target_count:
+        target_count = min(len(papers), target_count + novel_floor)
     if len(papers) <= target_count:
         return papers
 
@@ -1423,16 +1604,40 @@ def _select_papers_for_analysis(
     if remaining_slots == 0:
         return {paper.paper_id: paper for paper in core}
     if fast_mode(state) or target_count < 4:
-        return {
-            paper.paper_id: paper
-            for paper in [*core, *relevance_order[:remaining_slots]]
-        }
+        selected = [*core, *relevance_order[:remaining_slots]]
+        selected = _ensure_novel_selection(
+            selected,
+            papers,
+            state=state,
+            target_count=target_count,
+            max_results=max_results,
+        )
+        return {paper.paper_id: paper for paper in selected}
 
+    selected: list[PaperNode] = [*core]
+    selected_ids = {paper.paper_id for paper in selected}
+    external_slots = min(external_floor, remaining_slots)
+    for paper in relevance_order:
+        if external_slots <= 0:
+            break
+        if paper.paper_id in selected_ids or not _is_external_search_paper(paper):
+            continue
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+        external_slots -= 1
+
+    remaining_slots = max(target_count - len(selected), 0)
     impact_slots = min(2 if target_count >= 6 else 1, remaining_slots)
     recent_slots = min(1, max(remaining_slots - impact_slots, 0))
     relevance_slots = max(remaining_slots - impact_slots - recent_slots, 0)
-    selected: list[PaperNode] = [*core, *relevance_order[:relevance_slots]]
-    selected_ids = {paper.paper_id for paper in selected}
+    for paper in relevance_order:
+        if relevance_slots <= 0:
+            break
+        if paper.paper_id in selected_ids:
+            continue
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+        relevance_slots -= 1
 
     impact_candidates = sorted(
         (
@@ -1469,7 +1674,43 @@ def _select_papers_for_analysis(
         selected.append(paper)
         selected_ids.add(paper.paper_id)
 
+    selected = _ensure_novel_selection(
+        selected,
+        papers,
+        state=state,
+        target_count=target_count,
+        max_results=max_results,
+    )
     return {paper.paper_id: paper for paper in selected[:target_count]}
+
+
+def _hybrid_external_search_floor(
+    *,
+    state: ResearchState,
+    core: list[PaperNode],
+    relevance_order: list[PaperNode],
+    target_count: int,
+) -> int:
+    if fast_mode(state):
+        return 0
+    if str(state.get("research_mode", "hybrid") or "hybrid") != "hybrid":
+        return 0
+    if not core:
+        return 0
+    external_candidates = [
+        paper for paper in relevance_order if _is_external_search_paper(paper)
+    ]
+    if not external_candidates:
+        return 0
+    return min(len(external_candidates), 2 if target_count >= 8 else 1)
+
+
+def _is_external_search_paper(paper: PaperNode) -> bool:
+    source = str(getattr(paper, "source", "") or "").casefold()
+    origin = str(getattr(paper, "origin", "") or "").casefold()
+    source_detail = str(getattr(paper, "source_detail", "") or "").casefold()
+    values = {source, origin, source_detail}
+    return bool(values & {"arxiv", "semantic_scholar", "system_search"})
 
 
 def _relevance_priority(paper: PaperNode) -> tuple[int, float, int, int]:

@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from rapidfuzz import fuzz
+
 from ..models import PaperNode
 
 
@@ -203,7 +205,31 @@ _TOPIC_ANCHOR_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "data integration",
         ),
     ),
+    (
+        "causal_reasoning",
+        (
+            "causal",
+            "causality",
+            "causal reasoning",
+            "causal inference",
+            "causal discovery",
+            "counterfactual",
+            "counterfactual reasoning",
+            "causal representation",
+            "causal representation learning",
+        ),
+    ),
 )
+
+_FUZZY_MULTI_TOKEN_ALIAS_THRESHOLD = 96
+_FUZZY_SINGLE_TOKEN_ALIAS_THRESHOLD = 94
+_FUZZY_SINGLE_TOKEN_ALLOWLIST = {
+    "benchmark",
+    "evaluation",
+    "evaluate",
+    "robustness",
+    "reliability",
+}
 
 _GENERIC_STOPWORDS = {
     "agent",
@@ -473,8 +499,8 @@ def _match_groups(
     strengths: list[float] = []
     reasons: list[str] = []
     for group_name, aliases in groups:
-        title_alias = _first_matching_alias(title_text, aliases)
-        abstract_alias = _first_matching_alias(abstract_text, aliases)
+        title_alias = _first_matching_text_alias(title_text, aliases)
+        abstract_alias = _first_matching_text_alias(abstract_text, aliases)
         if title_alias:
             matched_groups.append(group_name)
             title_matched_groups.append(group_name)
@@ -573,6 +599,16 @@ def _first_matching_alias(text: str, aliases: Iterable[str]) -> str:
     return ""
 
 
+def _first_matching_text_alias(text: str, aliases: Iterable[str]) -> str:
+    exact_alias = _first_matching_alias(text, aliases)
+    if exact_alias:
+        return exact_alias
+    for alias in aliases:
+        if _fuzzy_contains_alias(text, alias):
+            return alias
+    return ""
+
+
 def _contains_alias(text: str, alias: str) -> bool:
     normalized_alias = _normalize(alias).replace("-", " ")
     normalized_text = text.replace("-", " ")
@@ -582,3 +618,27 @@ def _contains_alias(text: str, alias: str) -> bool:
         pattern = rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])"
         return re.search(pattern, normalized_text) is not None
     return normalized_alias in normalized_text
+
+
+def _fuzzy_contains_alias(text: str, alias: str) -> bool:
+    normalized_alias = _normalize(alias).replace("-", " ")
+    normalized_text = text.replace("-", " ")
+    if not normalized_alias or not normalized_text:
+        return False
+    if not re.fullmatch(r"[a-z0-9+#. ]+", normalized_alias):
+        return False
+
+    alias_tokens = normalized_alias.split()
+    if len(alias_tokens) >= 2:
+        threshold = _FUZZY_MULTI_TOKEN_ALIAS_THRESHOLD
+        score = fuzz.token_set_ratio(normalized_alias, normalized_text)
+    elif len(normalized_alias) >= 8 and (
+        normalized_alias not in _GENERIC_STOPWORDS
+        or normalized_alias in _FUZZY_SINGLE_TOKEN_ALLOWLIST
+    ):
+        threshold = _FUZZY_SINGLE_TOKEN_ALIAS_THRESHOLD
+        score = fuzz.partial_ratio(normalized_alias, normalized_text)
+    else:
+        return False
+
+    return score >= threshold

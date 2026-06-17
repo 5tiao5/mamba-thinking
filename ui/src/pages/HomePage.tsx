@@ -135,11 +135,14 @@ export function HomePage() {
                 <span className="field-label">任务模式</span>
                 <SegmentedControl label="任务模式" onChange={setMode} options={modeOptions} value={mode} />
               </div>
-              <ToggleSwitch
-                checked={useSharedKnowledge}
-                label="使用当前研究与全局知识"
-                onChange={setUseSharedKnowledge}
-              />
+              <div className="knowledge-scope-control">
+                <ToggleSwitch
+                  checked={useSharedKnowledge}
+                  label="允许使用全局共享知识"
+                  onChange={setUseSharedKnowledge}
+                />
+                <small>关闭后仍会沿用当前研究中的历史结论、论文和近期追问。</small>
+              </div>
             </div>
             <div className="button-row">
               <button className="primary-button" disabled={loading} onClick={handleCreateConversation} type="button">

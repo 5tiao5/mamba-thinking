@@ -9,6 +9,7 @@ from product_agent.domain import (
     KnowledgeDocument,
     MessageRecord,
     ResearchTask,
+    ResearchTaskEvent,
     ResearchWorkspace,
 )
 
@@ -99,6 +100,34 @@ class InMemoryResearchTaskRepository:
         for task_id in task_ids:
             del self._items[task_id]
         return task_ids
+
+
+class InMemoryResearchTaskEventRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, ResearchTaskEvent] = {}
+        self._task_index: dict[str, list[str]] = {}
+
+    def append(self, event: ResearchTaskEvent) -> ResearchTaskEvent:
+        stored = deepcopy(event)
+        self._items[event.event_id] = stored
+        self._task_index.setdefault(event.task_id, []).append(event.event_id)
+        return deepcopy(stored)
+
+    def list_by_task(self, task_id: str) -> list[ResearchTaskEvent]:
+        event_ids = self._task_index.get(task_id, [])
+        items = [self._items[event_id] for event_id in event_ids if event_id in self._items]
+        items.sort(key=lambda item: (item.sequence, item.created_at, item.event_id))
+        return [deepcopy(item) for item in items]
+
+    def delete_by_task_ids(self, task_ids: list[str]) -> int:
+        deleted = 0
+        for task_id in task_ids:
+            event_ids = self._task_index.pop(task_id, [])
+            for event_id in event_ids:
+                if event_id in self._items:
+                    del self._items[event_id]
+                    deleted += 1
+        return deleted
 
 
 class InMemoryWorkspaceRepository:

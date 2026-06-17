@@ -35,7 +35,22 @@ _GOAL_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "benchmark_evaluation",
         ("benchmark", "evaluation", "eval", "\u8bc4\u6d4b", "\u8bc4\u4f30", "\u57fa\u51c6"),
     ),
-    ("extend_context", ("extend", "expand", "add", "\u6269\u5c55", "\u8865\u5145", "\u52a0\u4e0a")),
+    (
+        "extend_context",
+        (
+            "extend",
+            "expand",
+            "add",
+            "\u7ee7\u7eed",
+            "\u7ee7\u7eed\u5c55\u5f00",
+            "\u5c55\u5f00",
+            "\u6df1\u5165",
+            "\u6df1\u5316",
+            "\u6269\u5c55",
+            "\u8865\u5145",
+            "\u52a0\u4e0a",
+        ),
+    ),
 )
 
 _PAPER_SCOPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -51,6 +66,24 @@ _DOMAIN_FOCUS_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("public datasets", ("public dataset", "public datasets", "\u516c\u5f00\u6570\u636e\u96c6")),
     ("evaluation metrics", ("evaluation metric", "evaluation metrics", "\u8bc4\u4ef7\u6307\u6807", "\u8bc4\u6d4b\u6307\u6807")),
     ("ablation studies", ("ablation study", "ablation studies", "ablation experiment", "\u6d88\u878d\u5b9e\u9a8c")),
+    ("robot vision", ("robot vision", "robotic vision", "robot perception", "\u673a\u5668\u4eba\u89c6\u89c9", "\u673a\u5668\u4eba\u611f\u77e5")),
+    ("lightweight", ("lightweight", "efficient", "efficiency", "edge deployment", "mobile deployment", "\u8f7b\u91cf\u7ea7", "\u8f7b\u91cf\u5316", "\u9ad8\u6548", "\u8fb9\u7f18\u90e8\u7f72")),
+    ("fusion architecture", ("fusion architecture", "multimodal fusion architecture", "fusion network", "\u878d\u5408\u67b6\u6784", "\u878d\u5408\u7ed3\u6784", "\u67b6\u6784\u8bbe\u8ba1")),
+    ("cross-modal alignment", ("cross-modal alignment", "vision-language alignment", "modality alignment", "\u8de8\u6a21\u6001\u5bf9\u9f50", "\u6a21\u6001\u5bf9\u9f50")),
+    (
+        "missing modality robustness",
+        (
+            "missing modality",
+            "incomplete multimodal",
+            "missing modality robustness",
+            "\u7f3a\u5931\u6a21\u6001",
+            "\u6a21\u6001\u7f3a\u5931",
+            "\u7f3a\u5931\u6a21\u6001\u9c81\u68d2",
+        ),
+    ),
+    ("multimodal retrieval", ("multimodal retrieval", "cross-modal retrieval", "image text retrieval", "\u591a\u6a21\u6001\u68c0\u7d22", "\u8de8\u6a21\u6001\u68c0\u7d22")),
+    ("causal reasoning", ("causal reasoning", "causal inference", "causal discovery", "counterfactual reasoning", "\u56e0\u679c\u63a8\u7406", "\u56e0\u679c\u53d1\u73b0", "\u53cd\u4e8b\u5b9e")),
+    ("edge-cloud collaboration", ("edge-cloud", "edge cloud collaboration", "cloud edge collaboration", "\u7aef\u4e91\u534f\u540c", "\u7aef\u8fb9\u4e91\u534f\u540c")),
     ("early fusion", ("early fusion", "\u65e9\u671f\u878d\u5408")),
     ("late fusion", ("late fusion", "\u540e\u671f\u878d\u5408")),
     ("intermediate fusion", ("intermediate fusion", "middle fusion", "\u4e2d\u95f4\u878d\u5408")),
@@ -144,6 +177,20 @@ _EXPLICIT_FOCUS_PATTERNS = (
     re.compile(
         r"(?:focus(?:ing)?\s+on|with\s+emphasis\s+on|pay\s+attention\s+to)"
         r"\s*[:：]?\s*([^.!?;]+)",
+        flags=re.IGNORECASE,
+    ),
+)
+_CONTINUATION_FOCUS_PATTERNS = (
+    re.compile(
+        r"(?:\u7ee7\u7eed(?:\u5c55\u5f00|\u6df1\u5165|\u6df1\u5316)?"
+        r"|\u5c55\u5f00|\u6df1\u5165|\u6df1\u5316|\u6269\u5c55|\u8865\u5145|\u56f4\u7ed5)"
+        r"\s*(?:\u4e00\u4e0b|\u8fd9\u4e2a\u65b9\u5411|\u8be5\u65b9\u5411|\u65b9\u5411)?"
+        r"\s*[:\uff1a]\s*([^\u3002\uff01\uff1f\uff1b;]+)",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:continue(?: with)?|expand(?: on)?|drill into|further explore)"
+        r"\s*[:\-]?\s*([^.!?;]+)",
         flags=re.IGNORECASE,
     ),
 )
@@ -481,6 +528,10 @@ def _domain_focus_terms(text: str) -> list[str]:
 def _extract_explicit_focus_facets(text: str) -> list[dict[str, Any]]:
     facets: list[dict[str, Any]] = []
     seen: set[str] = set()
+    for pattern in _CONTINUATION_FOCUS_PATTERNS:
+        for match in pattern.finditer(text):
+            clause = _FOCUS_TRAILING_DIRECTIVE_PATTERN.sub("", match.group(1)).strip()
+            _append_focus_clause(facets, seen, clause)
     for pattern in _EXPLICIT_FOCUS_PATTERNS:
         for match in pattern.finditer(text):
             clause = _FOCUS_TRAILING_DIRECTIVE_PATTERN.sub("", match.group(1)).strip()

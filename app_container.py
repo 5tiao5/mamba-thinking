@@ -11,6 +11,7 @@ from product_agent.repositories import (
     InMemoryKnowledgeRepository,
     InMemoryMessageRepository,
     InMemoryResearchPaperRepository,
+    InMemoryResearchTaskEventRepository,
     InMemoryResearchTaskRepository,
     InMemoryWorkspaceRepository,
     SQLiteConversationRepository,
@@ -20,6 +21,7 @@ from product_agent.repositories import (
     SQLiteKnowledgeRepository,
     SQLiteMessageRepository,
     SQLiteResearchPaperRepository,
+    SQLiteResearchTaskEventRepository,
     SQLiteResearchTaskRepository,
     SQLiteVectorStore,
     SQLiteWorkspaceRepository,
@@ -63,6 +65,7 @@ class AppContainer:
             self.conversation_repository = SQLiteConversationRepository(self.database)
             self.message_repository = SQLiteMessageRepository(self.database)
             self.task_repository = SQLiteResearchTaskRepository(self.database)
+            self.task_event_repository = SQLiteResearchTaskEventRepository(self.database)
             self.workspace_repository = SQLiteWorkspaceRepository(self.database)
             self.working_memory_repository = SQLiteWorkingMemoryRepository(self.database)
             self.knowledge_repository = SQLiteKnowledgeRepository(self.database)
@@ -72,6 +75,7 @@ class AppContainer:
             self.conversation_repository = InMemoryConversationRepository()
             self.message_repository = InMemoryMessageRepository()
             self.task_repository = InMemoryResearchTaskRepository()
+            self.task_event_repository = InMemoryResearchTaskEventRepository()
             self.workspace_repository = InMemoryWorkspaceRepository()
             self.working_memory_repository = InMemoryWorkingMemoryRepository()
             self.knowledge_repository = InMemoryKnowledgeRepository()
@@ -86,6 +90,7 @@ class AppContainer:
             self.conversation_repository,
             message_repository=self.message_repository,
             task_repository=self.task_repository,
+            task_event_repository=self.task_event_repository,
             workspace_repository=self.workspace_repository,
             working_memory_repository=self.working_memory_repository,
             research_paper_repository=self.research_paper_repository,
@@ -138,6 +143,7 @@ class AppContainer:
         self.research_service = ResearchService(
             conversation_repository=self.conversation_repository,
             task_repository=self.task_repository,
+            task_event_repository=self.task_event_repository,
             workspace_repository=self.workspace_repository,
             workspace_service=self.workspace_service,
             message_service=self.message_service,

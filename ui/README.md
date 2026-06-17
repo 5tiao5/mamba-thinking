@@ -28,12 +28,12 @@ npm run dev
 
 默认后端地址：
 
-- `http://127.0.0.1:8000`
+- `http://127.0.0.1:8001`
 
 如果后端地址变动，可在 `.env.local` 中设置：
 
 ```env
-VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_API_BASE_URL=http://127.0.0.1:8001
 ```
 
 ## 页面规划

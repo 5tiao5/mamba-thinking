@@ -324,12 +324,32 @@ def _ground_ideas(
                 str(getattr(idea, "idea_id", "") or "")
             )
         else:
+            _mark_idea_indirect(
+                idea,
+                reason="linked to current core papers but not yet full-text verified",
+            )
             stats["supported_count"] += 1
             stats["supported_idea_ids"].append(
                 str(getattr(idea, "idea_id", "") or "")
             )
         grounded.append(idea)
     return grounded, stats
+
+
+def _mark_idea_indirect(idea: Any, *, reason: str) -> None:
+    related = [
+        str(paper_id)
+        for paper_id in list(getattr(idea, "related_papers", []) or [])
+        if str(paper_id).strip()
+    ]
+    idea.supporting_paper_ids = list(dict.fromkeys(related))[:3]
+    idea.evidence_level = "indirect"
+    idea.evidence_reason = (
+        f"该研究建议由 {len(idea.supporting_paper_ids)} 篇核心论文启发，"
+        "但尚未完成全文级 claim verification 或实验验证。"
+    )
+    tags = [tag for tag in list(getattr(idea, "tags", []) or []) if str(tag).strip() != "exploratory"]
+    idea.tags = list(dict.fromkeys([reason, *tags]))[:5]
 
 
 def _normalized_binding_text(value: str) -> str:
@@ -342,9 +362,6 @@ def _normalized_binding_text(value: str) -> str:
 
 
 def _mark_idea_exploratory(idea: Any, *, reason: str) -> None:
-    title = str(getattr(idea, "title", "") or "").strip()
-    if title and not title.startswith("探索性方向："):
-        idea.title = f"探索性方向：{title}"
     disclaimer = (
         "该方向当前缺少分支级直接论文证据，以下内容仅作为待验证假设，"
         "不应视为已有研究结论。"
@@ -352,6 +369,8 @@ def _mark_idea_exploratory(idea: Any, *, reason: str) -> None:
     motivation = str(getattr(idea, "motivation", "") or "").strip()
     if disclaimer not in motivation:
         idea.motivation = f"{disclaimer}{motivation}"
+    idea.evidence_level = "exploratory"
+    idea.evidence_reason = "该研究建议目前缺少可绑定的核心论文证据，只能作为待验证假设。"
     idea.confidence = min(float(getattr(idea, "confidence", 0.0) or 0.0), 0.45)
     tags = list(getattr(idea, "tags", []) or [])
     idea.tags = list(dict.fromkeys(["exploratory", reason, *tags]))[:5]

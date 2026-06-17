@@ -1,7 +1,8 @@
+import { Link } from "react-router-dom";
+
 import { cleanDisplayText } from "../../lib/displayText";
 import {
   formatRetrievalMessage,
-  formatRetrievalPlan,
   knowledgeScopeLabel,
   retrievalStatusLabel,
 } from "../../lib/groundingText";
@@ -10,6 +11,7 @@ import type { WorkspaceInheritedContext, WorkspaceSourceTrace } from "../../type
 type MessageSourceTraceProps = {
   sourceTrace?: WorkspaceSourceTrace | null;
   inheritedContext?: WorkspaceInheritedContext | null;
+  detailsHref?: string;
 };
 
 function uniqueTexts(items: string[], maxItems: number, maxLength = 40) {
@@ -31,17 +33,16 @@ function uniqueTexts(items: string[], maxItems: number, maxLength = 40) {
   return values;
 }
 
-export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSourceTraceProps) {
-  const knowledgeTitles = uniqueTexts(
-    (sourceTrace?.knowledge_hits ?? []).map((item) => item.title),
-    2,
-    36
-  );
-  const knowledgeSnippets = uniqueTexts(
-    (sourceTrace?.knowledge_hits ?? []).map((item) => item.snippet),
-    1,
-    120
-  );
+export function MessageSourceTrace({
+  sourceTrace,
+  inheritedContext,
+  detailsHref,
+}: MessageSourceTraceProps) {
+  const knowledgeHits = sourceTrace?.knowledge_hits ?? [];
+  const sharedKnowledgeCount = knowledgeHits.filter(
+    (item) => (item.scope || "").toLowerCase() === "shared"
+  ).length;
+  const researchKnowledgeCount = knowledgeHits.length - sharedKnowledgeCount;
   const workspaceHints = uniqueTexts(
     [...(sourceTrace?.workspace_hints ?? []), ...(inheritedContext?.workspace_hints ?? [])],
     2,
@@ -56,31 +57,26 @@ export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSou
   );
   const workspaceSummary = cleanDisplayText(inheritedContext?.workspace_summary ?? "", 120);
   const topic = cleanDisplayText(inheritedContext?.conversation_topic ?? "", 48);
-  const knowledgeHitCount = sourceTrace?.knowledge_hit_count ?? 0;
   const workspaceHintCount = sourceTrace?.workspace_hint_count ?? 0;
   const recentTurnCount = sourceTrace?.recent_turn_count ?? 0;
+  const displayedWorkspaceHintCount = Math.max(workspaceHintCount, workspaceHints.length);
+  const displayedRecentTurnCount = Math.max(recentTurnCount, recentTurns.length);
   const knowledgeScope = sourceTrace?.knowledge_scope;
   const retrievalStatus = retrievalStatusLabel(sourceTrace?.retrieval_status);
-  const retrievalPlan = formatRetrievalPlan(sourceTrace?.retrieval_plan, 120);
   const retrievalMessage = formatRetrievalMessage(sourceTrace, 160);
-  const filteredOutCount = sourceTrace?.filtered_out_count ?? 0;
   const fallbackUsed = sourceTrace?.fallback_used ?? false;
 
   const hasMetrics =
     Boolean(sourceTrace) &&
-    (knowledgeHitCount > 0 ||
-      workspaceHintCount > 0 ||
-      recentTurnCount > 0 ||
-      filteredOutCount > 0 ||
+    (knowledgeHits.length > 0 ||
+      displayedWorkspaceHintCount > 0 ||
+      displayedRecentTurnCount > 0 ||
       Boolean(retrievalStatus) ||
       fallbackUsed ||
       knowledgeScope === "none");
   const hasContext =
-    knowledgeTitles.length > 0 ||
-    knowledgeSnippets.length > 0 ||
     workspaceHints.length > 0 ||
     recentTurns.length > 0 ||
-    Boolean(retrievalPlan) ||
     Boolean(retrievalMessage) ||
     Boolean(workspaceSummary) ||
     Boolean(topic);
@@ -101,18 +97,6 @@ export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSou
               {retrievalStatus}
             </span>
           ) : null}
-          {knowledgeHitCount > 0 ? (
-            <span className="message-source-trace-chip">知识命中 {knowledgeHitCount}</span>
-          ) : null}
-          {workspaceHintCount > 0 ? (
-            <span className="message-source-trace-chip">历史结论 {workspaceHintCount}</span>
-          ) : null}
-          {filteredOutCount > 0 ? (
-            <span className="message-source-trace-chip">过滤越界 {filteredOutCount}</span>
-          ) : null}
-          {recentTurnCount > 0 ? (
-            <span className="message-source-trace-chip">近期追问 {recentTurnCount}</span>
-          ) : null}
           {fallbackUsed ? (
             <span className="message-source-trace-chip message-source-trace-chip-warning">
               背景参考
@@ -128,53 +112,37 @@ export function MessageSourceTrace({ sourceTrace, inheritedContext }: MessageSou
         </div>
       ) : null}
 
-      {retrievalPlan ? (
-        <div className="message-source-trace-copy">
-          <strong>检索策略</strong>
-          <span>{retrievalPlan}</span>
+      {researchKnowledgeCount ||
+      sharedKnowledgeCount ||
+      displayedWorkspaceHintCount ||
+      displayedRecentTurnCount ? (
+        <div className="message-source-context-summary">
+          <strong>本轮上下文</strong>
+          <div className="message-source-context-items">
+            {researchKnowledgeCount > 0 ? <span>当前研究资料 {researchKnowledgeCount}</span> : null}
+            {sharedKnowledgeCount > 0 ? <span>全局共享知识 {sharedKnowledgeCount}</span> : null}
+            {displayedWorkspaceHintCount > 0 ? (
+              <span>沿用研究历史 {displayedWorkspaceHintCount}</span>
+            ) : null}
+            {displayedRecentTurnCount > 0 ? (
+              <span>承接近期追问 {displayedRecentTurnCount}</span>
+            ) : null}
+          </div>
+          <small>这些内容用于辅助理解本轮问题，不会自动被视为论文证据。</small>
         </div>
       ) : null}
 
-      {knowledgeTitles.length ? (
+      {!displayedWorkspaceHintCount && !displayedRecentTurnCount && (workspaceSummary || topic) ? (
         <div className="message-source-trace-copy">
-          <strong>参考资料</strong>
-          <span>{knowledgeTitles.join(" / ")}</span>
+          <strong>研究上下文</strong>
+          <span>{workspaceSummary || topic}</span>
         </div>
       ) : null}
 
-      {knowledgeSnippets.length ? (
-        <div className="message-source-trace-copy">
-          <strong>命中片段</strong>
-          <span>{knowledgeSnippets[0]}</span>
-        </div>
-      ) : null}
-
-      {workspaceHints.length ? (
-        <div className="message-source-trace-copy">
-          <strong>继承线索</strong>
-          <span>{workspaceHints.join(" / ")}</span>
-        </div>
-      ) : null}
-
-      {!workspaceHints.length && workspaceSummary ? (
-        <div className="message-source-trace-copy">
-          <strong>继承结论</strong>
-          <span>{workspaceSummary}</span>
-        </div>
-      ) : null}
-
-      {recentTurns.length ? (
-        <div className="message-source-trace-copy">
-          <strong>承接追问</strong>
-          <span>{recentTurns[0]}</span>
-        </div>
-      ) : null}
-
-      {!recentTurns.length && topic ? (
-        <div className="message-source-trace-copy">
-          <strong>研究主题</strong>
-          <span>{topic}</span>
-        </div>
+      {detailsHref ? (
+        <Link className="message-source-details-link" to={detailsHref}>
+          查看证据与上下文
+        </Link>
       ) : null}
     </div>
   );
