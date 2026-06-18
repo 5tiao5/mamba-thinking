@@ -361,8 +361,20 @@ class PaperRelevanceTests(unittest.TestCase):
 
         self.assertEqual(relevance.tier, "adjacent")
 
+    @patch.dict(
+        "product_agent.research_agent.nodes.searcher.os.environ",
+        {"CITATION_ENRICHMENT": "0"},
+    )
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
     @patch("product_agent.research_agent.nodes.searcher.search_papers")
-    def test_searcher_expands_when_strict_results_are_low_relevance(self, search_arxiv) -> None:
+    def test_searcher_expands_when_strict_results_are_low_relevance(
+        self,
+        search_arxiv,
+        _search_s2,
+    ) -> None:
         def results_for(query: str, max_results: int = 10):
             if "function calling" in query:
                 return [

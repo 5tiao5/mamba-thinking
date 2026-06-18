@@ -361,6 +361,14 @@ def test_imported_only_search_skips_tools_and_does_not_add_fallback(monkeypatch)
         "product_agent.research_agent.nodes.searcher.search_papers",
         fail_if_called,
     )
+    monkeypatch.setattr(
+        "product_agent.research_agent.nodes.searcher.search_papers_recall",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        fail_if_called,
+    )
     paper = PaperNode(
         paper_id="imported:core",
         title="Imported Tool Use Benchmark",

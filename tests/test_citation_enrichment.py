@@ -184,10 +184,15 @@ class CitationEnrichmentTests(unittest.TestCase):
         self.assertEqual(paper.citation_count, 0)
 
     @patch("product_agent.research_agent.nodes.searcher.enrich_paper_metadata")
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
     @patch("product_agent.research_agent.nodes.searcher.search_papers", return_value=[])
     def test_balanced_mode_uses_one_bounded_metadata_enrichment(
         self,
         _search_arxiv,
+        _search_s2,
         enrich_metadata,
     ) -> None:
         enrich_metadata.return_value = (1, 0, 1)
@@ -248,10 +253,15 @@ class CitationEnrichmentTests(unittest.TestCase):
         self.assertIn("paper-9", selected)
 
     @patch("product_agent.research_agent.nodes.searcher.enrich_paper_metadata")
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
     @patch("product_agent.research_agent.nodes.searcher.search_papers")
     def test_citations_are_enriched_before_core_selection(
         self,
         search_arxiv,
+        _search_s2,
         enrich_metadata,
     ) -> None:
         distinct_topics = [
