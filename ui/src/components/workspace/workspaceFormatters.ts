@@ -63,6 +63,9 @@ function stripOpaqueReferences(value: string) {
 
 function stripInternalSignals(value: string) {
   const trimmed = value.trim();
+  if (/^[a-z][a-z0-9]*(?:_[a-z0-9]+){1,6}$/i.test(trimmed)) {
+    return "";
+  }
   if (/^(?:(?:focus|title|abstract|query|category|keywords|score|user_selected)\s*:\s*[^:;，。]+[:;，。]?\s*)+$/i.test(trimmed)) {
     return "";
   }
@@ -344,6 +347,9 @@ export function formatGraphEdgeReasoningByRelationship(
 ) {
   const value = relationship.toLowerCase();
   const cleaned = formatTextWithPaperTitles(reasoning || "", papers);
+  const looksInternal =
+    /\b(?:shared_dimensions|target_added_dimensions|source_added_dimensions|source_roles|target_roles|landscape_profile|keyword_overlap)\s*=/i.test(cleaned) ||
+    /\b(?:source|target)_(?:roles|dimensions)\b/i.test(cleaned);
   const overlapMatch = cleaned.match(/keyword_overlap\s*=\s*([0-9.]+)/i);
   const overlap = overlapMatch ? Number(overlapMatch[1]) : undefined;
   const closeness =
@@ -355,6 +361,15 @@ export function formatGraphEdgeReasoningByRelationship(
 
   if (value.includes("citation")) {
     return "目标论文的参考文献元数据中明确包含源论文，因此这是一条可追溯的引用关系。";
+  }
+  if (value.includes("addresses")) {
+    return "目标论文围绕源论文暴露的问题或限制给出了响应方案；建议继续打开原文核查具体实验是否支撑。";
+  }
+  if (value.includes("scope_extension")) {
+    return "目标论文在评测对象、任务范围或应用场景上扩展了源论文覆盖面。";
+  }
+  if (value.includes("complement")) {
+    return "两篇论文从不同角度补充同一研究路线，适合并读来理解方法边界。";
   }
   if (value.includes("reference")) {
     return `这两篇论文在研究主题或关键词上${closeness}，可以作为同一方向的参考材料。`;
@@ -372,6 +387,9 @@ export function formatGraphEdgeReasoningByRelationship(
     return "目标论文的摘要明确提到源论文，并陈述了比较或对照关系。";
   }
 
+  if (looksInternal) {
+    return "系统根据主题、角色和证据特征判断两篇论文存在关系；此处隐藏内部打分字段，只保留可读解释。";
+  }
   return formatGraphEdgeReasoning(reasoning, papers);
 }
 

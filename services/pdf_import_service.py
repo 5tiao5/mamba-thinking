@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
@@ -12,7 +13,7 @@ from product_agent.paper_content_tools import (
     parse_pdf_bytes,
 )
 
-from .knowledge_service import KnowledgeService
+from .knowledge_service import KnowledgeService, PaperImportCandidate
 from .research_paper_service import ResearchPaperService
 
 
@@ -42,6 +43,12 @@ class PdfImportResult:
     error_message: str = ""
 
 
+@dataclass(frozen=True)
+class _ExternalMetadataMatch:
+    candidate: PaperImportCandidate
+    score: float
+
+
 class PdfImportService:
     """Turn uploaded PDFs into scoped knowledge and conversation paper assets."""
 
@@ -51,10 +58,12 @@ class PdfImportService:
         knowledge_service: KnowledgeService,
         research_paper_service: ResearchPaperService,
         parser: Callable[..., FullTextDocument] = parse_pdf_bytes,
+        metadata_resolver: Callable[[str], list[PaperImportCandidate]] | None = None,
     ) -> None:
         self.knowledge_service = knowledge_service
         self.research_paper_service = research_paper_service
         self.parser = parser
+        self.metadata_resolver = metadata_resolver
 
     def import_batch(
         self,
@@ -123,6 +132,7 @@ class PdfImportService:
             )
 
         title = self._infer_title(parsed, filename)
+        metadata_match, enrichment_warning = self._resolve_external_metadata(title)
         metadata = {
             "source_type": "paper_import",
             "import_method": "pdf_upload",
@@ -137,12 +147,30 @@ class PdfImportService:
             "parse_warnings": list(parsed.warnings),
             "pdf_metadata": dict(parsed.metadata),
         }
+        if metadata_match is not None:
+            metadata.update(
+                self._metadata_from_candidate(
+                    metadata_match.candidate,
+                    match_score=metadata_match.score,
+                )
+            )
+        else:
+            metadata["metadata_enrichment_status"] = (
+                "failed" if enrichment_warning else "unmatched"
+            )
+        warnings = list(parsed.warnings)
+        if enrichment_warning:
+            warnings.append(enrichment_warning)
+
+        tags = ["paper", "pdf", "user-upload"]
+        if metadata_match is not None:
+            tags.extend(self._candidate_tags(metadata_match.candidate))
         content = self._build_page_aware_content(parsed)
         try:
             document = self.knowledge_service.import_document(
                 title=title,
                 content=content,
-                tags=["paper", "pdf", "user-upload"],
+                tags=self._dedupe_tags(tags),
                 conversation_id=conversation_id,
                 metadata_extra=metadata,
                 index_immediately=True,
@@ -165,7 +193,7 @@ class PdfImportService:
                 success=False,
                 parsed_pages=len(parsed.pages),
                 total_pages=parsed.total_pages or len(parsed.pages),
-                warnings=list(parsed.warnings),
+                warnings=warnings,
                 error_code="pdf_import_failed",
                 error_message=f"Unable to store imported PDF: {error}",
             )
@@ -182,7 +210,7 @@ class PdfImportService:
             parsed_pages=len(parsed.pages),
             total_pages=parsed.total_pages or len(parsed.pages),
             duplicate_replaced=replaced,
-            warnings=list(parsed.warnings),
+            warnings=warnings,
         )
 
     @staticmethod
@@ -243,3 +271,114 @@ class PdfImportService:
             for page in parsed.pages
             if page.text.strip()
         )
+
+    def _resolve_external_metadata(self, title: str) -> tuple[_ExternalMetadataMatch | None, str]:
+        query = " ".join(str(title or "").split())
+        if len(query) < 8:
+            return None, ""
+        resolver = self.metadata_resolver
+        try:
+            candidates = (
+                resolver(query)
+                if resolver is not None
+                else self.knowledge_service.search_paper_candidates(query, limit=5)
+            )
+        except Exception as error:
+            return None, f"External metadata lookup failed: {error}"
+        best: _ExternalMetadataMatch | None = None
+        for candidate in candidates or []:
+            if not isinstance(candidate, PaperImportCandidate):
+                continue
+            score = self._title_match_score(query, candidate.title)
+            if candidate.is_exact_match:
+                score = max(score, 0.94)
+            if best is None or score > best.score:
+                best = _ExternalMetadataMatch(candidate=candidate, score=score)
+        if best is None or best.score < 0.86:
+            return None, ""
+        return best, ""
+
+    @classmethod
+    def _metadata_from_candidate(
+        cls,
+        candidate: PaperImportCandidate,
+        *,
+        match_score: float,
+    ) -> dict[str, object]:
+        metadata: dict[str, object] = {
+            "metadata_enrichment_status": "matched",
+            "metadata_enrichment_source": candidate.source,
+            "metadata_match_score": round(match_score, 3),
+            "external_title": candidate.title,
+            "external_source": candidate.source,
+            "source_url": candidate.source_url,
+            "authors": list(candidate.authors),
+            "year": candidate.year,
+            "doi": candidate.doi,
+            "arxiv_id": candidate.arxiv_id,
+            "pdf_url": candidate.pdf_url,
+            "venue": candidate.venue,
+            "openalex_id": candidate.openalex_id,
+            "semantic_scholar_id": candidate.semantic_scholar_id,
+            "external_abstract": candidate.abstract,
+            "taxonomy_category": candidate.taxonomy_category,
+            "category": candidate.taxonomy_category,
+            "citation_source": candidate.citation_source or candidate.source,
+        }
+        if candidate.citation_count is not None:
+            metadata["citation_count"] = max(int(candidate.citation_count), 0)
+            metadata["citation_count_known"] = True
+        return {
+            key: value
+            for key, value in metadata.items()
+            if value not in (None, "", [])
+        }
+
+    @classmethod
+    def _candidate_tags(cls, candidate: PaperImportCandidate) -> list[str]:
+        tags = ["metadata-matched"]
+        if candidate.source:
+            tags.append(candidate.source)
+        if candidate.arxiv_id:
+            tags.append("arxiv")
+        if candidate.year:
+            tags.append(str(candidate.year))
+        if candidate.taxonomy_category:
+            tags.append(candidate.taxonomy_category)
+        return tags
+
+    @staticmethod
+    def _dedupe_tags(tags: list[str]) -> list[str]:
+        deduped: list[str] = []
+        for tag in tags:
+            normalized = re.sub(r"\s+", "-", str(tag or "").strip().lower())
+            if normalized and normalized not in deduped:
+                deduped.append(normalized[:60])
+        return deduped
+
+    @classmethod
+    def _title_match_score(cls, left: str, right: str) -> float:
+        left_norm = cls._normalize_title_for_match(left)
+        right_norm = cls._normalize_title_for_match(right)
+        if not left_norm or not right_norm:
+            return 0.0
+        if left_norm == right_norm:
+            return 1.0
+        ratio = SequenceMatcher(None, left_norm, right_norm).ratio()
+        left_tokens = set(left_norm.split())
+        right_tokens = set(right_norm.split())
+        if not left_tokens or not right_tokens:
+            return ratio
+        overlap = len(left_tokens & right_tokens)
+        jaccard = overlap / len(left_tokens | right_tokens)
+        containment = overlap / min(len(left_tokens), len(right_tokens))
+        return max(ratio, jaccard, containment * 0.96)
+
+    @staticmethod
+    def _normalize_title_for_match(value: str) -> str:
+        normalized = re.sub(
+            r"[^a-z0-9\u4e00-\u9fff]+",
+            " ",
+            str(value or "").casefold(),
+        )
+        return " ".join(normalized.split())

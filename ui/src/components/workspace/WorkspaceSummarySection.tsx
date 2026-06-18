@@ -108,10 +108,27 @@ function paperCitationLabel(paper: WorkspacePaper) {
   return `${paper.citation_count ?? 0} 引用`;
 }
 
+function isUserProvidedPaper(paper?: WorkspacePaper) {
+  if (!paper) {
+    return false;
+  }
+  const origin = (paper.origin || "").toLowerCase();
+  const source = (paper.source || "").toLowerCase();
+  return ["user_upload", "user_import", "local_pdf"].includes(origin)
+    || ["user_upload", "user_import", "local_pdf"].includes(source)
+    || Boolean(paper.document_id);
+}
+
+function isGenericUserUploadBrief(value: string) {
+  return /用户上传|用户导入|本地证据|对照论文|本地阅读上下文/.test(value);
+}
+
 function paperReason(paper: WorkspacePaper) {
-  const explicitReason = paper.relevance_reasons?.find((reason) => reason.trim());
+  const explicitReason = paper.relevance_reasons
+    ?.map((reason) => cleanWorkspaceText(reason, 120))
+    .find((reason) => reason.trim());
   if (explicitReason) {
-    return cleanWorkspaceText(explicitReason, 120);
+    return explicitReason;
   }
   if (paper.taxonomy_category?.trim()) {
     return `覆盖方向：${paper.taxonomy_category}`;
@@ -123,7 +140,25 @@ function paperReason(paper: WorkspacePaper) {
 }
 
 function paperContributionBrief(paper?: WorkspacePaper, fallbackReason = "") {
-  const backendBrief = cleanDisplayText(paper?.paper_brief?.contribution ?? "", 160);
+  const backendBrief = cleanWorkspaceText(paper?.paper_brief?.contribution ?? "", 160);
+  if (isUserProvidedPaper(paper)) {
+    const method = cleanWorkspaceText(paper?.paper_brief?.method ?? "", 150);
+    const problem = cleanWorkspaceText(paper?.paper_brief?.problem ?? "", 150);
+    const readFocus = cleanWorkspaceText(paper?.paper_brief?.read_focus ?? "", 150);
+    if (method && !/没有足够|元数据|标题|保守判断/.test(method)) {
+      return `本地论文线索：${method}`;
+    }
+    if (problem && !/缺少摘要|当前研究主题|进一步确认/.test(problem)) {
+      return `它主要回答：${problem}`;
+    }
+    if (backendBrief && !isGenericUserUploadBrief(backendBrief)) {
+      return backendBrief;
+    }
+    if (readFocus) {
+      return `适合拿来核查：${readFocus}`;
+    }
+    return "这是你上传的本地论文，适合作为人工已读材料与系统检索论文之间的对照锚点。";
+  }
   if (backendBrief) {
     return backendBrief;
   }
@@ -189,12 +224,146 @@ function evidenceLevelLabel(level?: string) {
   const normalized = (level || "").toLowerCase();
   if (normalized === "direct" || normalized === "strong") return "直接证据";
   if (normalized === "indirect" || normalized === "moderate" || normalized === "weak") return "间接证据";
-  return "探索性";
+  return "待验证假设";
 }
 
 function supportCountLabel(ids?: string[]) {
   const count = ids?.length ?? 0;
   return count ? `${count} 篇论文支撑` : "暂无绑定论文";
+}
+
+function topTaxonomyCategories(papers: WorkspacePaper[], maxItems = 3) {
+  const counts = new Map<string, number>();
+  for (const paper of papers) {
+    const category = cleanWorkspaceText(paper.taxonomy_category, 60);
+    if (!category) {
+      continue;
+    }
+    counts.set(category, (counts.get(category) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, maxItems)
+    .map(([category]) => category);
+}
+
+function topPaperTitles(papers: WorkspacePaper[], maxItems = 2) {
+  return papers
+    .slice(0, maxItems)
+    .map((paper) => cleanWorkspaceText(paper.title, 96))
+    .filter(Boolean);
+}
+
+function bestSupportedIdea(ideas: WorkspaceIdea[]) {
+  return (
+    ideas.find((idea) => idea.evidence_level === "direct") ??
+    ideas.find((idea) => idea.evidence_level === "indirect") ??
+    ideas[0]
+  );
+}
+
+function buildFallbackExecutiveSummary({
+  topic,
+  focus,
+  analysisPapers,
+  paperCount,
+  gaps,
+  ideas,
+  sourceTrace,
+}: {
+  topic: string;
+  focus?: string;
+  analysisPapers: WorkspacePaper[];
+  paperCount: number;
+  gaps: WorkspaceGap[];
+  ideas: WorkspaceIdea[];
+  sourceTrace?: WorkspaceSourceTrace | null;
+}) {
+  if (!analysisPapers.length && !paperCount) {
+    return "";
+  }
+
+  const categoryText = topTaxonomyCategories(analysisPapers).join("、");
+  const titleText = topPaperTitles(analysisPapers).join("、");
+  const idea = bestSupportedIdea(ideas);
+  const gap = gaps[0];
+  const focusText = cleanWorkspaceText(focus, 140);
+  const topicText = cleanWorkspaceText(topic, 120) || "当前主题";
+  const retrievalText = sourceTrace?.refresh_triggered
+    ? `追问后补入 ${sourceTrace.novel_paper_count ?? 0} 篇新论文，并沿用 ${sourceTrace.reused_paper_count ?? 0} 篇旧证据。`
+    : "本轮主要基于当前证据池完成结构化分析。";
+  const routeText = categoryText
+    ? `证据主要落在 ${categoryText} 等方向。`
+    : "证据已经形成若干可继续审阅的研究路线。";
+  const paperText = titleText ? `建议先读 ${titleText} 等核心论文。` : "";
+  const gapText = gap ? `当前最需要复核的空白是：${cleanWorkspaceText(gap.summary, 130)}。` : "";
+  const ideaText = idea ? `下一步可围绕“${cleanWorkspaceText(idea.title, 110)}”继续验证。` : "";
+
+  return [
+    focusText
+      ? `围绕“${topicText}”的本轮追问聚焦“${focusText}”。`
+      : `系统围绕“${topicText}”整理了当前研究进展。`,
+    `当前证据池共 ${paperCount} 篇，其中 ${analysisPapers.length} 篇进入核心分析。`,
+    routeText,
+    retrievalText,
+    paperText,
+    gapText,
+    ideaText,
+  ]
+    .filter(Boolean)
+    .join("");
+}
+
+function buildFallbackKeyFinding({
+  analysisPapers,
+  gaps,
+  sourceTrace,
+}: {
+  analysisPapers: WorkspacePaper[];
+  gaps: WorkspaceGap[];
+  sourceTrace?: WorkspaceSourceTrace | null;
+}) {
+  const directCount = sourceTrace?.direct_paper_count ?? 0;
+  const adjacentCount = sourceTrace?.adjacent_paper_count ?? 0;
+  const topCategories = topTaxonomyCategories(analysisPapers, 2).join("、");
+  if (topCategories) {
+    return `当前证据优先覆盖 ${topCategories}，其中直接相关论文 ${directCount} 篇、邻近论文 ${adjacentCount} 篇；其余结论需要继续通过全文或实验结果复核。`;
+  }
+  if (gaps[0]) {
+    return `当前最明确的信息来自研究空白审计：${cleanWorkspaceText(gaps[0].summary, 150)}。`;
+  }
+  return "";
+}
+
+function buildFallbackWarnings({
+  gaps,
+  ideas,
+  sourceTrace,
+  usesFallbackPapers,
+}: {
+  gaps: WorkspaceGap[];
+  ideas: WorkspaceIdea[];
+  sourceTrace?: WorkspaceSourceTrace | null;
+  usesFallbackPapers: boolean;
+}) {
+  const warnings: string[] = [];
+  const exploratoryIdeaCount = ideas.filter((idea) => idea.evidence_level === "exploratory").length;
+  const exploratoryGapCount = gaps.filter((gap) => gap.evidence_level === "exploratory").length;
+
+  if (usesFallbackPapers || sourceTrace?.fallback_used) {
+    warnings.push("本轮包含保底或背景性结果，需要优先检查论文证据池，避免把兜底内容当成结论。");
+  }
+  if (exploratoryIdeaCount) {
+    warnings.push(`${exploratoryIdeaCount} 条研究建议仍属于待验证假设，适合作为下一轮检索或实验设计线索。`);
+  }
+  if (exploratoryGapCount) {
+    warnings.push(`${exploratoryGapCount} 条研究空白暂未绑定直接论文证据，需要补搜或导入全文后再确认。`);
+  }
+  if (sourceTrace?.refresh_triggered && (sourceTrace.novel_paper_count ?? 0) === 0) {
+    warnings.push("本轮追问触发了检索策略调整，但没有补入新论文，建议换更具体的约束再次追问。");
+  }
+
+  return warnings;
 }
 
 export function WorkspaceSummarySection({
@@ -239,22 +408,57 @@ export function WorkspaceSummarySection({
   const displaySummary = summary
     ? cleanSummaryText(summary, { suppressCoverageGap: expansionTrace })
     : "运行任务后，这里会汇总本轮分析的核心结论。";
+  const primaryGap = gaps[0];
+  const primaryIdea = ideas[0];
+  const supportedIdea = bestSupportedIdea(ideas);
+  const fallbackExecutiveSummary = buildFallbackExecutiveSummary({
+    topic: displayTopic,
+    focus: displayFocus,
+    analysisPapers,
+    paperCount,
+    gaps,
+    ideas,
+    sourceTrace,
+  });
   const briefExecutiveSummary =
-    cleanWorkspaceText(researchBrief?.executive_summary ?? "", 900) || displaySummary;
+    cleanWorkspaceText(researchBrief?.executive_summary ?? "", 900) || fallbackExecutiveSummary || displaySummary;
   const briefHeadline =
     cleanWorkspaceText(researchBrief?.headline ?? "", 120) ||
-    (researchBrief?.mode === "conversation" ? "累计研究简报" : "本轮研究简报");
-  const briefKeyFinding = cleanWorkspaceText(researchBrief?.key_findings?.[0]?.text, 220);
-  const briefNextStep = cleanWorkspaceText(researchBrief?.recommended_next_steps?.[0]?.text, 220);
-  const briefOpenGap = cleanWorkspaceText(researchBrief?.open_gaps?.[0]?.text, 220);
+    (researchBrief?.mode === "conversation"
+      ? "累计研究简报"
+      : displayFocus
+        ? "本轮追问进展简报"
+        : "本轮研究进展简报");
+  const briefKeyFinding =
+    cleanWorkspaceText(researchBrief?.key_findings?.[0]?.text, 220) ||
+    buildFallbackKeyFinding({ analysisPapers, gaps, sourceTrace });
+  const briefLandscape =
+    cleanWorkspaceText(researchBrief?.landscape_overview ?? "", 300) || briefKeyFinding;
+  const briefEvidenceRationale =
+    cleanWorkspaceText(researchBrief?.evidence_rationale ?? "", 300);
+  const briefNextStep =
+    cleanWorkspaceText(researchBrief?.decision_advice ?? "", 260) ||
+    cleanWorkspaceText(researchBrief?.recommended_next_steps?.[0]?.text, 220) ||
+    cleanWorkspaceText(supportedIdea?.title, 220);
+  const briefOpenGap =
+    cleanWorkspaceText(researchBrief?.open_gaps?.[0]?.text, 220) ||
+    cleanWorkspaceText(primaryGap?.summary, 220);
   const primaryFindingItem = researchBrief?.key_findings?.[0];
   const primaryGapItem = researchBrief?.open_gaps?.[0];
   const primaryNextStepItem = researchBrief?.recommended_next_steps?.[0];
-  const briefWarnings = researchBrief?.evidence_warnings ?? [];
+  const fallbackWarnings = buildFallbackWarnings({
+    gaps,
+    ideas,
+    sourceTrace,
+    usesFallbackPapers,
+  });
+  const briefWarnings = researchBrief?.evidence_warnings?.length
+    ? researchBrief.evidence_warnings
+    : fallbackWarnings;
   const showHeroNotes = Boolean((!researchBrief && (effectivePriorityNote || recommendation)) || showRetrievalNote);
   const topBriefPapers = [...analysisPapers]
     .sort((left, right) => rankPaperForBrief(right) - rankPaperForBrief(left))
-    .slice(0, 3);
+    .slice(0, 4);
   const paperById = new Map(analysisPapers.map((paper) => [paper.paper_id, paper]));
   const briefPaperCards = researchBrief?.must_read_papers?.length
     ? researchBrief.must_read_papers.slice(0, 4).map((briefPaper) => ({
@@ -265,14 +469,14 @@ export function WorkspaceSummarySection({
         briefPaper: {
           paper_id: paper.paper_id,
           title: paper.title,
+          contribution: "",
+          read_focus: "",
           reason: paperReason(paper),
           source_task_ids: [],
           evidence_level: "direct",
         },
         paper,
       }));
-  const primaryGap = gaps[0];
-  const primaryIdea = ideas[0];
   const briefNextAction =
     briefNextStep ||
     recommendation ||
@@ -285,6 +489,16 @@ export function WorkspaceSummarySection({
   const adjacentPaperCount = sourceTrace?.adjacent_paper_count ?? 0;
   const novelPaperCount = sourceTrace?.novel_paper_count ?? 0;
   const reusedPaperCount = sourceTrace?.reused_paper_count ?? 0;
+  const primaryConclusionLevel =
+    primaryNextStepItem?.evidence_level ||
+    supportedIdea?.evidence_level ||
+    primaryGapItem?.evidence_level ||
+    primaryGap?.evidence_level;
+  const primaryConclusionPaperIds =
+    primaryNextStepItem?.supporting_paper_ids ||
+    supportedIdea?.supporting_paper_ids ||
+    primaryGapItem?.supporting_paper_ids ||
+    primaryGap?.supporting_paper_ids;
   const showEvidenceBanner = Boolean(isEvidenceInsufficient && !briefWarnings.length);
 
   return (
@@ -305,16 +519,18 @@ export function WorkspaceSummarySection({
 
         <div className="research-brief-board">
           <div className="research-brief-card research-brief-card-primary">
-            <span>关键发现</span>
-            <strong>{briefKeyFinding ? "已有证据支撑" : evidenceBriefLabel(evidenceStatus, analysisPaperCount, usesFallbackPapers)}</strong>
-            <p>{cleanWorkspaceText(briefKeyFinding || evidenceBriefText(evidenceStatus, analysisPaperCount, paperCount), 220)}</p>
+            <span>领域格局</span>
+            <strong>{briefLandscape ? "主流路线与覆盖" : evidenceBriefLabel(evidenceStatus, analysisPaperCount, usesFallbackPapers)}</strong>
+            <p>{cleanWorkspaceText(briefLandscape || evidenceBriefText(evidenceStatus, analysisPaperCount, paperCount), 260)}</p>
           </div>
           <div className="research-brief-card">
             <span>建议先读</span>
             <strong>{briefPaperCards.length ? `${briefPaperCards.length} 篇核心论文` : "等待核心论文"}</strong>
             <p>
-              {briefPaperCards.length
-                ? "已按简报准入规则筛出优先阅读入口，适合先看证据骨架再看图谱细节。"
+              {briefEvidenceRationale
+                ? cleanWorkspaceText(briefEvidenceRationale, 260)
+                : briefPaperCards.length
+                  ? "已按简报准入规则筛出优先阅读入口，适合先看证据骨架再看图谱细节。"
                 : "生成结果后会在这里给出优先阅读顺序。"}
             </p>
           </div>
@@ -329,7 +545,7 @@ export function WorkspaceSummarySection({
             <p>
               {briefWarnings.length
                 ? cleanWorkspaceText(briefWarnings[0], 170)
-                : "当前简报会把无论文支撑的内容降级为探索性线索，避免把上下文参考误当证据。"}
+                : "当前简报会把无论文支撑的内容降级为待验证假设，避免把上下文参考误当证据。"}
             </p>
           </div>
         </div>
@@ -339,25 +555,21 @@ export function WorkspaceSummarySection({
             <span>核心论文怎么选</span>
             <strong>从核心分析池按证据价值排序</strong>
             <p>
-              优先考虑直接相关、本轮新增、覆盖分支、高引用和近年论文。当前先读入口展示{" "}
-              {briefPaperCards.length || 0} 篇，用来快速搭出证据骨架。
+              {briefEvidenceRationale ||
+                `优先考虑直接相关、本轮新增、覆盖分支、高引用和近年论文。当前先读入口展示 ${briefPaperCards.length || 0} 篇，用来快速搭出证据骨架。`}
             </p>
           </div>
           <div className="research-brief-trust-card">
             <span>空白和建议怎么来</span>
             <strong>
-              {primaryNextStepItem
-                ? evidenceLevelLabel(primaryNextStepItem.evidence_level)
-                : primaryGapItem
-                  ? evidenceLevelLabel(primaryGapItem.evidence_level)
-                  : "等待证据绑定"}
+              {primaryConclusionLevel ? evidenceLevelLabel(primaryConclusionLevel) : "等待证据绑定"}
             </strong>
             <p>
               研究空白来自 taxonomy 覆盖缺口和审计结果；研究建议必须绑定空白或论文证据。
-              {primaryNextStepItem
-                ? ` 当前建议：${supportCountLabel(primaryNextStepItem.supporting_paper_ids)}。`
-                : primaryGapItem
-                  ? ` 当前空白：${supportCountLabel(primaryGapItem.supporting_paper_ids)}。`
+              {supportedIdea
+                ? ` 当前建议：${supportCountLabel(primaryConclusionPaperIds)}。`
+                : primaryGap
+                  ? ` 当前空白：${supportCountLabel(primaryConclusionPaperIds)}。`
                   : " 暂未形成稳定建议时，只作为下一轮追问线索。"}
             </p>
           </div>
@@ -383,11 +595,14 @@ export function WorkspaceSummarySection({
                   <strong>{cleanWorkspaceText(paper?.title || briefPaper.title, 150)}</strong>
                   <p>
                     <span className="research-brief-paper-label">做了什么</span>
-                    {paperContributionBrief(paper, briefPaper.reason)}
+                    {cleanWorkspaceText(briefPaper.contribution ?? "", 170) ||
+                      paperContributionBrief(paper, briefPaper.reason)}
                   </p>
                   <p>
                     <span className="research-brief-paper-label">为什么先读</span>
-                    {cleanWorkspaceText(briefPaper.reason || (paper ? paperReason(paper) : ""), 180)}
+                    {cleanWorkspaceText(briefPaper.read_focus ?? "", 180) ||
+                      cleanWorkspaceText(briefPaper.reason, 180) ||
+                      (paper ? paperReason(paper) : "等待补充选择依据")}
                   </p>
                   <div className="research-brief-paper-meta">
                     <span>{paper ? paperYear(paper) || "-" : "-"}</span>

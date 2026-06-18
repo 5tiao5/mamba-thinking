@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import difflib
 import math
 import os
@@ -31,8 +33,26 @@ from ..query_coverage import (
     facet_rescue_queries,
     required_facet_queries,
 )
-from ..relevance import rank_relevant_papers
+from ..relevance import evaluate_paper_relevance, rank_relevant_papers
 from ..retrieval_plan import relevance_query, summarize_retrieval_plan
+
+
+@dataclass(frozen=True)
+class _SearchTaskSpec:
+    order: int
+    query: str
+    phase: str
+    tool: Any
+    tool_label: str
+    raw_limit: int
+
+
+@dataclass(frozen=True)
+class _SearchTaskResult:
+    spec: _SearchTaskSpec
+    raw_results: list[PaperNode]
+    duration_sec: float
+    error: Exception | None = None
 
 
 def searcher_node(state: ResearchState) -> ResearchState:
@@ -59,6 +79,9 @@ def searcher_node(state: ResearchState) -> ResearchState:
     facet_rescue_triggered = False
     facet_rescue_queries_attempted: list[dict[str, str]] = []
     semantic_scholar_empty_runs = 0
+    semantic_scholar_rate_limited = False
+    arxiv_degraded_rescue_triggered = False
+    degraded_candidate_count = 0
     filtered_out_total = 0
     low_relevance_filtered_total = 0
     previous_round_paper_ids = _previous_round_paper_ids(state)
@@ -85,53 +108,107 @@ def searcher_node(state: ResearchState) -> ResearchState:
             max_results=max_results,
         )
 
-    for query_spec in queries:
-        query = str(query_spec.get("query", "") or "").strip()
-        phase = str(query_spec.get("phase", "strict") or "strict")
-        if not query:
-            continue
-        if phase == "broad" and not broad_search_triggered:
-            broad_search_triggered = True
-            working.setdefault("logs", []).append(
-                "Searcher entered broad query expansion to improve evidence-pool coverage."
-            )
-        attempted_queries.append({"phase": phase, "query": query})
-
-        per_query_limit = max(3, max_results)
-        tools = (
-            (search_papers,)
-            if fast_mode(state)
-            else (search_papers, search_semantic_scholar)
-        )
-
-        for tool in tools:
-            if tool is search_semantic_scholar and semantic_scholar_empty_runs >= 2:
-                record_tool_event(
-                    working,
-                    tool_name="Semantic Scholar",
-                    input_summary=query,
-                    status="skipped",
-                    note="Skipped after repeated empty Semantic Scholar responses to reduce runtime.",
-                )
+    retrieval_parallelism: dict[str, Any] = {
+        "enabled": False,
+        "stage": "first_pass_retrieval",
+        "task_count": 0,
+        "worker_count": 1,
+    }
+    if _searcher_parallel_enabled(state, len(queries)):
+        parallel_specs: list[_SearchTaskSpec] = []
+        order = 0
+        s2_first_pass_count = 0
+        s2_first_pass_limit = _semantic_scholar_first_pass_limit()
+        for query_spec in queries:
+            query = str(query_spec.get("query", "") or "").strip()
+            phase = str(query_spec.get("phase", "strict") or "strict")
+            if not query:
                 continue
+            if phase == "broad" and not broad_search_triggered:
+                broad_search_triggered = True
+                working.setdefault("logs", []).append(
+                    "Searcher entered broad query expansion to improve evidence-pool coverage."
+                )
+            attempted_queries.append({"phase": phase, "query": query})
 
-            timer = StageTimer()
-            try:
-                raw_limit = max(per_query_limit * 2, 8)
-                raw_results = list(tool(query, max_results=raw_limit))
-                filtered_results, filtered_out = _apply_retrieval_filters(raw_results, retrieval_plan)
+            per_query_limit = max(3, max_results)
+            tools = (search_papers, search_semantic_scholar)
+            for tool in tools:
+                if tool is search_semantic_scholar:
+                    if s2_first_pass_count >= s2_first_pass_limit:
+                        continue
+                    s2_first_pass_count += 1
+                parallel_specs.append(
+                    _SearchTaskSpec(
+                        order=order,
+                        query=query,
+                        phase=phase,
+                        tool=tool,
+                        tool_label=tool_name(getattr(tool, "__name__", "")),
+                        raw_limit=max(per_query_limit * 2, 8),
+                    )
+                )
+                order += 1
+
+        if parallel_specs:
+            parallel_results, worker_count = _run_search_tasks_parallel(parallel_specs)
+            retrieval_parallelism = {
+                "enabled": worker_count > 1,
+                "stage": "first_pass_retrieval",
+                "task_count": len(parallel_specs),
+                "worker_count": worker_count,
+            }
+            if worker_count > 1:
+                working.setdefault("logs", []).append(
+                    f"Searcher ran {len(parallel_specs)} first-pass retrieval calls "
+                    f"with {worker_count} parallel workers."
+                )
+            for task_result in parallel_results:
+                spec = task_result.spec
+                if task_result.error is not None:
+                    record_tool_event(
+                        working,
+                        tool_name=spec.tool_label,
+                        input_summary=spec.query,
+                        status="failed",
+                        duration_sec=task_result.duration_sec,
+                        note=str(task_result.error),
+                    )
+                    record_error_event(
+                        working,
+                        stage="searcher",
+                        error_type=type(task_result.error).__name__,
+                        message=str(task_result.error),
+                        recovery="Continue with other tools or fallback seed papers.",
+                    )
+                    working.setdefault("logs", []).append(
+                        f"Search tool failed for '{spec.query}': {task_result.error}"
+                    )
+                    if spec.tool is search_semantic_scholar:
+                        semantic_scholar_empty_runs = 2
+                        if _is_semantic_scholar_rate_limit(task_result.error):
+                            semantic_scholar_rate_limited = True
+                            working.setdefault("logs", []).append(
+                                "Semantic Scholar rate limit detected; opening S2 circuit breaker for this run."
+                            )
+                    continue
+
+                raw_results = task_result.raw_results
+                filtered_results, filtered_out = _apply_retrieval_filters(
+                    raw_results,
+                    retrieval_plan,
+                )
                 filtered_out_total += filtered_out
                 relevant_results, low_relevance_filtered = rank_relevant_papers(
                     filtered_results,
                     topic=scoring_query,
-                    query=query,
+                    query=spec.query,
                     retrieval_plan=retrieval_plan,
                     limit=None,
                 )
                 low_relevance_filtered_total += low_relevance_filtered
                 candidate_pool.extend(relevant_results)
-                results = relevant_results
-                for paper in results:
+                for paper in relevant_results:
                     merge_paper(papers, paper)
                     if (
                         (paper.source or "").lower() not in {"seed", "fallback"}
@@ -139,46 +216,128 @@ def searcher_node(state: ResearchState) -> ResearchState:
                     ):
                         retrieved_real_ids.add(paper.paper_id)
                 phase_entry = phase_stats.setdefault(
-                    phase,
+                    spec.phase,
                     {"queries": 0, "raw": 0, "post_filter": 0, "selected": 0},
                 )
                 phase_entry["queries"] += 1
                 phase_entry["raw"] += len(raw_results)
                 phase_entry["post_filter"] += len(filtered_results)
-                phase_entry["selected"] += len(results)
+                phase_entry["selected"] += len(relevant_results)
                 record_tool_event(
                     working,
-                    tool_name=tool_name(getattr(tool, "__name__", "")),
-                    input_summary=query,
+                    tool_name=spec.tool_label,
+                    input_summary=spec.query,
                     status="success",
-                    output_count=len(results),
-                    duration_sec=timer.elapsed(),
+                    output_count=len(relevant_results),
+                    duration_sec=task_result.duration_sec,
                     note=(
-                        f"phase={phase}, raw={len(raw_results)}, post_filter={len(filtered_results)}, "
-                        f"selected={len(results)}, low_relevance_filtered={low_relevance_filtered}"
+                        f"phase={spec.phase}, raw={len(raw_results)}, "
+                        f"post_filter={len(filtered_results)}, "
+                        f"selected={len(relevant_results)}, "
+                        f"low_relevance_filtered={low_relevance_filtered}, "
+                        "parallel=true"
                     ),
                 )
-                if tool is search_semantic_scholar:
-                    semantic_scholar_empty_runs = 0 if raw_results else semantic_scholar_empty_runs + 1
-            except Exception as exc:
-                record_tool_event(
-                    working,
-                    tool_name=tool_name(getattr(tool, "__name__", "")),
-                    input_summary=query,
-                    status="failed",
-                    duration_sec=timer.elapsed(),
-                    note=str(exc),
+    else:
+        for query_spec in queries:
+            query = str(query_spec.get("query", "") or "").strip()
+            phase = str(query_spec.get("phase", "strict") or "strict")
+            if not query:
+                continue
+            if phase == "broad" and not broad_search_triggered:
+                broad_search_triggered = True
+                working.setdefault("logs", []).append(
+                    "Searcher entered broad query expansion to improve evidence-pool coverage."
                 )
-                record_error_event(
-                    working,
-                    stage="searcher",
-                    error_type=type(exc).__name__,
-                    message=str(exc),
-                    recovery="Continue with other tools or fallback seed papers.",
-                )
-                working.setdefault("logs", []).append(f"Search tool failed for '{query}': {exc}")
-                if tool is search_semantic_scholar:
-                    semantic_scholar_empty_runs = 2
+            attempted_queries.append({"phase": phase, "query": query})
+
+            per_query_limit = max(3, max_results)
+            tools = (
+                (search_papers,)
+                if fast_mode(state)
+                else (search_papers, search_semantic_scholar)
+            )
+
+            for tool in tools:
+                if tool is search_semantic_scholar and semantic_scholar_empty_runs >= 2:
+                    record_tool_event(
+                        working,
+                        tool_name="Semantic Scholar",
+                        input_summary=query,
+                        status="skipped",
+                        note="Skipped after repeated empty Semantic Scholar responses to reduce runtime.",
+                    )
+                    continue
+
+                timer = StageTimer()
+                try:
+                    raw_limit = max(per_query_limit * 2, 8)
+                    raw_results = list(tool(query, max_results=raw_limit))
+                    filtered_results, filtered_out = _apply_retrieval_filters(raw_results, retrieval_plan)
+                    filtered_out_total += filtered_out
+                    relevant_results, low_relevance_filtered = rank_relevant_papers(
+                        filtered_results,
+                        topic=scoring_query,
+                        query=query,
+                        retrieval_plan=retrieval_plan,
+                        limit=None,
+                    )
+                    low_relevance_filtered_total += low_relevance_filtered
+                    candidate_pool.extend(relevant_results)
+                    results = relevant_results
+                    for paper in results:
+                        merge_paper(papers, paper)
+                        if (
+                            (paper.source or "").lower() not in {"seed", "fallback"}
+                            and paper.relevance_tier == "direct"
+                        ):
+                            retrieved_real_ids.add(paper.paper_id)
+                    phase_entry = phase_stats.setdefault(
+                        phase,
+                        {"queries": 0, "raw": 0, "post_filter": 0, "selected": 0},
+                    )
+                    phase_entry["queries"] += 1
+                    phase_entry["raw"] += len(raw_results)
+                    phase_entry["post_filter"] += len(filtered_results)
+                    phase_entry["selected"] += len(results)
+                    record_tool_event(
+                        working,
+                        tool_name=tool_name(getattr(tool, "__name__", "")),
+                        input_summary=query,
+                        status="success",
+                        output_count=len(results),
+                        duration_sec=timer.elapsed(),
+                        note=(
+                            f"phase={phase}, raw={len(raw_results)}, post_filter={len(filtered_results)}, "
+                            f"selected={len(results)}, low_relevance_filtered={low_relevance_filtered}"
+                        ),
+                    )
+                    if tool is search_semantic_scholar:
+                        semantic_scholar_empty_runs = 0 if raw_results else semantic_scholar_empty_runs + 1
+                except Exception as exc:
+                    record_tool_event(
+                        working,
+                        tool_name=tool_name(getattr(tool, "__name__", "")),
+                        input_summary=query,
+                        status="failed",
+                        duration_sec=timer.elapsed(),
+                        note=str(exc),
+                    )
+                    record_error_event(
+                        working,
+                        stage="searcher",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        recovery="Continue with other tools or fallback seed papers.",
+                    )
+                    working.setdefault("logs", []).append(f"Search tool failed for '{query}': {exc}")
+                    if tool is search_semantic_scholar:
+                        semantic_scholar_empty_runs = 2
+                        if _is_semantic_scholar_rate_limit(exc):
+                            semantic_scholar_rate_limited = True
+                            working.setdefault("logs", []).append(
+                                "Semantic Scholar rate limit detected; opening S2 circuit breaker for this run."
+                            )
 
     recall_queries = [
         str(query).strip()
@@ -196,10 +355,21 @@ def searcher_node(state: ResearchState) -> ResearchState:
             "Searcher entered recall rescue because strict and broad retrieval "
             f"found only {len(retrieved_real_ids)} direct paper(s)."
         )
-        rescue_tools = (
+        rescue_tools = [
             ("ArXiv OR recall", search_papers_recall, recall_queries),
-            ("Semantic Scholar recall", search_semantic_scholar, recall_queries[0]),
-        )
+        ]
+        if not semantic_scholar_rate_limited and semantic_scholar_empty_runs < 2:
+            rescue_tools.append(
+                ("Semantic Scholar recall", search_semantic_scholar, recall_queries[0])
+            )
+        else:
+            record_tool_event(
+                working,
+                tool_name="Semantic Scholar recall",
+                input_summary=recall_queries[0] if recall_queries else "",
+                status="skipped",
+                note="Skipped after Semantic Scholar rate-limit circuit breaker opened.",
+            )
         for tool_label, tool, tool_input in rescue_tools:
             attempted_queries.append(
                 {
@@ -272,6 +442,106 @@ def searcher_node(state: ResearchState) -> ResearchState:
                     error_type=type(exc).__name__,
                     message=str(exc),
                     recovery="Continue with already retrieved papers.",
+                )
+                if tool is search_semantic_scholar and _is_semantic_scholar_rate_limit(exc):
+                    semantic_scholar_rate_limited = True
+                    semantic_scholar_empty_runs = 2
+
+    if _needs_degraded_arxiv_rescue(
+        state,
+        papers=papers,
+        max_results=max_results,
+        semantic_scholar_rate_limited=semantic_scholar_rate_limited,
+    ):
+        arxiv_degraded_rescue_triggered = True
+        working.setdefault("logs", []).append(
+            "Searcher entered degraded ArXiv rescue because Semantic Scholar is rate-limited "
+            "and the evidence pool is still thin."
+        )
+        rescue_query_list = _degraded_arxiv_rescue_queries(
+            topic=topic,
+            retrieval_plan=retrieval_plan,
+            attempted_queries=attempted_queries,
+        )
+        candidate_budget = max(
+            0,
+            _degraded_pool_floor(max_results) - len(papers),
+        )
+        for rescue_query in rescue_query_list:
+            if len(papers) >= _degraded_pool_floor(max_results) and _external_search_count(papers) >= _degraded_external_floor(max_results):
+                break
+            attempted_queries.append(
+                {
+                    "phase": "arxiv_degraded_rescue",
+                    "query": rescue_query,
+                    "source": "ArXiv degraded recall",
+                }
+            )
+            timer = StageTimer()
+            try:
+                raw_results = list(
+                    search_papers(rescue_query, max_results=max(max_results * 3, 12))
+                )
+                filtered_results, filtered_out = _apply_retrieval_filters(
+                    raw_results,
+                    retrieval_plan,
+                )
+                filtered_out_total += filtered_out
+                relevant_results, low_relevance_filtered, kept_candidates = _rank_degraded_rescue_papers(
+                    filtered_results,
+                    topic=scoring_query,
+                    query=rescue_query,
+                    retrieval_plan=retrieval_plan,
+                    candidate_budget=candidate_budget,
+                )
+                low_relevance_filtered_total += low_relevance_filtered
+                degraded_candidate_count += kept_candidates
+                candidate_budget = max(candidate_budget - kept_candidates, 0)
+                candidate_pool.extend(relevant_results)
+                for paper in relevant_results:
+                    merge_paper(papers, paper)
+                    if (
+                        (paper.source or "").lower() not in {"seed", "fallback"}
+                        and paper.relevance_tier == "direct"
+                    ):
+                        retrieved_real_ids.add(paper.paper_id)
+                phase_entry = phase_stats.setdefault(
+                    "arxiv_degraded_rescue",
+                    {"queries": 0, "raw": 0, "post_filter": 0, "selected": 0},
+                )
+                phase_entry["queries"] += 1
+                phase_entry["raw"] += len(raw_results)
+                phase_entry["post_filter"] += len(filtered_results)
+                phase_entry["selected"] += len(relevant_results)
+                record_tool_event(
+                    working,
+                    tool_name="ArXiv degraded rescue",
+                    input_summary=rescue_query,
+                    status="success" if relevant_results else "fallback",
+                    output_count=len(relevant_results),
+                    duration_sec=timer.elapsed(),
+                    note=(
+                        f"raw={len(raw_results)}, post_filter={len(filtered_results)}, "
+                        f"selected={len(relevant_results)}, "
+                        f"candidate_floor={kept_candidates}, "
+                        f"low_relevance_filtered={low_relevance_filtered}"
+                    ),
+                )
+            except Exception as exc:
+                record_tool_event(
+                    working,
+                    tool_name="ArXiv degraded rescue",
+                    input_summary=rescue_query,
+                    status="failed",
+                    duration_sec=timer.elapsed(),
+                    note=str(exc),
+                )
+                record_error_event(
+                    working,
+                    stage="searcher",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    recovery="Continue with the evidence already retrieved.",
                 )
 
     if not fast_mode(state) and not balanced_mode(state):
@@ -643,6 +913,10 @@ def searcher_node(state: ResearchState) -> ResearchState:
     )
     retrieval_outcome["external_search_skipped"] = False
     retrieval_outcome["low_relevance_filtered_count"] = low_relevance_filtered_total
+    retrieval_outcome["retrieval_parallelism"] = retrieval_parallelism
+    retrieval_outcome["semantic_scholar_rate_limited"] = semantic_scholar_rate_limited
+    retrieval_outcome["arxiv_degraded_rescue_triggered"] = arxiv_degraded_rescue_triggered
+    retrieval_outcome["degraded_candidate_count"] = degraded_candidate_count
     _attach_facet_evidence_coverage(
         working,
         retrieval_outcome=retrieval_outcome,
@@ -736,6 +1010,12 @@ def _finalize_imported_only_search(
             ),
             "analysis_selection_strategy": "user_imported_core+candidate",
             "low_relevance_filtered_count": 0,
+            "retrieval_parallelism": {
+                "enabled": False,
+                "stage": "imported_only",
+                "task_count": 0,
+                "worker_count": 1,
+            },
         }
     )
     _attach_facet_evidence_coverage(
@@ -766,6 +1046,239 @@ def _finalize_imported_only_search(
         next_step="taxonomy",
     )
     return updated
+
+
+def _run_search_tasks_parallel(
+    specs: list[_SearchTaskSpec],
+) -> tuple[list[_SearchTaskResult], int]:
+    worker_count = _searcher_worker_count(len(specs))
+    if worker_count <= 1:
+        return [_execute_search_task(spec) for spec in specs], worker_count
+
+    results: list[_SearchTaskResult] = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {executor.submit(_execute_search_task, spec): spec for spec in specs}
+        for future in as_completed(futures):
+            spec = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                results.append(
+                    _SearchTaskResult(
+                        spec=spec,
+                        raw_results=[],
+                        duration_sec=0.0,
+                        error=exc,
+                    )
+                )
+    results.sort(key=lambda item: item.spec.order)
+    return results, worker_count
+
+
+def _execute_search_task(spec: _SearchTaskSpec) -> _SearchTaskResult:
+    timer = StageTimer()
+    try:
+        raw_results = list(spec.tool(spec.query, max_results=spec.raw_limit))
+        return _SearchTaskResult(
+            spec=spec,
+            raw_results=raw_results,
+            duration_sec=timer.elapsed(),
+        )
+    except Exception as exc:
+        return _SearchTaskResult(
+            spec=spec,
+            raw_results=[],
+            duration_sec=timer.elapsed(),
+            error=exc,
+        )
+
+
+def _searcher_parallel_enabled(state: ResearchState, query_count: int) -> bool:
+    if query_count <= 0 or fast_mode(state):
+        return False
+    if os.environ.get("DISABLE_SEARCHER_PARALLEL") == "1":
+        return False
+    if os.environ.get("ENABLE_SEARCHER_PARALLEL") == "1":
+        return True
+    if os.environ.get("SEARCHER_PARALLEL_MODE", "auto").lower() in {"0", "off", "false"}:
+        return False
+    return not bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def _searcher_worker_count(task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    raw_value = os.environ.get("SEARCHER_PARALLEL_WORKERS", "4")
+    try:
+        configured = int(raw_value)
+    except ValueError:
+        configured = 4
+    return max(1, min(configured, task_count, 8))
+
+
+def _semantic_scholar_first_pass_limit() -> int:
+    raw_value = os.environ.get("SEARCHER_S2_FIRST_PASS_LIMIT", "").strip()
+    if raw_value:
+        try:
+            return max(0, int(raw_value))
+        except ValueError:
+            return 1
+    if os.environ.get("ENABLE_SEARCHER_PARALLEL") == "1":
+        return 1000
+    return 1
+
+
+def _is_semantic_scholar_rate_limit(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    return "semantic scholar" in text and ("rate limit" in text or "429" in text)
+
+
+def _needs_degraded_arxiv_rescue(
+    state: ResearchState,
+    *,
+    papers: Dict[str, PaperNode],
+    max_results: int,
+    semantic_scholar_rate_limited: bool,
+) -> bool:
+    if fast_mode(state) or not semantic_scholar_rate_limited:
+        return False
+    if str(state.get("research_mode", "hybrid") or "hybrid") == "imported_only":
+        return False
+    if len(papers) < _degraded_pool_floor(max_results):
+        return True
+    return _external_search_count(papers) < _degraded_external_floor(max_results)
+
+
+def _degraded_pool_floor(max_results: int) -> int:
+    if max_results <= 4:
+        return max(1, max_results)
+    return min(max(max_results, 6), 8)
+
+
+def _degraded_external_floor(max_results: int) -> int:
+    return 2 if max_results >= 6 else 1
+
+
+def _external_search_count(papers: Dict[str, PaperNode]) -> int:
+    return sum(1 for paper in papers.values() if _is_external_search_paper(paper))
+
+
+def _degraded_arxiv_rescue_queries(
+    *,
+    topic: str,
+    retrieval_plan: dict[str, Any],
+    attempted_queries: list[dict[str, str]],
+) -> list[str]:
+    attempted = {
+        str(item.get("query", "") or "").strip().casefold()
+        for item in attempted_queries
+        if str(item.get("query", "") or "").strip()
+    }
+    raw_queries = [
+        str(retrieval_plan.get("topic_anchor", "") or "").strip(),
+        topic,
+        *list(retrieval_plan.get("recall_queries", []) or [])[:4],
+        *list(retrieval_plan.get("broad_queries", []) or [])[:3],
+        *list(retrieval_plan.get("strict_queries", []) or [])[:2],
+        *list(retrieval_plan.get("rerank_signals", []) or [])[:4],
+    ]
+    rescue_queries: list[str] = []
+    for raw_query in raw_queries:
+        clean_query = " ".join(str(raw_query or "").split()).strip()
+        compact_query = _compact_degraded_arxiv_query(clean_query)
+        for query in (compact_query, clean_query):
+            if not query:
+                continue
+            key = query.casefold()
+            if key in attempted:
+                continue
+            rescue_queries.append(query)
+            attempted.add(key)
+            if len(rescue_queries) >= 4:
+                return rescue_queries
+    return rescue_queries
+
+
+def _compact_degraded_arxiv_query(query: str) -> str:
+    stopwords = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "paper",
+        "papers",
+        "research",
+        "automatic",
+        "framework",
+        "method",
+        "methods",
+    }
+    tokens: list[str] = []
+    for raw_token in query.replace("-", " ").split():
+        token = "".join(ch for ch in raw_token if ch.isalnum()).casefold()
+        if len(token) < 3 or token in stopwords or token in tokens:
+            continue
+        if not any("a" <= ch <= "z" for ch in token):
+            continue
+        tokens.append(token)
+    if len(tokens) >= 2:
+        return " ".join(tokens[:4])
+    return query
+
+
+def _rank_degraded_rescue_papers(
+    papers: list[PaperNode],
+    *,
+    topic: str,
+    query: str,
+    retrieval_plan: dict[str, Any],
+    candidate_budget: int,
+) -> tuple[list[PaperNode], int, int]:
+    accepted: list[PaperNode] = []
+    rejected_count = 0
+    kept_candidates = 0
+    for paper in papers:
+        relevance = evaluate_paper_relevance(
+            paper,
+            topic=topic,
+            query=query,
+            retrieval_plan=retrieval_plan,
+        )
+        paper.relevance_score = relevance.score
+        paper.relevance_tier = relevance.tier
+        paper.relevance_reasons = relevance.reasons
+        if relevance.tier != "candidate":
+            accepted.append(paper)
+            continue
+        if kept_candidates < candidate_budget and _is_degraded_candidate_worthy(relevance):
+            paper.relevance_reasons = [
+                *paper.relevance_reasons,
+                "degraded_rescue:weak_but_topic_matched",
+            ]
+            accepted.append(paper)
+            kept_candidates += 1
+            continue
+        rejected_count += 1
+
+    accepted.sort(
+        key=lambda paper: (
+            1 if paper.relevance_tier == "direct" else 0,
+            1 if paper.relevance_tier == "adjacent" else 0,
+            paper.relevance_score,
+            paper.citation_count,
+        ),
+        reverse=True,
+    )
+    return accepted, rejected_count, kept_candidates
+
+
+def _is_degraded_candidate_worthy(relevance: Any) -> bool:
+    if relevance.topic_tier == "candidate":
+        return False
+    return relevance.score >= 0.2 or bool(relevance.matched_groups)
 
 
 def _attach_facet_evidence_coverage(
@@ -1531,6 +2044,10 @@ def _is_round_novel_external_paper(
 def _is_protected_analysis_paper(paper: PaperNode) -> bool:
     if getattr(paper, "paper_pool_status", "") == "core":
         return True
+    return _is_user_supplied_paper(paper)
+
+
+def _is_user_supplied_paper(paper: PaperNode) -> bool:
     source = str(getattr(paper, "source", "") or "").casefold()
     origin = str(getattr(paper, "origin", "") or "").casefold()
     source_detail = str(getattr(paper, "source_detail", "") or "").casefold()
@@ -1559,7 +2076,34 @@ def _select_analysis_shortlist(
     if len(papers) <= target_count:
         return papers
 
-    selected = [*core, *remaining[: max(target_count - len(core), 0)]]
+    selected: list[PaperNode] = [*core]
+    selected_ids = {paper.paper_id for paper in selected}
+    remaining_slots = max(target_count - len(selected), 0)
+    user_slots = min(
+        _hybrid_user_supplied_floor(
+            state=state,
+            relevance_order=remaining,
+            target_count=target_count,
+        ),
+        remaining_slots,
+    )
+    for paper in remaining:
+        if user_slots <= 0:
+            break
+        if paper.paper_id in selected_ids or not _is_user_supplied_paper(paper):
+            continue
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+        user_slots -= 1
+
+    for paper in remaining:
+        if len(selected) >= target_count:
+            break
+        if paper.paper_id in selected_ids:
+            continue
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+
     selected = _ensure_novel_selection(
         selected,
         papers,
@@ -1616,6 +2160,24 @@ def _select_papers_for_analysis(
 
     selected: list[PaperNode] = [*core]
     selected_ids = {paper.paper_id for paper in selected}
+    user_slots = min(
+        _hybrid_user_supplied_floor(
+            state=state,
+            relevance_order=relevance_order,
+            target_count=target_count,
+        ),
+        remaining_slots,
+    )
+    for paper in relevance_order:
+        if user_slots <= 0:
+            break
+        if paper.paper_id in selected_ids or not _is_user_supplied_paper(paper):
+            continue
+        selected.append(paper)
+        selected_ids.add(paper.paper_id)
+        user_slots -= 1
+
+    remaining_slots = max(target_count - len(selected), 0)
     external_slots = min(external_floor, remaining_slots)
     for paper in relevance_order:
         if external_slots <= 0:
@@ -1705,6 +2267,22 @@ def _hybrid_external_search_floor(
     return min(len(external_candidates), 2 if target_count >= 8 else 1)
 
 
+def _hybrid_user_supplied_floor(
+    *,
+    state: ResearchState,
+    relevance_order: list[PaperNode],
+    target_count: int,
+) -> int:
+    if fast_mode(state):
+        return 0
+    if str(state.get("research_mode", "hybrid") or "hybrid") != "hybrid":
+        return 0
+    user_candidates = [paper for paper in relevance_order if _is_user_supplied_paper(paper)]
+    if not user_candidates:
+        return 0
+    return min(len(user_candidates), 2 if target_count >= 8 else 1)
+
+
 def _is_external_search_paper(paper: PaperNode) -> bool:
     source = str(getattr(paper, "source", "") or "").casefold()
     origin = str(getattr(paper, "origin", "") or "").casefold()
@@ -1713,7 +2291,7 @@ def _is_external_search_paper(paper: PaperNode) -> bool:
     return bool(values & {"arxiv", "semantic_scholar", "system_search"})
 
 
-def _relevance_priority(paper: PaperNode) -> tuple[int, float, int, int]:
+def _relevance_priority(paper: PaperNode) -> tuple[int, int, float, int, int]:
     tier_priority = {
         "direct": 3,
         "adjacent": 2,
@@ -1726,8 +2304,10 @@ def _relevance_priority(paper: PaperNode) -> tuple[int, float, int, int]:
         if ":title:" in str(reason)
     )
     year = _paper_year(getattr(paper, "publish_date", "")) or 0
+    user_supplied_rank = 1 if _is_user_supplied_paper(paper) else 0
     return (
         tier_priority.get(str(getattr(paper, "relevance_tier", "candidate")), 1),
+        user_supplied_rank,
         float(getattr(paper, "relevance_score", 0.0) or 0.0),
         title_reason_count,
         year,
@@ -1751,7 +2331,7 @@ def _impact_priority(paper: PaperNode) -> tuple[int, float, float]:
 def _recent_priority(paper: PaperNode) -> tuple[int, int, float]:
     relevance = _relevance_priority(paper)
     year = _paper_year(getattr(paper, "publish_date", "")) or 0
-    return relevance[0], year, relevance[1]
+    return relevance[0], year, relevance[2]
 
 
 def _source_diversity_report(papers: Dict[str, PaperNode]) -> str:

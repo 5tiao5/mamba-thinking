@@ -634,6 +634,7 @@ export function WorkspacePage() {
           papers={filteredPapers}
           selectedPaperId={selectedPaper?.paper_id ?? ""}
           showRoundMarkers={activeView === "task"}
+          taskId={workspace?.task_id}
           totalPaperCount={workspace?.papers.length ?? 0}
           viewMode={evidenceViewMode}
         />

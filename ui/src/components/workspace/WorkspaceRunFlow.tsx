@@ -91,6 +91,46 @@ function eventDrivenStatus(
   return { status: fallback, eventCount: candidates.length, latestEvent };
 }
 
+function stageEventDetail(stage: Omit<RunStage, "eventCount" | "latestEvent">, event?: ResearchTaskEventItem) {
+  if (!event) {
+    return stage.detail;
+  }
+  const status = (event.status || "").toLowerCase();
+  if (status.includes("failed") || status.includes("error")) {
+    return `${stage.title}阶段遇到问题，建议查看下方内部事件流定位是检索、筛选还是生成失败。`;
+  }
+  if (status.includes("degraded") || status.includes("step_limit")) {
+    return `${stage.title}阶段已降级完成：系统保留证据边界，避免把不稳结果包装成强结论。`;
+  }
+  if (status.includes("started") || status.includes("progress") || status.includes("running")) {
+    return `正在执行“${stage.title}”：${stage.detail}`;
+  }
+  return stage.detail;
+}
+
+function retrievalDetail(workspace: WorkspaceSnapshot | null) {
+  const sourceTrace = workspace?.source_trace;
+  if (!workspace) {
+    return "根据主题和追问约束组装论文候选池。";
+  }
+  if (sourceTrace?.external_search_skipped) {
+    return "本轮外部检索跳过，主要依赖导入资料或已有上下文。";
+  }
+  const direct = sourceTrace?.direct_paper_count ?? workspace.evidence_status?.direct_paper_count ?? 0;
+  const adjacent = sourceTrace?.adjacent_paper_count ?? workspace.evidence_status?.adjacent_paper_count ?? 0;
+  const novel = sourceTrace?.novel_paper_count ?? 0;
+  const reused = sourceTrace?.reused_paper_count ?? 0;
+  const filtered = sourceTrace?.low_relevance_filtered_count ?? sourceTrace?.filtered_out_count ?? 0;
+  const parts = [`整理到 ${direct} 篇直接证据、${adjacent} 篇邻近证据`];
+  if (sourceTrace?.refresh_triggered) {
+    parts.push(`本轮新增 ${novel} 篇、沿用 ${reused} 篇`);
+  }
+  if (filtered) {
+    parts.push(`过滤 ${filtered} 条低相关候选`);
+  }
+  return `${parts.join("，")}。`;
+}
+
 function withEvents(
   stage: Omit<RunStage, "eventCount" | "latestEvent">,
   events: ResearchTaskEventItem[]
@@ -99,9 +139,7 @@ function withEvents(
   return {
     ...stage,
     ...eventState,
-    detail: eventState.latestEvent?.message
-      ? cleanDisplayText(eventState.latestEvent.message, 160)
-      : stage.detail,
+    detail: stageEventDetail(stage, eventState.latestEvent),
     metric: eventState.eventCount ? `${eventState.eventCount} 条事件` : stage.metric,
   };
 }
@@ -133,11 +171,7 @@ function buildRunStages(workspace: WorkspaceSnapshot | null, events: ResearchTas
       id: "retrieval",
       title: "检索与补搜证据",
       agentName: "Retriever",
-      detail: sourceTrace?.retrieval_message
-        ? cleanDisplayText(sourceTrace.retrieval_message, 150)
-        : externalSearchSkipped
-          ? "本轮外部检索跳过，主要依赖导入资料或已有上下文。"
-          : "根据主题和追问约束组装论文候选池。",
+      detail: retrievalDetail(workspace),
       status: workspace ? (fallbackUsed || externalSearchSkipped ? "degraded" : "completed") : "pending",
       metric: `${paperCount} 篇候选`,
     },
@@ -197,6 +231,40 @@ function formatEventTime(value: string) {
   });
 }
 
+function eventStageLabel(stage: string) {
+  const normalized = normalizeEventStage(stage);
+  if (normalized === "query") return "理解研究意图";
+  if (normalized === "retrieval") return "检索与补搜证据";
+  if (normalized === "curation") return "筛选核心论文";
+  if (normalized === "taxonomy") return "构建研究方向";
+  if (normalized === "graph") return "推断演进关系";
+  if (normalized === "brief") return "生成研究简报";
+  return cleanDisplayText(stage, 48) || "系统流程";
+}
+
+function eventStatusLabel(status: string) {
+  const normalized = (status || "").toLowerCase();
+  if (normalized.includes("failed") || normalized.includes("error")) return "失败";
+  if (normalized.includes("degraded") || normalized.includes("step_limit")) return "降级";
+  if (normalized.includes("started") || normalized.includes("running") || normalized.includes("progress")) {
+    return "运行中";
+  }
+  if (normalized.includes("completed")) return "完成";
+  return cleanDisplayText(status, 48) || "记录";
+}
+
+function readableEventMessage(event: ResearchTaskEventItem) {
+  const message = event.message || "";
+  const stageLabel = eventStageLabel(event.stage);
+  if (/^Action\s+[\w-]+\s+complete:/i.test(message)) {
+    return `${stageLabel}已完成，系统已记录本阶段的产出摘要。`;
+  }
+  if (/[{}]/.test(message) || /source_trace|shared_dimensions|target_added_dimensions|source_roles|target_roles|landscape_profile/i.test(message)) {
+    return `${stageLabel}产生了一条内部运行记录，可用于调试，但已隐藏原始字段。`;
+  }
+  return cleanDisplayText(message, 150);
+}
+
 export function WorkspaceRunFlow({
   workspace,
   viewLabel,
@@ -220,11 +288,13 @@ export function WorkspaceRunFlow({
         ? "运行快照已形成"
         : "等待任务运行";
   const liveDetail = runningStage?.latestEvent?.message
-    ? cleanDisplayText(runningStage.latestEvent.message, 180)
+    ? runningStage.detail
     : failedStage?.latestEvent?.message
-      ? cleanDisplayText(failedStage.latestEvent.message, 180)
+      ? failedStage.detail
       : latestEvent?.message
-        ? `最后事件：${cleanDisplayText(latestEvent.message, 180)}`
+        ? workspace
+          ? "本轮已形成 workspace 快照；如果某阶段降级，系统会在下方保留原因和事件流供排查。"
+          : `最后事件：${cleanDisplayText(latestEvent.message, 180)}`
         : "进入 Run 分区后会读取后端 task events；如果没有事件，则用最终 workspace 快照推断阶段。";
 
   return (
@@ -298,9 +368,9 @@ export function WorkspaceRunFlow({
             {recentEvents.map((event) => (
               <div className="workspace-run-event-item" key={event.event_id}>
                 <span>{formatEventTime(event.created_at) || `#${event.sequence}`}</span>
-                <strong>{cleanDisplayText(event.stage, 48)}</strong>
-                <em>{cleanDisplayText(event.status, 48)}</em>
-                <p>{cleanDisplayText(event.message, 150)}</p>
+                <strong>{eventStageLabel(event.stage)}</strong>
+                <em>{eventStatusLabel(event.status)}</em>
+                <p>{readableEventMessage(event)}</p>
               </div>
             ))}
           </div>

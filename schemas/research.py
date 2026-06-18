@@ -78,6 +78,8 @@ class WorkspacePaperClaimCheckView(BaseModel):
     evidence: str = ""
     source_level: str = "metadata"
     section: str = "metadata"
+    page: int = 0
+    confidence: float = 0.0
     caveat: str = ""
 
 
@@ -87,6 +89,10 @@ class WorkspacePaperBriefView(BaseModel):
     contribution: str = ""
     limitation: str = ""
     relation_to_topic: str = ""
+    why_selected: str = ""
+    read_focus: str = ""
+    evidence_basis: str = ""
+    verification_boundary: str = ""
     tags: List[str] = Field(default_factory=list)
     source: str = "metadata"
     claim_checks: List[WorkspacePaperClaimCheckView] = Field(default_factory=list)
@@ -253,6 +259,8 @@ class WorkspaceBriefItemView(BaseModel):
 class WorkspaceBriefPaperView(BaseModel):
     paper_id: str = ""
     title: str = ""
+    contribution: str = ""
+    read_focus: str = ""
     reason: str = ""
     source_task_ids: List[str] = Field(default_factory=list)
     evidence_level: str = "direct"
@@ -262,12 +270,16 @@ class WorkspaceResearchBriefView(BaseModel):
     mode: str = "task"
     headline: str = ""
     executive_summary: str = ""
+    landscape_overview: str = ""
+    evidence_rationale: str = ""
+    decision_advice: str = ""
     key_findings: List[WorkspaceBriefItemView] = Field(default_factory=list)
     must_read_papers: List[WorkspaceBriefPaperView] = Field(default_factory=list)
     open_gaps: List[WorkspaceBriefItemView] = Field(default_factory=list)
     recommended_next_steps: List[WorkspaceBriefItemView] = Field(default_factory=list)
     evidence_warnings: List[str] = Field(default_factory=list)
     round_evolution: List[WorkspaceBriefItemView] = Field(default_factory=list)
+    follow_up_prompts: List[str] = Field(default_factory=list)
     source: str = "deterministic"
 
 

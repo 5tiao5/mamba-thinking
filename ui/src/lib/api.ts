@@ -14,6 +14,8 @@ import type {
   ResearchPaperItem,
   ResearchPaperStatus,
   ResearchMode,
+  RuntimeApiKeyProvider,
+  RuntimeConfigStatus,
   ResearchTaskEventItem,
   ResearchTaskDetailItem,
   ResearchTaskSummaryItem,
@@ -23,6 +25,7 @@ import type {
   ToolItem,
   UpdateSkillPayload,
   WorkspaceSnapshot,
+  WorkspacePaper,
 } from "../types/api";
 import {
   DEMO_CONVERSATION_ID,
@@ -107,6 +110,17 @@ type ApiResponse<T> = { success: boolean; data: T };
 
 export const api = {
   health: () => request<{ status: string }>("/health"),
+  getRuntimeConfig: () =>
+    request<ApiResponse<RuntimeConfigStatus>>("/config/runtime"),
+  updateRuntimeApiKey: (payload: {
+    provider: RuntimeApiKeyProvider;
+    action: "set" | "clear";
+    api_key?: string;
+  }) =>
+    request<ApiResponse<RuntimeConfigStatus>>("/config/api-key", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   createConversation: (payload: { topic: string; title?: string }) =>
     request<ApiResponse<ConversationResponsePayload>>("/conversations", {
       method: "POST",
@@ -255,6 +269,19 @@ export const api = {
       });
     }
     return request<ApiResponse<WorkspaceSnapshot>>(`/research/tasks/${taskId}/workspace`);
+  },
+  verifyWorkspacePaper: (taskId: string, paperId: string) => {
+    if (taskId === DEMO_FOLLOW_UP_TASK_ID || taskId === DEMO_WORKSPACE_TASK_ID) {
+      const paper = demoWorkspace.papers.find((item) => item.paper_id === paperId) ?? demoWorkspace.papers[0];
+      return Promise.resolve({
+        success: true,
+        data: paper,
+      });
+    }
+    return request<ApiResponse<WorkspacePaper>>(
+      `/research/tasks/${taskId}/workspace/papers/${encodeURIComponent(paperId)}/verify`,
+      { method: "POST" }
+    );
   },
   listTools: async () => {
     try {

@@ -6,7 +6,11 @@ import urllib.error
 from unittest.mock import patch
 
 from product_agent.models import PaperNode
-from product_agent.research_agent.nodes.searcher import searcher_node
+from product_agent.research_agent.nodes.searcher import (
+    _select_analysis_shortlist,
+    _select_papers_for_analysis,
+    searcher_node,
+)
 from product_agent.research_agent.nodes.planner import planner_node
 from product_agent.research_agent.retrieval_plan import (
     build_retrieval_plan,
@@ -599,6 +603,209 @@ class RetrievalQueryFamilyTests(unittest.TestCase):
         self.assertEqual(len(result["paper_nodes"]), 3)
         self.assertEqual(result["retrieval_outcome"]["evidence_pool_count"], 6)
         self.assertEqual(result["retrieval_outcome"]["analysis_paper_count"], 3)
+
+    def test_hybrid_analysis_selection_keeps_relevant_user_uploaded_paper(self) -> None:
+        papers = {
+            "user-paper": PaperNode(
+                paper_id="user-paper",
+                title="User Uploaded Multimodal Retrieval Architecture",
+                abstract="A local PDF about multimodal retrieval architecture.",
+                source="user_upload",
+                relevance_tier="direct",
+                relevance_score=0.12,
+            )
+        }
+        for index in range(5):
+            papers[f"system-{index}"] = PaperNode(
+                paper_id=f"system-{index}",
+                title=f"System Retrieved Multimodal Retrieval Paper {index}",
+                abstract="A system retrieved paper about multimodal retrieval.",
+                source="arxiv",
+                relevance_tier="direct",
+                relevance_score=0.95 - index * 0.03,
+            )
+
+        selected = _select_papers_for_analysis(
+            papers,
+            state={"mode": "balanced", "research_mode": "hybrid", "topic": "multimodal retrieval"},
+            max_results=3,
+        )
+
+        self.assertEqual(len(selected), 3)
+        self.assertIn("user-paper", selected)
+
+    def test_hybrid_shortlist_keeps_user_uploaded_before_final_selection(self) -> None:
+        papers = {
+            "user-paper": PaperNode(
+                paper_id="user-paper",
+                title="User Uploaded Compute Communication Overlap Paper",
+                abstract="A local PDF about compute communication overlap.",
+                source="user_upload",
+                origin="user_upload",
+                relevance_tier="candidate",
+                relevance_score=0.2,
+                paper_pool_status="candidate",
+            )
+        }
+        for index in range(24):
+            papers[f"system-{index}"] = PaperNode(
+                paper_id=f"system-{index}",
+                title=f"System Retrieved Communication Orchestration Paper {index}",
+                abstract="Direct evidence about communication computing orchestration.",
+                source="semantic_scholar" if index % 2 else "arxiv",
+                relevance_tier="direct" if index < 18 else "adjacent",
+                relevance_score=0.95 - index * 0.01,
+                citation_count=10 + index,
+                citation_count_known=True,
+            )
+
+        state = {
+            "mode": "balanced",
+            "research_mode": "hybrid",
+            "topic": "communication computation overlap automatic orchestration framework",
+        }
+        shortlist = _select_analysis_shortlist(papers, state=state, max_results=8)
+        selected = _select_papers_for_analysis(shortlist, state=state, max_results=8)
+
+        self.assertIn("user-paper", shortlist)
+        self.assertIn("user-paper", selected)
+
+    @patch.dict(
+        "product_agent.research_agent.nodes.searcher.os.environ",
+        {
+            "CITATION_ENRICHMENT": "0",
+            "SEARCHER_PARALLEL_MODE": "off",
+        },
+    )
+    @patch("product_agent.research_agent.nodes.searcher.search_semantic_scholar")
+    @patch("product_agent.research_agent.nodes.searcher.search_papers_recall", return_value=[])
+    @patch("product_agent.research_agent.nodes.searcher.search_papers")
+    def test_s2_rate_limit_triggers_degraded_arxiv_rescue(
+        self,
+        search_arxiv,
+        _search_recall,
+        search_s2,
+    ) -> None:
+        def arxiv_results(query: str, max_results: int = 10):
+            if "communication" in query or "overlap" in query:
+                return [
+                    PaperNode(
+                        paper_id="rescue-overlap",
+                        title="Compute Communication Overlap Scheduling for Distributed LLM Inference",
+                        abstract=(
+                            "Studies communication computation overlap orchestration "
+                            "for distributed inference systems."
+                        ),
+                        source="arxiv",
+                    )
+                ]
+            return []
+
+        search_arxiv.side_effect = arxiv_results
+        search_s2.side_effect = RuntimeError(
+            "Semantic Scholar rate limit reached; configure S2_API_KEY or continue with arXiv recall."
+        )
+
+        result = searcher_node(
+            {
+                "topic": "communication computation overlap automatic orchestration framework",
+                "mode": "balanced",
+                "max_results": 8,
+                "retrieval_plan": {
+                    "topic": "communication computation overlap automatic orchestration framework",
+                    "strict_queries": ["primary strict"],
+                    "broad_queries": [],
+                    "recall_queries": ["communication computation overlap"],
+                    "filters": {},
+                    "rerank_signals": ["communication", "computation", "overlap"],
+                },
+                "evidence_pool": {},
+                "paper_nodes": {},
+                "logs": [],
+                "decisions": [],
+                "tool_events": [],
+                "error_events": [],
+            }
+        )
+
+        outcome = result["retrieval_outcome"]
+        self.assertTrue(outcome["semantic_scholar_rate_limited"])
+        self.assertTrue(outcome["arxiv_degraded_rescue_triggered"])
+        self.assertIn("rescue-overlap", result["evidence_pool"])
+
+    @patch.dict(
+        "product_agent.research_agent.nodes.searcher.os.environ",
+        {
+            "CITATION_ENRICHMENT": "0",
+            "ENABLE_SEARCHER_PARALLEL": "1",
+            "SEARCHER_PARALLEL_WORKERS": "3",
+        },
+    )
+    @patch("product_agent.research_agent.nodes.searcher.search_semantic_scholar")
+    @patch("product_agent.research_agent.nodes.searcher.search_papers")
+    def test_searcher_parallelizes_first_pass_retrieval(
+        self,
+        search_arxiv,
+        search_s2,
+    ) -> None:
+        def arxiv_results(query: str, max_results: int = 10):
+            return [
+                PaperNode(
+                    paper_id=f"arxiv-{query.replace(' ', '-')}",
+                    title=f"{query.title()} Arxiv Benchmark",
+                    abstract="Evaluates tool-use benchmark reliability for LLM agents.",
+                    source="arxiv",
+                )
+            ]
+
+        def s2_results(query: str, max_results: int = 10):
+            return [
+                PaperNode(
+                    paper_id=f"s2-{query.replace(' ', '-')}",
+                    title=f"{query.title()} Semantic Scholar Benchmark",
+                    abstract="Studies tool-use benchmark reliability for LLM agents.",
+                    source="semantic_scholar",
+                    citation_count=12,
+                    citation_count_known=True,
+                )
+            ]
+
+        search_arxiv.side_effect = arxiv_results
+        search_s2.side_effect = s2_results
+
+        result = searcher_node(
+            {
+                "topic": "AI agent tool use benchmark",
+                "mode": "balanced",
+                "max_results": 4,
+                "retrieval_plan": {
+                    "topic": "AI agent tool use benchmark",
+                    "strict_queries": [
+                        "agent tool use benchmark",
+                        "function calling failure recovery",
+                    ],
+                    "broad_queries": [],
+                    "recall_queries": [],
+                    "filters": {},
+                    "rerank_signals": ["tool use", "benchmark", "failure recovery"],
+                },
+                "evidence_pool": {},
+                "paper_nodes": {},
+                "logs": [],
+                "decisions": [],
+                "tool_events": [],
+                "error_events": [],
+            }
+        )
+
+        parallelism = result["retrieval_outcome"]["retrieval_parallelism"]
+        self.assertTrue(parallelism["enabled"])
+        self.assertEqual(parallelism["task_count"], 4)
+        self.assertEqual(parallelism["worker_count"], 3)
+        self.assertEqual(search_arxiv.call_count, 2)
+        self.assertEqual(search_s2.call_count, 2)
+        self.assertIn("arxiv-agent-tool-use-benchmark", result["evidence_pool"])
+        self.assertIn("s2-function-calling-failure-recovery", result["evidence_pool"])
 
 
 if __name__ == "__main__":

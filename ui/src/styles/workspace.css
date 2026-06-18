@@ -134,7 +134,7 @@
 
 .research-brief-board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 
@@ -742,6 +742,17 @@
   line-height: 1.55;
 }
 
+.workspace-paper-verification-action .secondary-button {
+  justify-self: start;
+  margin-top: 2px;
+}
+
+.workspace-paper-verification-action small {
+  color: #2f6fed;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
 .workspace-paper-claim-checks {
   display: grid;
   grid-column: 1 / -1;
@@ -755,6 +766,32 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid #dbe8f8;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 9px 11px;
+}
+
+.workspace-paper-claim-checks-head::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-paper-claim-checks-head::after {
+  content: "展开";
+  flex: 0 0 auto;
+  border: 1px solid #cfe0f6;
+  border-radius: 999px;
+  color: #2563eb;
+  background: #ffffff;
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.workspace-paper-claim-checks[open] .workspace-paper-claim-checks-head::after {
+  content: "收起";
 }
 
 .workspace-paper-claim-checks-head span {
@@ -773,6 +810,7 @@
 .workspace-paper-claim-check-list {
   display: grid;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .workspace-paper-claim-check {
@@ -817,6 +855,16 @@
   color: #71839a;
   font-size: 0.7rem;
   line-height: 1.45;
+}
+
+.workspace-paper-claim-more {
+  border: 1px dashed #d6e4f6;
+  border-radius: 10px;
+  color: #64748b;
+  background: #ffffff;
+  padding: 8px 10px;
+  font-size: 0.74rem;
+  font-weight: 800;
 }
 
 .workspace-paper-claim-status-verified {
@@ -2113,6 +2161,12 @@
   color: #475569;
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.graph-category-pill-muted {
+  border-style: dashed;
+  background: #ffffff;
+  color: #64748b;
 }
 
 .graph-category-dot {

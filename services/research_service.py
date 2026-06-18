@@ -821,6 +821,16 @@ class ResearchService:
                 citation_count = max(int(citation_count or 0), 0)
             except (TypeError, ValueError):
                 citation_count = 0
+            citation_count_known = (
+                bool(metadata.get("citation_count_known"))
+                if "citation_count_known" in metadata
+                else "citation_count" in metadata
+            )
+            taxonomy_category = (
+                metadata.get("taxonomy_category")
+                or metadata.get("category")
+                or ""
+            )
 
             papers.append(
                 {
@@ -836,9 +846,9 @@ class ResearchService:
                     "source": entry.origin,
                     "origin": entry.origin,
                     "status": entry.status,
-                    "taxonomy_category": str(metadata.get("category", "") or ""),
+                    "taxonomy_category": str(taxonomy_category or ""),
                     "citation_count": citation_count,
-                    "citation_count_known": "citation_count" in metadata,
+                    "citation_count_known": citation_count_known,
                     "citation_source": str(metadata.get("citation_source", "") or ""),
                     "url": entry.source_url or str(metadata.get("source_url", "") or ""),
                     "doi": doi,

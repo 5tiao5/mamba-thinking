@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import BackgroundTasks, FastAPI, File, Path, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,6 +20,7 @@ from product_agent.schemas import (
     ImportPaperCandidateRequest,
     SearchPaperCandidatesRequest,
     UpdateResearchPaperRequest,
+    UpdateRuntimeApiKeyRequest,
     UpdateSkillRequest,
     UpdateToolRequest,
 )
@@ -29,6 +32,24 @@ from product_agent.services.pdf_import_service import (
 
 from .handlers import ProductApiHandlers
 from .response import fail
+
+
+DEFAULT_CORS_ORIGINS = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:5174",
+    "http://localhost:5174",
+]
+
+
+def _cors_origins_from_env() -> list[str]:
+    raw_origins = os.environ.get("PRODUCT_AGENT_CORS_ORIGINS", "")
+    configured_origins = [
+        origin.strip()
+        for origin in raw_origins.split(",")
+        if origin.strip()
+    ]
+    return configured_origins or DEFAULT_CORS_ORIGINS
 
 
 def create_app(container: AppContainer | None = None) -> FastAPI:
@@ -60,12 +81,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-            "http://127.0.0.1:5174",
-            "http://localhost:5174",
-        ],
+        allow_origins=_cors_origins_from_env(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -74,6 +90,14 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.get("/health")
     def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/config/runtime")
+    def get_runtime_config():
+        return handlers.get_runtime_config().model_dump()
+
+    @app.post("/config/api-key")
+    def update_runtime_api_key(request: UpdateRuntimeApiKeyRequest):
+        return handlers.update_runtime_api_key(request).model_dump()
 
     @app.post("/conversations")
     def create_conversation(request: CreateConversationRequest):
@@ -195,6 +219,13 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.get("/research/tasks/{task_id}/workspace")
     def get_workspace(task_id: str = Path(..., description="研究任务 ID")):
         return handlers.get_workspace(task_id).model_dump()
+
+    @app.post("/research/tasks/{task_id}/workspace/papers/{paper_id}/verify")
+    def verify_workspace_paper(
+        task_id: str = Path(..., description="研究任务 ID"),
+        paper_id: str = Path(..., description="论文 ID"),
+    ):
+        return handlers.verify_workspace_paper(task_id, paper_id).model_dump()
 
     @app.get("/tools")
     def list_tools():

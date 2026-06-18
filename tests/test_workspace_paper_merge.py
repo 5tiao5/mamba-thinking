@@ -14,6 +14,7 @@ from product_agent.services.workspace_service import (
     _merge_workspace_gaps,
     _merge_workspace_ideas,
     _merge_workspace_papers,
+    _paper_brief_llm_slots,
     _workspace_paper_view,
     _select_conversation_analysis_paper_ids,
 )
@@ -267,6 +268,46 @@ def test_paper_brief_filters_internal_relevance_signals() -> None:
     assert "user_selected:" not in view.paper_brief.relation_to_topic
 
 
+def test_paper_brief_ignores_generic_label_only_relevance_reason() -> None:
+    paper = PaperRecord(
+        paper_id="paper-a",
+        title="Evaluation Protocols for Multimodal Retrieval",
+        source="arxiv",
+        relevance_reasons=["evaluation"],
+    )
+
+    view = _workspace_paper_view(paper, topic="基于大模型的跨模态检索")
+
+    assert "evaluation" not in view.paper_brief.contribution.casefold()
+    assert "evaluation" not in view.paper_brief.relation_to_topic.casefold()
+    assert all(check.claim.casefold() != "evaluation" for check in view.paper_brief.claim_checks)
+
+
+def test_paper_brief_hides_snake_case_internal_relevance_reason() -> None:
+    paper = PaperRecord(
+        paper_id="paper-a",
+        title="Orchestrating Multimodal DNN Workloads in Wireless Neural Processing",
+        source="arxiv",
+        taxonomy_category="Wireless Neural Processing",
+        relevance_reasons=["team_process"],
+    )
+
+    view = _workspace_paper_view(paper, topic="通信计算 overlap 自动编排框架")
+    brief_text = " ".join(
+        [
+            view.paper_brief.contribution,
+            view.paper_brief.relation_to_topic,
+            view.paper_brief.why_selected,
+            view.paper_brief.read_focus,
+            " ".join(check.claim for check in view.paper_brief.claim_checks),
+        ]
+    ).casefold()
+
+    assert "team_process" not in brief_text
+    assert "编排" in view.paper_brief.method
+    assert "资源" in view.paper_brief.read_focus or "调度" in view.paper_brief.read_focus
+
+
 def test_paper_brief_exposes_claim_checks_with_verification_boundary() -> None:
     paper = PaperRecord(
         paper_id="paper-a",
@@ -287,17 +328,28 @@ def test_paper_brief_exposes_claim_checks_with_verification_boundary() -> None:
     assert view.paper_brief.claim_checks[0].status == "partial"
     assert view.paper_brief.claim_checks[0].source_level == "abstract"
     assert "lightweight multimodal fusion" in view.paper_brief.claim_checks[0].evidence.lower()
+    assert "候选证据" in view.paper_brief.why_selected or "直接相关" in view.paper_brief.why_selected
+    assert "重点看" in view.paper_brief.read_focus or "先看" in view.paper_brief.read_focus
+    assert "摘要" in view.paper_brief.evidence_basis
+    assert "摘要级核查" in view.paper_brief.verification_boundary
+    assert any(check.claim_type == "method_claim" for check in view.paper_brief.claim_checks)
     assert any(check.claim_type == "impact" and check.status == "unknown" for check in view.paper_brief.claim_checks)
 
 
-def test_paper_brief_prefers_uploaded_full_text_claim_evidence() -> None:
+def test_paper_brief_uses_full_text_claim_evidence_only_after_verification() -> None:
     paper = PaperRecord(
         paper_id="paper-full-text",
         title="Lightweight Multimodal Fusion for Robot Vision",
         abstract="A short abstract.",
         review_text=(
-            "Introduction. Robot vision systems require lightweight multimodal fusion. "
-            "Method. We propose a compact fusion architecture that aligns camera and language features. "
+            "[Page 1]\n"
+            "Introduction\n"
+            "Introduction. Robot vision systems require lightweight multimodal fusion.\n"
+            "[Page 2]\n"
+            "Method\n"
+            "Method. We propose a compact fusion architecture that aligns camera and language features.\n"
+            "[Page 3]\n"
+            "Experiments\n"
             "Experiments evaluate robustness under missing modalities."
         ),
         source="user_upload",
@@ -307,14 +359,25 @@ def test_paper_brief_prefers_uploaded_full_text_claim_evidence() -> None:
     )
 
     view = _workspace_paper_view(paper, topic="面向机器人视觉的轻量级多模态融合")
+    verified_view = _workspace_paper_view(
+        paper,
+        topic="面向机器人视觉的轻量级多模态融合",
+        verification_mode="full",
+    )
 
     assert view.paper_brief.source == "full_text"
     assert view.paper_brief.claim_checks
-    assert view.paper_brief.claim_checks[0].source_level == "full_text"
+    assert all(check.source_level != "full_text" for check in view.paper_brief.claim_checks)
+    assert "正文片段" in view.paper_brief.evidence_basis
+    assert "正文片段级核查" in view.paper_brief.verification_boundary
+    assert verified_view.paper_brief.source == "full_text_verified"
     assert "robot vision systems require" in " ".join(
-        check.evidence.lower() for check in view.paper_brief.claim_checks
+        check.evidence.lower() for check in verified_view.paper_brief.claim_checks
     )
-    assert "正文片段级核查" in view.paper_brief.claim_checks[0].caveat
+    assert "全文片段级核查" in verified_view.paper_brief.claim_checks[0].caveat
+    assert any(check.claim_type == "evaluation_claim" for check in verified_view.paper_brief.claim_checks)
+    assert any(check.source_level == "full_text" and check.page > 0 for check in verified_view.paper_brief.claim_checks)
+    assert all(check.confidence >= 0 for check in verified_view.paper_brief.claim_checks)
 
 
 def test_new_conversation_recovers_known_citations_from_historical_workspace() -> None:
@@ -478,3 +541,93 @@ def test_conversation_core_papers_keep_recent_majority_and_historical_value() ->
     assert len(selected) == 12
     assert len(set(selected) & {f"paper-{index}" for index in range(8)}) == 8
     assert "paper-10" in selected
+
+
+def test_paper_brief_llm_slots_prioritize_important_papers(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_PAPER_BRIEF_LLM", "1")
+    monkeypatch.setenv("PAPER_BRIEF_LLM_MAX_PER_WORKSPACE", "2")
+    monkeypatch.setattr(
+        "product_agent.services.workspace_service.paper_brief_llm_enabled",
+        lambda: True,
+    )
+    candidate = PaperRecord(
+        paper_id="candidate",
+        title="Candidate Paper",
+        abstract="A candidate paper with some abstract.",
+        relevance_score=0.5,
+        relevance_tier="candidate",
+    )
+    core = PaperRecord(
+        paper_id="core",
+        title="Core Paper",
+        abstract="A core paper with direct evidence.",
+        relevance_score=0.7,
+        relevance_tier="direct",
+        paper_pool_status="core",
+    )
+    uploaded = PaperRecord(
+        paper_id="uploaded",
+        title="Uploaded Paper",
+        abstract="A user uploaded paper.",
+        review_text="[Page 1] Method. The paper introduces a method.",
+        origin="user_upload",
+    )
+    new_direct = PaperRecord(
+        paper_id="new",
+        title="New Direct Paper",
+        abstract="A new direct paper.",
+        relevance_score=0.9,
+        relevance_tier="direct",
+        is_new_this_round=True,
+    )
+
+    slots = _paper_brief_llm_slots([candidate, core, uploaded, new_direct])
+
+    assert set(slots.keys()) == {id(uploaded), id(core)}
+    assert slots[id(uploaded)] == 1
+    assert slots[id(core)] == 2
+
+
+def test_workspace_paper_verification_is_on_demand() -> None:
+    paper = PaperRecord(
+        paper_id="paper-fulltext",
+        title="FusionBench: A Benchmark for Multimodal Fusion Robustness",
+        abstract=(
+            "FusionBench proposes a multimodal fusion benchmark and evaluates "
+            "robustness under missing modality settings."
+        ),
+        review_text=(
+            "[Page 1]\nAbstract\n"
+            "FusionBench proposes a benchmark for multimodal fusion robustness and "
+            "addresses missing modality failures in real systems. "
+            "[Page 2]\nMethod\n"
+            "The method introduces a fusion framework with alignment modules and "
+            "robust missing modality handling. "
+            "[Page 3]\nEvaluation\n"
+            "Experiments evaluate performance on benchmark tasks and show improved "
+            "robustness against missing modalities."
+        ),
+        origin="user_upload",
+        source="user_upload",
+        relevance_tier="direct",
+        paper_pool_status="core",
+    )
+    workspace = ResearchWorkspace(
+        task_id="task-paper-verify",
+        topic="multimodal fusion robustness",
+        papers=[paper],
+    )
+    service = WorkspaceService(_WorkspaceRepository({workspace.task_id: workspace}))
+
+    standard_snapshot = service.get_workspace_snapshot(workspace.task_id)
+    verified_paper = service.verify_workspace_paper(workspace.task_id, paper.paper_id)
+
+    assert standard_snapshot is not None
+    assert standard_snapshot.papers[0].paper_brief.source == "full_text"
+    assert all(
+        check.source_level != "full_text"
+        for check in standard_snapshot.papers[0].paper_brief.claim_checks
+    )
+    assert verified_paper is not None
+    assert verified_paper.paper_brief.source == "full_text_verified"
+    assert any(check.source_level == "full_text" for check in verified_paper.paper_brief.claim_checks)

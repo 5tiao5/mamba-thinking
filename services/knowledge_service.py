@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -16,6 +17,7 @@ from product_agent.domain import KnowledgeDocument
 from product_agent.repositories import KnowledgeRepository, ResearchTaskRepository
 
 _OPENALEX_WORKS_API = "https://api.openalex.org/works"
+_SEMANTIC_SCHOLAR_SEARCH_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _HTTP_TIMEOUT_SECONDS = 20
 _DOI_PATTERN = re.compile(r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", re.IGNORECASE)
@@ -80,6 +82,10 @@ class PaperImportCandidate:
     source: str = ""
     venue: Optional[str] = None
     openalex_id: Optional[str] = None
+    semantic_scholar_id: Optional[str] = None
+    citation_count: Optional[int] = None
+    citation_source: str = ""
+    taxonomy_category: str = ""
     is_exact_match: bool = False
 
 
@@ -466,7 +472,15 @@ class KnowledgeService:
             candidate = self._fetch_openalex_candidate_by_doi(exact_doi)
             return self._cache_paper_candidates([candidate] if candidate else [])
 
-        candidates = self._search_openalex_candidates(normalized_query, limit=max(limit, 3))
+        candidates = self._merge_paper_candidates(
+            [
+                *self._search_semantic_scholar_candidates(
+                    normalized_query,
+                    limit=max(limit, 3),
+                ),
+                *self._search_openalex_candidates(normalized_query, limit=max(limit, 3)),
+            ]
+        )
         return self._cache_paper_candidates(candidates[:limit])
 
     def import_paper_candidate(
@@ -499,8 +513,15 @@ class KnowledgeService:
             "pdf_url": candidate.pdf_url,
             "venue": candidate.venue,
             "openalex_id": candidate.openalex_id,
+            "semantic_scholar_id": candidate.semantic_scholar_id,
+            "citation_count": candidate.citation_count,
+            "citation_source": candidate.citation_source,
+            "taxonomy_category": candidate.taxonomy_category,
+            "category": candidate.taxonomy_category,
             "is_exact_match": candidate.is_exact_match,
         }
+        if candidate.citation_count is not None:
+            metadata_extra["citation_count_known"] = True
 
         return self.import_document(
             title=candidate.title,
@@ -518,13 +539,26 @@ class KnowledgeService:
             self.paper_candidate_cache[candidate.candidate_id] = candidate
         return candidates
 
-    def _fetch_json(self, url: str) -> Dict[str, Any] | List[Any] | None:
+    def _fetch_json(
+        self,
+        url: str,
+        *,
+        headers: Dict[str, str] | None = None,
+    ) -> Dict[str, Any] | List[Any] | None:
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "ProductAgent/1.0"})
+            request_headers = {"User-Agent": "ProductAgent/1.0"}
+            if headers:
+                request_headers.update(headers)
+            request = urllib.request.Request(url, headers=request_headers)
             with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SECONDS) as response:
                 return json.loads(response.read().decode("utf-8"))
         except Exception:
             return None
+
+    @staticmethod
+    def _semantic_scholar_headers() -> Dict[str, str]:
+        api_key = str(os.environ.get("S2_API_KEY", "") or "").strip()
+        return {"x-api-key": api_key} if api_key else {}
 
     def _fetch_text(self, url: str) -> str | None:
         try:
@@ -578,6 +612,11 @@ class KnowledgeService:
             name = " ".join((author.findtext("{http://www.w3.org/2005/Atom}name") or "").split())
             if name:
                 authors.append(name)
+        categories = [
+            str(category.attrib.get("term", "") or "").strip()
+            for category in entry.findall("{http://www.w3.org/2005/Atom}category")
+            if str(category.attrib.get("term", "") or "").strip()
+        ]
 
         source_url = None
         pdf_url = None
@@ -601,6 +640,7 @@ class KnowledgeService:
             arxiv_id=arxiv_id,
             source="arxiv",
             venue="arXiv",
+            taxonomy_category=categories[0] if categories else "",
             is_exact_match=True,
         )
         doi = self._extract_doi(candidate.abstract)  # unlikely, but harmless
@@ -642,11 +682,75 @@ class KnowledgeService:
         candidates.sort(
             key=lambda candidate: (
                 0 if candidate.is_exact_match else 1,
+                0 if candidate.citation_count is not None else 1,
                 abs((candidate.year or 0) - datetime.now(timezone.utc).year),
                 candidate.title.lower(),
             )
         )
         return candidates[:limit]
+
+    def _search_semantic_scholar_candidates(self, query: str, limit: int) -> List[PaperImportCandidate]:
+        params = urllib.parse.urlencode(
+            {
+                "query": query,
+                "limit": str(max(limit, 3)),
+                "fields": "paperId,title,abstract,authors,year,externalIds,citationCount,url",
+            }
+        )
+        payload = self._fetch_json(
+            f"{_SEMANTIC_SCHOLAR_SEARCH_API}?{params}",
+            headers=self._semantic_scholar_headers(),
+        )
+        if not isinstance(payload, dict):
+            return []
+        items = payload.get("data")
+        if not isinstance(items, list):
+            return []
+
+        candidates: List[PaperImportCandidate] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = " ".join(str(item.get("title") or "").split())
+            if not title:
+                continue
+            authors = [
+                " ".join(str(author.get("name") or "").split())
+                for author in item.get("authors", []) or []
+                if isinstance(author, dict) and str(author.get("name") or "").strip()
+            ][:8]
+            external_ids = item.get("externalIds") or {}
+            if not isinstance(external_ids, dict):
+                external_ids = {}
+            arxiv_id = str(external_ids.get("ArXiv", "") or "").strip()
+            doi = self._normalize_doi(external_ids.get("DOI"))
+            year = item.get("year")
+            citation_count = item.get("citationCount")
+            if not isinstance(year, int):
+                year = None
+            if not isinstance(citation_count, int):
+                citation_count = None
+            source_url = str(item.get("url") or "").strip()
+            if not source_url and arxiv_id:
+                source_url = f"https://arxiv.org/abs/{arxiv_id}"
+            candidates.append(
+                PaperImportCandidate(
+                    candidate_id=f"paper_candidate_{uuid4().hex[:12]}",
+                    title=title,
+                    authors=authors,
+                    year=year,
+                    abstract=" ".join(str(item.get("abstract") or "").split()),
+                    source_url=source_url or None,
+                    doi=doi,
+                    arxiv_id=arxiv_id or None,
+                    source="semantic_scholar",
+                    semantic_scholar_id=str(item.get("paperId") or "") or None,
+                    citation_count=citation_count,
+                    citation_source="semantic_scholar" if citation_count is not None else "",
+                    is_exact_match=self._is_exact_title_match(title, query),
+                )
+            )
+        return candidates
 
     def _paper_candidate_from_openalex_result(
         self,
@@ -700,9 +804,116 @@ class KnowledgeService:
             source="openalex",
             venue=str(venue) if venue else None,
             openalex_id=str(item.get("id") or ""),
+            citation_count=self._openalex_citation_count(item),
+            citation_source="openalex" if self._openalex_citation_count(item) is not None else "",
+            taxonomy_category=self._openalex_taxonomy_category(item),
             is_exact_match=self._is_exact_title_match(title, exact_query),
         )
         return candidate
+
+    def _merge_paper_candidates(self, candidates: List[PaperImportCandidate]) -> List[PaperImportCandidate]:
+        merged: List[PaperImportCandidate] = []
+        for candidate in candidates:
+            existing = next(
+                (
+                    item
+                    for item in merged
+                    if self._same_paper_candidate(item, candidate)
+                ),
+                None,
+            )
+            if existing is None:
+                merged.append(candidate)
+                continue
+            self._merge_candidate_metadata(existing, candidate)
+
+        merged.sort(
+            key=lambda candidate: (
+                0 if candidate.is_exact_match else 1,
+                0 if candidate.citation_count is not None else 1,
+                -int(candidate.citation_count or 0),
+                abs((candidate.year or 0) - datetime.now(timezone.utc).year),
+                candidate.title.lower(),
+            )
+        )
+        return merged
+
+    def _same_paper_candidate(
+        self,
+        left: PaperImportCandidate,
+        right: PaperImportCandidate,
+    ) -> bool:
+        if left.doi and right.doi and left.doi.lower() == right.doi.lower():
+            return True
+        if left.arxiv_id and right.arxiv_id:
+            return (
+                re.sub(r"v\d+$", "", left.arxiv_id.lower())
+                == re.sub(r"v\d+$", "", right.arxiv_id.lower())
+            )
+        return self._normalize_match_text(left.title) == self._normalize_match_text(right.title)
+
+    @staticmethod
+    def _merge_candidate_metadata(
+        target: PaperImportCandidate,
+        candidate: PaperImportCandidate,
+    ) -> None:
+        if not target.authors and candidate.authors:
+            target.authors = list(candidate.authors)
+        if not target.year and candidate.year:
+            target.year = candidate.year
+        if not target.abstract and candidate.abstract:
+            target.abstract = candidate.abstract
+        if not target.source_url and candidate.source_url:
+            target.source_url = candidate.source_url
+        if not target.pdf_url and candidate.pdf_url:
+            target.pdf_url = candidate.pdf_url
+        if not target.doi and candidate.doi:
+            target.doi = candidate.doi
+        if not target.arxiv_id and candidate.arxiv_id:
+            target.arxiv_id = candidate.arxiv_id
+        if not target.venue and candidate.venue:
+            target.venue = candidate.venue
+        if not target.openalex_id and candidate.openalex_id:
+            target.openalex_id = candidate.openalex_id
+        if not target.semantic_scholar_id and candidate.semantic_scholar_id:
+            target.semantic_scholar_id = candidate.semantic_scholar_id
+        if target.citation_count is None and candidate.citation_count is not None:
+            target.citation_count = candidate.citation_count
+            target.citation_source = candidate.citation_source
+        if not target.taxonomy_category and candidate.taxonomy_category:
+            target.taxonomy_category = candidate.taxonomy_category
+        target.is_exact_match = target.is_exact_match or candidate.is_exact_match
+
+    @staticmethod
+    def _openalex_citation_count(item: Dict[str, Any]) -> int | None:
+        citation_count = item.get("cited_by_count")
+        if isinstance(citation_count, int):
+            return max(citation_count, 0)
+        return None
+
+    @staticmethod
+    def _openalex_taxonomy_category(item: Dict[str, Any]) -> str:
+        primary_topic = item.get("primary_topic")
+        if isinstance(primary_topic, dict):
+            for key in ("display_name",):
+                value = " ".join(str(primary_topic.get(key) or "").split())
+                if value:
+                    return value[:120]
+            for key in ("subfield", "field", "domain"):
+                value = primary_topic.get(key)
+                if isinstance(value, dict):
+                    display_name = " ".join(str(value.get("display_name") or "").split())
+                    if display_name:
+                        return display_name[:120]
+        concepts = item.get("concepts")
+        if isinstance(concepts, list):
+            for concept in concepts:
+                if not isinstance(concept, dict):
+                    continue
+                display_name = " ".join(str(concept.get("display_name") or "").split())
+                if display_name:
+                    return display_name[:120]
+        return ""
 
     @staticmethod
     def _normalize_doi(value: Any) -> str | None:
@@ -757,6 +968,8 @@ class KnowledgeService:
             tags.append(str(candidate.year))
             if candidate.year >= datetime.now(timezone.utc).year - 2:
                 tags.append("recent-paper")
+        if candidate.taxonomy_category:
+            tags.append(candidate.taxonomy_category)
         if candidate.venue:
             venue_tag = self._normalize_match_text(candidate.venue).replace(" ", "-")
             if venue_tag:
@@ -781,6 +994,11 @@ class KnowledgeService:
             lines.append(f"DOI: {candidate.doi}")
         if candidate.arxiv_id:
             lines.append(f"arXiv: {candidate.arxiv_id}")
+        if candidate.taxonomy_category:
+            lines.append(f"Category: {candidate.taxonomy_category}")
+        if candidate.citation_count is not None:
+            source = f" ({candidate.citation_source})" if candidate.citation_source else ""
+            lines.append(f"Citations: {candidate.citation_count}{source}")
         if candidate.source_url:
             lines.append(f"Landing page: {candidate.source_url}")
         if candidate.pdf_url:

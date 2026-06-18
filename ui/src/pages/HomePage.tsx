@@ -123,12 +123,12 @@ export function HomePage() {
           />
           <div className="content-pad launch-command">
             <label>
-              <span className="field-label">研究主题</span>
-              <input className="input" onChange={(event) => setTopic(event.target.value)} value={topic} />
-            </label>
-            <label>
               <span className="field-label">会话标题</span>
               <input className="input" onChange={(event) => setTitle(event.target.value)} value={title} />
+            </label>
+            <label>
+              <span className="field-label">研究主题</span>
+              <input className="input" onChange={(event) => setTopic(event.target.value)} value={topic} />
             </label>
             <div className="form-row">
               <div>

@@ -7,6 +7,40 @@ export type ConversationResponsePayload = {
 export type KnowledgeScope = "none" | "conversation_only" | "shared";
 export type ResearchMode = "hybrid" | "imported_only" | "search_only";
 
+export type RuntimeApiKeyProvider = "openai" | "deepseek" | "s2";
+
+export type RuntimeApiKeyStatus = {
+  provider: RuntimeApiKeyProvider;
+  env_key: string;
+  label: string;
+  configured: boolean;
+  source: "missing" | ".env" | "process" | "process_override" | string;
+  fingerprint: string;
+  help_text: string;
+};
+
+export type RuntimeFlag = {
+  key: string;
+  label: string;
+  value: string;
+  effective_value: string;
+  description: string;
+};
+
+export type RuntimeConfigStatus = {
+  env_file_path: string;
+  env_file_exists: boolean;
+  active_provider: string;
+  default_model: string;
+  llm_available: boolean;
+  paper_brief_llm_enabled: boolean;
+  research_brief_llm_enabled: boolean;
+  semantic_scholar_available: boolean;
+  api_keys: RuntimeApiKeyStatus[];
+  runtime_flags: RuntimeFlag[];
+  safety_notes: string[];
+};
+
 export type ConversationSummaryItem = {
   conversation_id: string;
   topic: string;
@@ -94,6 +128,10 @@ export type WorkspacePaperBrief = {
   contribution: string;
   limitation: string;
   relation_to_topic: string;
+  why_selected?: string;
+  read_focus?: string;
+  evidence_basis?: string;
+  verification_boundary?: string;
   tags: string[];
   source: string;
   claim_checks?: WorkspacePaperClaimCheck[];
@@ -106,6 +144,8 @@ export type WorkspacePaperClaimCheck = {
   evidence: string;
   source_level: "full_text" | "abstract" | "metadata" | string;
   section: string;
+  page?: number;
+  confidence?: number;
   caveat: string;
 };
 
@@ -248,6 +288,8 @@ export type WorkspaceBriefItem = {
 export type WorkspaceBriefPaper = {
   paper_id: string;
   title: string;
+  contribution?: string;
+  read_focus?: string;
   reason: string;
   source_task_ids: string[];
   evidence_level: string;
@@ -257,12 +299,16 @@ export type WorkspaceResearchBrief = {
   mode: "task" | "conversation" | string;
   headline: string;
   executive_summary: string;
+  landscape_overview?: string;
+  evidence_rationale?: string;
+  decision_advice?: string;
   key_findings: WorkspaceBriefItem[];
   must_read_papers: WorkspaceBriefPaper[];
   open_gaps: WorkspaceBriefItem[];
   recommended_next_steps: WorkspaceBriefItem[];
   evidence_warnings: string[];
   round_evolution: WorkspaceBriefItem[];
+  follow_up_prompts?: string[];
   source: string;
 };
 

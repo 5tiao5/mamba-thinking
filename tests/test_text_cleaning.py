@@ -14,3 +14,7 @@ def test_clean_internal_context_text_hides_opaque_paper_ids():
 
 def test_clean_internal_context_text_drops_internal_relevance_signals():
     assert clean_internal_context_text("focus: multimodal: title: multimodal") == ""
+
+
+def test_clean_internal_context_text_preserves_domain_gap_terms():
+    assert clean_internal_context_text("modality gap reduction") == "modality gap reduction"

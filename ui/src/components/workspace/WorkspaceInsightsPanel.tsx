@@ -99,10 +99,10 @@ function uniqueFullTexts(items: string[], maxItems: number) {
 
 function evidenceLevelLabel(level: string) {
   const normalized = (level || "").toLowerCase();
-  if (normalized === "strong") return "高相关命中";
-  if (normalized === "moderate") return "中等相关";
-  if (normalized === "weak") return "弱相关参考";
-  return "候选参考";
+  if (normalized === "strong") return "高相关上下文";
+  if (normalized === "moderate") return "可用背景";
+  if (normalized === "weak") return "弱相关线索";
+  return "候选上下文";
 }
 
 function evidenceLevelTone(level: string): "success" | "info" | "warning" | "neutral" {
@@ -288,8 +288,8 @@ function formatKnowledgeHit(hit: WorkspaceKnowledgeHit) {
     titleFull,
     contextSummary:
       matchedChunkCount > 0
-        ? `系统命中了 ${matchedChunkCount} 个资料片段，语义匹配度约 ${matchPercent}%。这些片段用于承接上下文和辅助检索，不直接等同于论文证据。`
-        : "系统将这条资料作为上下文线索使用，用于辅助理解当前研究主题和追问约束。",
+        ? `这条资料被采纳为上下文参考，主要帮助系统承接研究语境和调整检索方向；命中 ${matchedChunkCount} 个片段，匹配度约 ${matchPercent}%。`
+        : "系统将这条资料作为上下文线索使用，用于辅助理解当前研究主题和追问约束，不直接参与最终结论准入。",
     useLabel: use.label,
     useDescription: use.description,
     sourceLabel: knowledgeSourceLabel(hit.source_type),
@@ -452,6 +452,11 @@ function IdeaCard({ idea, papers }: { idea: WorkspaceIdea; papers: WorkspacePape
     <article className={`insight-item ${expanded ? "insight-item-expanded" : ""}`}>
       <div className="insight-meta-row">
         <span className="insight-kind insight-kind-accent">研究机会</span>
+        {idea.evidence_level ? (
+          <StatusPill compact tone={conclusionEvidenceTone(idea.evidence_level)}>
+            {conclusionEvidenceLabel(idea.evidence_level)}
+          </StatusPill>
+        ) : null}
       </div>
       <div className="insight-title">{title}</div>
       <ConclusionEvidenceBlock
@@ -736,7 +741,7 @@ function KnowledgeHitCard({ hit }: { hit: ReturnType<typeof formatKnowledgeHit> 
           </StatusPill>
           {hit.matchedChunkCount > 0 ? (
             <StatusPill compact tone="neutral">
-              {hit.matchedChunkCount} 个片段
+              {hit.matchedChunkCount} 个片段已折叠
             </StatusPill>
           ) : null}
         </div>
@@ -750,7 +755,7 @@ function KnowledgeHitCard({ hit }: { hit: ReturnType<typeof formatKnowledgeHit> 
       <p>{hit.contextSummary}</p>
 
       <small>
-        {hit.sourceLabel} · {hit.scopeLabel} · 已送入本轮分析上下文
+        {hit.sourceLabel} · {hit.scopeLabel} · 已送入上下文，不等同于论文证据
       </small>
 
       {hasSupportingSnippets ? (
@@ -771,7 +776,7 @@ function KnowledgeHitCard({ hit }: { hit: ReturnType<typeof formatKnowledgeHit> 
                 <small>仅表示检索相关性，不代表该资料已经证明最终结论。</small>
               </div>
               <div className="workspace-hit-redacted-snippets">
-                原始片段已在主界面折叠。它们只用于 RAG 上下文召回和检索辅助，最终结论仍以论文证据池、Paper Brief 和 claim checks 为准。
+                原始片段已折叠，避免把 RAG 召回内容误读成正式证据。它们只帮助系统理解语境和补全检索方向；最终结论仍以论文证据池、Paper Brief 和 claim checks 为准。
               </div>
             </div>
           ) : null}
@@ -961,7 +966,7 @@ function SourceTracePanel({ sourceTrace }: { sourceTrace?: WorkspaceSourceTrace 
       <div className="workspace-context-stack">
         {hasRetrievalSummary ? (
           <div
-            className={`workspace-context-card ${
+            className={`workspace-context-card workspace-context-card-wide ${
               shouldHighlightRetrievalStatus(sourceTrace.retrieval_status)
                 ? "workspace-context-card-warning"
                 : "workspace-context-card-accent"

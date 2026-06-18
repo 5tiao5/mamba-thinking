@@ -188,6 +188,83 @@ function latestTaskEventText(event?: ResearchTaskEventItem) {
   return `${stage}进行中。`;
 }
 
+function uniquePromptList(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const cleaned = cleanDisplayText(value);
+    if (!cleaned) {
+      continue;
+    }
+    const key = cleaned.toLowerCase().replace(/\s+/g, "");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
+}
+
+const FOLLOW_UP_EVIDENCE_TRAIL_PATTERN =
+  /(?:依据\s*\d+\s*篇核心论文启发|当前属于|需复核|选择依据|证据等级)[\s\S]*$/;
+const LONG_PARENTHESES_PATTERN = /[（(][^（）()]{48,}[）)]/g;
+const DIRECTION_GAP_PATTERN = /方向[“"]([^”"]{2,96})[”"]缺少关键概念[：:]\s*([^。；;，,\n]*)/;
+const PAPER_VERIFY_PATTERN = /建议先精读\s+(.+?)，?确认/;
+
+function truncatePromptText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const sliced = value.slice(0, maxLength);
+  const boundaries = ["。", "；", ";", "，", ",", "、", " "];
+  const boundary = boundaries.reduce((best, marker) => Math.max(best, sliced.lastIndexOf(marker)), -1);
+  const candidate = boundary >= Math.floor(maxLength * 0.55) ? sliced.slice(0, boundary) : sliced;
+  return candidate
+    .replace(/[A-Za-z]{1,8}$/g, "")
+    .trim()
+    .replace(/[，,；;：:\s-]+$/g, "");
+}
+
+function compactFollowUpSeed(value: unknown, maxLength = 64) {
+  const cleaned = cleanDisplayText(value ?? "")
+    .replace(/[《》]/g, "")
+    .replace(/\b(\d{4})\.\s+(\d{4,5}v\d)\b/g, "$1.$2")
+    .replace(LONG_PARENTHESES_PATTERN, " ")
+    .replace(FOLLOW_UP_EVIDENCE_TRAIL_PATTERN, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[，,；;：:\s-]+|[，,；;：:\s-]+$/g, "");
+  if (!cleaned) {
+    return "";
+  }
+  const directionGap = cleaned.match(DIRECTION_GAP_PATTERN);
+  if (directionGap) {
+    const direction = truncatePromptText(directionGap[1], 42);
+    const concept = truncatePromptText(directionGap[2], 28);
+    return concept ? `补充“${direction}”方向的 ${concept} 证据` : `补充“${direction}”方向的关键证据`;
+  }
+  const paperVerify = cleaned.match(PAPER_VERIFY_PATTERN);
+  if (paperVerify) {
+    return `继续核查核心论文是否支撑当前路线`;
+  }
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  return truncatePromptText(cleaned, maxLength);
+}
+
+function makeFollowUpPrompt(prefix: string, value?: string) {
+  const cleaned = compactFollowUpSeed(value, Math.max(28, 76 - prefix.length));
+  if (!cleaned) {
+    return "";
+  }
+  if (/^(补充|继续|展开|围绕|细化|核查|验证)/.test(cleaned)) {
+    return cleaned;
+  }
+  return `${prefix}${cleaned}`;
+}
+
 export function AppShell({ children }: PropsWithChildren) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -444,6 +521,23 @@ export function AppShell({ children }: PropsWithChildren) {
     const ideas = workspace.ideas.map((idea) => cleanDisplayText(idea.title, 100)).filter(Boolean);
     return [...branches, ...ideas].slice(0, 6);
   }, [workspace]);
+  const workspaceFollowUpPrompts = useMemo(() => {
+    if (!workspace) return [];
+    const brief = workspace.research_brief;
+    const briefPrompts =
+      brief?.follow_up_prompts?.map((prompt) => compactFollowUpSeed(prompt, 76)).filter(Boolean) ?? [];
+    if (briefPrompts.length) {
+      return uniquePromptList(briefPrompts).slice(0, 5);
+    }
+    const nextSteps =
+      brief?.recommended_next_steps?.map((item) => makeFollowUpPrompt("继续验证：", item.text)) ?? [];
+    const openGaps = brief?.open_gaps?.map((item) => makeFollowUpPrompt("补充证据：", item.text)) ?? [];
+    const mustReads =
+      brief?.must_read_papers?.map((paper) => makeFollowUpPrompt("围绕论文：", paper.title)) ?? [];
+    const ideas = workspace.ideas.map((idea) => makeFollowUpPrompt("细化建议：", idea.title));
+    const branches = workspace.taxonomy.branches.map((branch) => makeFollowUpPrompt("展开方向：", branch.name));
+    return uniquePromptList([...nextSteps, ...openGaps, ...mustReads, ...ideas, ...branches]).slice(0, 5);
+  }, [workspace]);
 
   async function createConversationFromSidebar() {
     if (!newTopic.trim()) return;
@@ -608,6 +702,7 @@ export function AppShell({ children }: PropsWithChildren) {
           current?.task_id === taskId ? { ...current, status: latestStatus } : current
         );
         if (terminalTaskStatuses.has(latestStatus)) {
+          setDismissedRunGraphTaskId(taskId);
           return latestStatus;
         }
       } else if (eventsResult.status === "rejected") {
@@ -1019,10 +1114,34 @@ export function AppShell({ children }: PropsWithChildren) {
   );
   const shouldShowRunGraph = Boolean(
     runEventTaskId &&
-      runningTaskId === runEventTaskId &&
+      !latestRunEventIsTerminal &&
       dismissedRunGraphTaskId !== runEventTaskId &&
-      !latestRunEventIsTerminal
+      (runningTaskId === runEventTaskId || runEvents.length > 0)
   );
+  const shouldShowRunGraphReopen = Boolean(
+    runEventTaskId &&
+      runEvents.length > 0 &&
+      dismissedRunGraphTaskId === runEventTaskId
+  );
+  const runGraphReopenLabel = latestRunEventIsTerminal ? "查看本轮运行过程" : "展开 Agent 运行图";
+  const resultFollowUpHints = workspaceFollowUpPrompts.length ? (
+    <div className="result-side-hints">
+      <span>可继续追问</span>
+      <div>
+        {workspaceFollowUpPrompts.map((prompt) => (
+          <button
+            className="result-hint-chip"
+            key={prompt}
+            onClick={() => setAskContent(prompt)}
+            title={prompt}
+            type="button"
+          >
+            {cleanDisplayText(prompt, 92)}
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="app-shell app-shell-single">
@@ -1228,6 +1347,14 @@ export function AppShell({ children }: PropsWithChildren) {
                     events={runEvents}
                     onDismiss={() => setDismissedRunGraphTaskId(runEventTaskId)}
                   />
+                ) : shouldShowRunGraphReopen ? (
+                  <button
+                    className="secondary-button run-graph-reopen-button"
+                    onClick={() => setDismissedRunGraphTaskId("")}
+                    type="button"
+                  >
+                    {runGraphReopenLabel}
+                  </button>
                 ) : null}
 
                 <div className="unified-composer">
@@ -1375,6 +1502,7 @@ export function AppShell({ children }: PropsWithChildren) {
                           <strong>{workspace.alignment_score.toFixed(2)}</strong>
                         </div>
                       </div>
+                      {resultFollowUpHints}
                     </>
                   ) : (
                     <>
@@ -1391,23 +1519,7 @@ export function AppShell({ children }: PropsWithChildren) {
                       <button className="secondary-button" onClick={() => setResultSummaryOpen(true)} type="button">
                         展开摘要
                       </button>
-                      {workspaceDirections.length ? (
-                        <div className="result-side-hints">
-                          <span>可继续追问</span>
-                          <div>
-                            {workspaceDirections.slice(0, 5).map((direction) => (
-                              <button
-                                className="result-hint-chip"
-                                key={direction}
-                                onClick={() => setAskContent(`继续展开：${direction}`)}
-                                type="button"
-                              >
-                                {direction}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
+                      {resultFollowUpHints}
                     </>
                   )
                 ) : (
@@ -1444,21 +1556,21 @@ export function AppShell({ children }: PropsWithChildren) {
               </button>
             </div>
             <label className="field">
-              <span>研究主题</span>
-              <input
-                className="input"
-                onChange={(event) => setNewTopic(event.target.value)}
-                placeholder="例如：多智能体科研助手的评测方法"
-                value={newTopic}
-              />
-            </label>
-            <label className="field">
               <span>会话标题</span>
               <input
                 className="input"
                 onChange={(event) => setNewTitle(event.target.value)}
                 placeholder="用于左侧研究记录展示"
                 value={newTitle}
+              />
+            </label>
+            <label className="field">
+              <span>研究主题</span>
+              <input
+                className="input"
+                onChange={(event) => setNewTopic(event.target.value)}
+                placeholder="例如：多智能体科研助手的评测方法"
+                value={newTopic}
               />
             </label>
             <fieldset className="research-mode-fieldset">

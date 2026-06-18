@@ -34,6 +34,8 @@ type GraphNode = {
   fullTitle: string;
   subtitle: string;
   category: string;
+  citationCount: number;
+  citationKnown: boolean;
   x: number;
   y: number;
   degree: number;
@@ -66,18 +68,28 @@ function displayNodeIdentifier(value: string) {
   return isOpaqueNodeId(value) ? "内部标识已隐藏" : value;
 }
 
-function curvedPath(source: GraphNode, target: GraphNode) {
+function edgeCurveDirection(source: GraphNode, target: GraphNode, index: number) {
+  const seed = `${source.id}->${target.id}`.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
+  const sign = seed % 2 === 0 ? 1 : -1;
+  return sign * (1 + (index % 3) * 0.18);
+}
+
+function curvedPath(source: GraphNode, target: GraphNode, index = 0) {
   const dx = target.x - source.x;
   const dy = target.y - source.y;
   const distance = Math.max(Math.hypot(dx, dy), 1);
-  const offset = Math.min(70, distance * 0.18);
-  const mx = (source.x + target.x) / 2;
-  const my = (source.y + target.y) / 2;
+  const startX = source.x;
+  const startY = source.y;
+  const endX = target.x;
+  const endY = target.y;
+  const offset = Math.min(86, distance * 0.22) * edgeCurveDirection(source, target, index);
+  const mx = (startX + endX) / 2;
+  const my = (startY + endY) / 2;
   const nx = -dy / distance;
   const ny = dx / distance;
   const cx = mx + nx * offset;
   const cy = my + ny * offset;
-  return `M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`;
+  return `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`;
 }
 
 function wrapTitle(title: string, maxCharsPerLine = 14, maxLines = 2) {
@@ -131,12 +143,19 @@ function relationshipDistance(relationship: string) {
   return 176;
 }
 
-function nodeVisualRadius(node: Pick<GraphNode, "degree">) {
-  return 24 + Math.min(node.degree * 2.8, 12);
+function citationRadiusBoost(node: Pick<GraphNode, "citationCount" | "citationKnown">) {
+  if (!node.citationKnown) {
+    return 0;
+  }
+  return Math.min(Math.log10(Math.max(node.citationCount, 0) + 1) * 5.2, 15);
 }
 
-function nodeCollisionRadius(node: Pick<GraphNode, "degree">) {
-  return nodeVisualRadius(node) + 38;
+function nodeVisualRadius(node: Pick<GraphNode, "degree" | "citationCount" | "citationKnown">) {
+  return 23 + Math.min(node.degree * 2.1, 10) + citationRadiusBoost(node);
+}
+
+function nodeCollisionRadius(node: Pick<GraphNode, "degree" | "citationCount" | "citationKnown">) {
+  return nodeVisualRadius(node) + 44;
 }
 
 function clampGraphX(value: number) {
@@ -234,6 +253,18 @@ function evidenceLevelLabel(level?: string) {
   return "候选关系";
 }
 
+function graphEvidenceSnippet(snippet: string) {
+  const cleaned = cleanWorkspaceText(snippet, 220);
+  if (!cleaned) return "";
+  if (
+    /\b(?:shared_dimensions|target_added_dimensions|source_added_dimensions|source_roles|target_roles|landscape_profile|keyword_overlap)\s*=/i.test(cleaned) ||
+    /\b(?:source|target)_(?:roles|dimensions)\b/i.test(cleaned)
+  ) {
+    return "";
+  }
+  return cleaned;
+}
+
 function confidenceLabel(confidence?: number) {
   const normalized = Math.max(0, Math.min(1, confidence ?? 0));
   return `置信度 ${Math.round(normalized * 100)}%`;
@@ -267,6 +298,8 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
         fullTitle: cleanWorkspaceText(resolvePaperTitle(id, papers), 180) || title,
         subtitle: displayNodeIdentifier(matchedPaper?.paper_id ?? id),
         category: cleanDisplayText(matchedPaper?.taxonomy_category, 80) || "Uncategorized",
+        citationCount: Math.max(Number(matchedPaper?.citation_count ?? 0), 0),
+        citationKnown: matchedPaper?.citation_count_known === true,
         x: cx + Math.cos(angle) * radiusX,
         y: cy + Math.sin(angle) * radiusY,
         degree: degreeMap.get(id) ?? 0,
@@ -374,6 +407,9 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
       </div>
 
       <div className="graph-category-strip">
+        <span className="graph-category-pill graph-category-pill-muted">
+          节点大小融合引用数与连接度
+        </span>
         {categoryStats.map(([category, count]) => {
           const tone = categoryTone(category);
           return (
@@ -411,19 +447,6 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
           }}
         >
           <svg className="graph-canvas" viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`}>
-            <defs>
-              <marker
-                id="workspace-graph-arrow"
-                markerHeight="8"
-                markerWidth="8"
-                orient="auto-start-reverse"
-                refX="7"
-                refY="4"
-              >
-                <path d="M0,0 L8,4 L0,8 Z" fill="#9fb8e5" />
-              </marker>
-            </defs>
-
             {visibleEdges.map((edge, index) => {
               const source = nodes.find((node) => node.id === edge.source);
               const target = nodes.find((node) => node.id === edge.target);
@@ -435,11 +458,11 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
 
               return (
                 <path
-                  d={curvedPath(source, target)}
+                  d={curvedPath(source, target, index)}
                   fill="none"
                   key={`${edge.source}-${edge.target}-${index}`}
-                  markerEnd="url(#workspace-graph-arrow)"
                   opacity={active ? 1 : 0.45}
+                  strokeLinecap="round"
                   stroke={relationshipTone(cleanDisplayText(edge.relationship, 80))}
                   strokeWidth={active ? 2.6 : 1.5}
                 />
@@ -477,7 +500,7 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
                     ))}
                   </text>
                   <text className="graph-node-degree" textAnchor="middle" x={node.x} y={node.y + 13}>
-                    degree {node.degree}
+                    {node.citationKnown ? `引 ${node.citationCount}` : `度 ${node.degree}`}
                   </text>
                 </g>
               );
@@ -492,6 +515,10 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
             <div className="graph-node-detail-meta">
               <div className="fine-print">论文标识：{selectedNode.subtitle}</div>
               <div className="fine-print">Taxonomy Category: {selectedNode.category}</div>
+              <div className="fine-print">
+                节点大小：引用 {selectedNode.citationKnown ? `${selectedNode.citationCount} 次` : "未获取"}，
+                连接度 {selectedNode.degree}
+              </div>
             </div>
             <div className="graph-node-detail-list">
               {selectedEdges.length ? (
@@ -508,16 +535,15 @@ export function WorkspaceGraphCanvas({ graphEdges, papers }: WorkspaceGraphCanva
                     </div>
                     <span>{formatGraphEdgeHeadline(edge.relationship, edge.source, edge.target, papers)}</span>
                     <small>{formatGraphEdgeReasoningByRelationship(edge.relationship, edge.reasoning, papers)}</small>
-                    {edge.provenance ? (
-                      <small className="fine-print">
-                        判定来源：{cleanWorkspaceText(edge.provenance, 100)}
-                      </small>
-                    ) : null}
-                    {edge.evidence_snippets?.slice(0, 2).map((snippet, snippetIndex) => (
-                      <small className="fine-print" key={`${edge.source}-${edge.target}-evidence-${snippetIndex}`}>
-                        {cleanWorkspaceText(snippet, 220)}
-                      </small>
-                    ))}
+                    {edge.evidence_snippets
+                      ?.map(graphEvidenceSnippet)
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((snippet, snippetIndex) => (
+                        <small className="fine-print" key={`${edge.source}-${edge.target}-evidence-${snippetIndex}`}>
+                          {snippet}
+                        </small>
+                      ))}
                   </div>
                 ))
               ) : (

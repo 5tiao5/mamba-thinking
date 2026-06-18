@@ -22,11 +22,13 @@ from product_agent.schemas import (
     ResearchPaperView,
     SearchPaperCandidatesRequest,
     UpdateResearchPaperRequest,
+    UpdateRuntimeApiKeyRequest,
     UpdateSkillRequest,
     UpdateToolRequest,
 )
 from product_agent.services.errors import ConversationNotFoundError, InvalidTaskModeError, TaskNotFoundError
 from product_agent.services.research_paper_service import ResearchPaperServiceError
+from product_agent.services.runtime_config_service import RuntimeConfigError, RuntimeConfigService
 from product_agent.services.skill_service import SkillServiceError
 from product_agent.services.text_cleaning import clean_internal_context_items, clean_internal_context_text
 
@@ -66,6 +68,7 @@ class ProductApiHandlers:
         self.knowledge_service = knowledge_service
         self.research_paper_service = research_paper_service
         self.pdf_import_service = pdf_import_service
+        self.runtime_config_service = RuntimeConfigService()
 
     def create_conversation(self, request: CreateConversationRequest):
         """创建新会话。"""
@@ -102,6 +105,16 @@ class ProductApiHandlers:
             return fail("conversation_not_found", "Conversation does not exist.")
         return ok(result)
 
+    def get_runtime_config(self):
+        """Return sanitized runtime configuration status."""
+        return ok(self.runtime_config_service.get_status().model_dump())
+
+    def update_runtime_api_key(self, request: UpdateRuntimeApiKeyRequest):
+        """Set or clear a local API key without ever returning the secret."""
+        try:
+            return ok(self.runtime_config_service.update_api_key(request).model_dump())
+        except RuntimeConfigError as exc:
+            return fail("invalid_runtime_config", str(exc))
 
     def list_messages(self, conversation_id: str):
         """列出某个会话的消息。"""
@@ -412,6 +425,12 @@ class ProductApiHandlers:
         if snapshot is None:
             return fail("workspace_not_found", "Workspace does not exist.")
         return ok(snapshot.model_dump())
+
+    def verify_workspace_paper(self, task_id: str, paper_id: str):
+        paper = self.workspace_service.verify_workspace_paper(task_id, paper_id)
+        if paper is None:
+            return fail("paper_not_found", "Workspace paper does not exist.")
+        return ok(paper.model_dump())
 
     def get_conversation_workspace(self, conversation_id: str):
         snapshot = self.workspace_service.get_conversation_workspace_snapshot(conversation_id)

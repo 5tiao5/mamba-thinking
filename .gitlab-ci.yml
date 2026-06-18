@@ -1,0 +1,65 @@
+stages:
+  - verify
+  - build
+  - deploy
+
+default:
+  tags:
+    - course-runner
+
+variables:
+  PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com"
+  GIT_DEPTH: "0"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .cache/pip
+    - ui/.npm
+
+backend_tests:
+  stage: verify
+  script:
+    - python3 -m venv .venv
+    - . .venv/bin/activate
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt "pytest>=8,<10"
+    - python -m compileall api services schemas repositories domain research_agent main.py app_container.py start_backend.py
+    - python -c "from product_agent.api.fastapi_app import app; print(app.title)"
+    - python -m pytest
+
+frontend_build:
+  stage: build
+  script:
+    - cd ui
+    - npm ci --cache .npm --prefer-offline
+    - npm run build
+  artifacts:
+    paths:
+      - ui/dist
+    expire_in: 7 days
+
+deploy_mirror:
+  stage: deploy
+  needs:
+    - job: backend_tests
+    - job: frontend_build
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - test -n "$GITHUB_MIRROR_URL" || (echo "Set GITHUB_MIRROR_URL in GitLab CI/CD variables." && exit 1)
+    - git config user.name "GitLab CI"
+    - git config user.email "gitlab-ci@example.invalid"
+    - git remote remove github 2>/dev/null || true
+    - git remote add github "$GITHUB_MIRROR_URL"
+    - MIRROR_BRANCH="${GITHUB_MIRROR_BRANCH:-$CI_DEFAULT_BRANCH}"
+    - git push github "HEAD:$MIRROR_BRANCH"
+    - printf 'branch=%s\ncommit=%s\nmirrored_to=%s\ndeployed_at=%s\n' "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA" "$MIRROR_BRANCH" "$(date -Iseconds)" > CI_DEPLOY_INFO.txt
+  artifacts:
+    paths:
+      - CI_DEPLOY_INFO.txt
+    expire_in: 30 days

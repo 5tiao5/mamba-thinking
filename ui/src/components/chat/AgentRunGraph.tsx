@@ -543,7 +543,7 @@ export function AgentRunGraph({ events, onDismiss }: AgentRunGraphProps) {
                     {statusText(status)}
                   </text>
                   {runCount > 1 ? (
-                    <g className="agent-run-graph-node-count" transform="translate(33 -34)">
+                    <g className="agent-run-graph-node-count" transform="translate(0 38)">
                       <rect height="20" rx="10" width={runCount >= 10 ? 34 : 28} x={runCount >= 10 ? -17 : -14} y="-10" />
                       <text textAnchor="middle" y="3.5">
                         ×{runCount}
