@@ -666,8 +666,10 @@ export function AppShell({ children }: PropsWithChildren) {
         setAskStatus(
           `结果已生成，本轮使用「${researchModeLabel(researchMode)}」和「${scopeLabel}」。可以继续追问来调整方向。`
         );
+        setDismissedRunGraphTaskId(taskId);
         navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
       } else if (finalStatus === "failed") {
+        setDismissedRunGraphTaskId(taskId);
         setAskStatus("研究任务生成失败，已保留失败记录，可以调整问题后重试。");
       } else {
         setAskStatus("研究任务仍在后台运行，可稍后刷新或打开本次结果查看。");
@@ -702,7 +704,6 @@ export function AppShell({ children }: PropsWithChildren) {
           current?.task_id === taskId ? { ...current, status: latestStatus } : current
         );
         if (terminalTaskStatuses.has(latestStatus)) {
-          setDismissedRunGraphTaskId(taskId);
           return latestStatus;
         }
       } else if (eventsResult.status === "rejected") {
@@ -759,10 +760,12 @@ export function AppShell({ children }: PropsWithChildren) {
         if (finalStatus === "completed" || finalStatus === "degraded") {
           setLatestFollowUpTask(null);
           setAskStatus(`新的结果已生成，本轮沿用「${appliedScopeLabel}」，已自动刷新。`);
+          setDismissedRunGraphTaskId(followUpTask.task_id);
           navigate(
             `/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(followUpTask.task_id)}`
           );
         } else if (finalStatus === "failed") {
+          setDismissedRunGraphTaskId(followUpTask.task_id);
           setAskStatus("追问任务生成失败，已保留失败记录，可以调整问题后重试。");
         } else {
           setAskStatus("追问任务仍在后台运行，可稍后刷新或打开本次结果查看。");
@@ -808,8 +811,10 @@ export function AppShell({ children }: PropsWithChildren) {
       await loadHistory();
       if (finalStatus === "completed" || finalStatus === "degraded") {
         setAskStatus(`新的结果已生成，本轮沿用「${scopeLabel}」，右侧窗口已刷新。`);
+        setDismissedRunGraphTaskId(taskId);
         navigate(`/conversation?conversation_id=${encodeURIComponent(activeConversationId)}&task_id=${encodeURIComponent(taskId)}`);
       } else if (finalStatus === "failed") {
+        setDismissedRunGraphTaskId(taskId);
         setAskStatus("后续研究任务生成失败，已保留失败记录，可以调整问题后重试。");
       } else {
         setAskStatus("后续研究任务仍在后台运行，可稍后刷新或打开本次结果查看。");
@@ -1112,11 +1117,11 @@ export function AppShell({ children }: PropsWithChildren) {
   const latestRunEventIsTerminal = Boolean(
     latestRunEvent && latestRunEvent.stage === "runtime" && terminalTaskStatuses.has(latestRunEvent.status)
   );
+  const runGraphStillRunning = Boolean(runEventTaskId && runningTaskId === runEventTaskId);
   const shouldShowRunGraph = Boolean(
     runEventTaskId &&
-      !latestRunEventIsTerminal &&
       dismissedRunGraphTaskId !== runEventTaskId &&
-      (runningTaskId === runEventTaskId || runEvents.length > 0)
+      (runGraphStillRunning || (runEvents.length > 0 && !latestRunEventIsTerminal))
   );
   const shouldShowRunGraphReopen = Boolean(
     runEventTaskId &&

@@ -52,15 +52,28 @@ deploy_mirror:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - test -n "$GITHUB_MIRROR_URL" || (echo "Set GITHUB_MIRROR_URL in GitLab CI/CD variables." && exit 1)
+    - if [ -n "${HTTPS_PROXY:-}" ]; then git config --global https.proxy "$HTTPS_PROXY"; fi
+    - if [ -n "${HTTP_PROXY:-}" ]; then git config --global http.proxy "$HTTP_PROXY"; fi
+    - if command -v curl >/dev/null 2>&1; then curl -I --connect-timeout 20 --retry 2 --retry-delay 10 https://github.com || echo "GitHub connectivity probe failed; git push will still retry."; fi
     - git config user.name "GitLab CI"
     - git config user.email "gitlab-ci@example.invalid"
     - git remote remove github 2>/dev/null || true
     - git remote add github "$GITHUB_MIRROR_URL"
     - MIRROR_BRANCH="${GITHUB_MIRROR_BRANCH:-$CI_DEFAULT_BRANCH}"
-    - git push github "HEAD:$MIRROR_BRANCH"
-    - MIRROR_STATUS="pushed"
+    - |
+      MIRROR_STATUS="failed"
+      for attempt in 1 2 3; do
+        if git push github "HEAD:$MIRROR_BRANCH"; then
+          MIRROR_STATUS="pushed"
+          break
+        fi
+        echo "GitHub mirror push failed (attempt ${attempt}/3). Retrying in 20 seconds..."
+        sleep 20
+      done
     - printf 'branch=%s\ncommit=%s\nmirrored_to=%s\nmirror_status=%s\ndeployed_at=%s\n' "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA" "$MIRROR_BRANCH" "$MIRROR_STATUS" "$(date -Iseconds)" > CI_DEPLOY_INFO.txt
+    - test "$MIRROR_STATUS" = "pushed"
   artifacts:
+    when: always
     paths:
       - CI_DEPLOY_INFO.txt
     expire_in: 30 days
