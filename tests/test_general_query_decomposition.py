@@ -618,10 +618,15 @@ class GeneralQueryDecompositionTests(unittest.TestCase):
         "product_agent.research_agent.nodes.searcher.os.environ",
         {"CITATION_ENRICHMENT": "0"},
     )
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
     @patch("product_agent.research_agent.nodes.searcher.search_papers")
     def test_searcher_rescues_weak_facet_with_targeted_query(
         self,
         search_arxiv,
+        _search_s2,
     ) -> None:
         def results_for(query: str, max_results: int = 10):
             if query == "incomplete multimodal learning":
@@ -712,12 +717,17 @@ class GeneralQueryDecompositionTests(unittest.TestCase):
         {"CITATION_ENRICHMENT": "0"},
     )
     @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
+    @patch(
         "product_agent.research_agent.nodes.searcher.search_papers",
         return_value=[],
     )
     def test_failed_facet_rescue_remains_explicitly_missing(
         self,
         search_arxiv,
+        _search_s2,
     ) -> None:
         result = searcher_node(
             {
