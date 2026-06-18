@@ -1180,7 +1180,6 @@ def _degraded_arxiv_rescue_queries(
         *list(retrieval_plan.get("recall_queries", []) or [])[:4],
         *list(retrieval_plan.get("broad_queries", []) or [])[:3],
         *list(retrieval_plan.get("strict_queries", []) or [])[:2],
-        *list(retrieval_plan.get("rerank_signals", []) or [])[:4],
     ]
     rescue_queries: list[str] = []
     for raw_query in raw_queries:

@@ -76,8 +76,8 @@ def build_retrieval_plan(
     )
     request_focus_terms = _clean_items(
         [
-            *facet_labels,
             *list(intent.get("request_focus_terms", []) or []),
+            *facet_labels,
         ][:6]
     )
     focus_terms = _clean_items(
@@ -132,8 +132,8 @@ def build_retrieval_plan(
         else []
     )
     strict_queries = [
-        *priority_queries,
         *facet_queries,
+        *priority_queries,
         *topic_alias_queries[:1],
         *grounded_evidence_queries[:2],
         *topic_alias_queries[1:],

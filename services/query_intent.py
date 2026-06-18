@@ -289,6 +289,14 @@ _GENERIC_FOCUS_TERMS = {
     "\u4e8c\u8005",
     "\u4e24\u8005",
 }
+_CANONICALIZED_FOCUS_LABELS = {
+    "public datasets",
+    "evaluation metrics",
+    "ablation studies",
+    "early fusion",
+    "late fusion",
+    "intermediate fusion",
+}
 
 
 @dataclass
@@ -362,10 +370,11 @@ def derive_query_intent(
     ).strip()
 
     focus_facets = _extract_explicit_focus_facets(clean_request)
+    facet_labels = [str(facet.get("label", "")) for facet in focus_facets]
     request_focus_terms = _dedupe(
         [
-            *[str(facet.get("label", "")) for facet in focus_facets],
             *_domain_focus_terms(clean_request),
+            *facet_labels,
             *_quoted_or_acronym_terms(clean_request),
         ]
     )
@@ -553,7 +562,14 @@ def _append_focus_clause(
         if not segment:
             continue
         mapped_terms = _matching_labels(segment, _DOMAIN_FOCUS_PATTERNS)
-        labels = mapped_terms or [segment]
+        if mapped_terms and _should_canonicalize_focus_label(segment, mapped_terms):
+            labels = (
+                [term for term in mapped_terms if term in _CANONICALIZED_FOCUS_LABELS]
+                if re.search(r"[\u4e00-\u9fff]", segment)
+                else mapped_terms
+            )
+        else:
+            labels = [segment]
         for label in labels:
             key = label.casefold()
             if key in seen:
@@ -567,6 +583,16 @@ def _append_focus_clause(
                     "required": True,
                 }
             )
+
+
+def _should_canonicalize_focus_label(segment: str, mapped_terms: list[str]) -> bool:
+    """Keep user-facing focus labels stable, except for generic evaluation axes."""
+
+    if not mapped_terms:
+        return False
+    if not re.search(r"[\u4e00-\u9fff]", segment):
+        return True
+    return any(term in _CANONICALIZED_FOCUS_LABELS for term in mapped_terms)
 
 
 def _clean_focus_segment(value: str) -> str:

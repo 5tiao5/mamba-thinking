@@ -194,10 +194,32 @@ def _needs_topic_expansion(topic: str, intent: dict[str, Any]) -> bool:
         return False
     if not topic:
         return False
+    if _has_deterministic_topic_expansion(topic):
+        return False
     if re.search(r"[\u4e00-\u9fff]", topic):
         return True
     english_words = re.findall(r"[A-Za-z][A-Za-z0-9-]*", topic)
     return len(english_words) < 2
+
+
+def _has_deterministic_topic_expansion(topic: str) -> bool:
+    """Avoid paying LLM cost when retrieval planning already has stable aliases."""
+
+    compact = re.sub(r"\s+", "", str(topic or "")).casefold()
+    if not compact:
+        return False
+    if "\u5927\u6a21\u578b" in compact and "\u591a\u6a21\u6001" in compact:
+        return True
+    if "\u591a\u6a21\u6001" in compact and "\u878d\u5408" in compact:
+        return True
+    if "agent" in compact and (
+        "\u5de5\u5177\u4f7f\u7528" in compact
+        or "\u5de5\u5177\u8c03\u7528" in compact
+        or "tooluse" in compact
+        or "toolcalling" in compact
+    ):
+        return True
+    return False
 
 
 def _normalize_facets(value: Any) -> list[dict[str, Any]]:

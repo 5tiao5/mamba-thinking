@@ -20,26 +20,15 @@ cache:
     - .cache/pip
     - ui/.npm
 
-backend_smoke:
+backend_tests:
   stage: verify
-  script:
-    - python3 -m venv .venv
-    - . .venv/bin/activate
-    - python -m pip install --upgrade pip
-    - pip install -r requirements.txt
-    - python -m compileall api services schemas repositories domain research_agent main.py app_container.py start_backend.py
-    - python -c "from product_agent.api.fastapi_app import app; print(app.title)"
-
-backend_pytest:
-  stage: verify
-  allow_failure: true
-  rules:
-    - when: manual
   script:
     - python3 -m venv .venv
     - . .venv/bin/activate
     - python -m pip install --upgrade pip
     - pip install -r requirements.txt "pytest>=8,<10" httpx2
+    - python -m compileall api services schemas repositories domain research_agent main.py app_container.py start_backend.py
+    - python -c "from product_agent.api.fastapi_app import app; print(app.title)"
     - python -m pytest
 
 frontend_build:
@@ -56,7 +45,7 @@ frontend_build:
 deploy_mirror:
   stage: deploy
   needs:
-    - job: backend_smoke
+    - job: backend_tests
     - job: frontend_build
       artifacts: true
   rules:
@@ -68,13 +57,8 @@ deploy_mirror:
     - git remote remove github 2>/dev/null || true
     - git remote add github "$GITHUB_MIRROR_URL"
     - MIRROR_BRANCH="${GITHUB_MIRROR_BRANCH:-$CI_DEFAULT_BRANCH}"
-    - |
-      if git push github "HEAD:$MIRROR_BRANCH"; then
-        MIRROR_STATUS="pushed"
-      else
-        MIRROR_STATUS="skipped_non_fast_forward"
-        echo "GitHub mirror is probably ahead of GitLab. Skipping mirror push for this pipeline."
-      fi
+    - git push github "HEAD:$MIRROR_BRANCH"
+    - MIRROR_STATUS="pushed"
     - printf 'branch=%s\ncommit=%s\nmirrored_to=%s\nmirror_status=%s\ndeployed_at=%s\n' "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA" "$MIRROR_BRANCH" "$MIRROR_STATUS" "$(date -Iseconds)" > CI_DEPLOY_INFO.txt
   artifacts:
     paths:

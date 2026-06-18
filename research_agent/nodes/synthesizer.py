@@ -366,6 +366,9 @@ def _mark_idea_exploratory(idea: Any, *, reason: str) -> None:
         "该方向当前缺少分支级直接论文证据，以下内容仅作为待验证假设，"
         "不应视为已有研究结论。"
     )
+    title = str(getattr(idea, "title", "") or "").strip()
+    if title and not title.startswith("探索性方向："):
+        idea.title = f"探索性方向：{title}"
     motivation = str(getattr(idea, "motivation", "") or "").strip()
     if disclaimer not in motivation:
         idea.motivation = f"{disclaimer}{motivation}"
