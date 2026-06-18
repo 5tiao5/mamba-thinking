@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 
 import { AssistantMessageContent } from "../components/chat/AssistantMessageContent";
 import { MessageSourceTrace } from "../components/chat/MessageSourceTrace";
@@ -56,8 +56,10 @@ function getDisplayMessageContent(message: MessageItem) {
 }
 
 export function ConversationPage() {
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const conversationIdFromQuery = searchParams.get("conversation_id") ?? "";
+  const taskIdFromQuery = searchParams.get("task_id") ?? "";
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [status, setStatus] = useState("从左侧选择历史会话，或在右侧直接追问。");
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -69,7 +71,7 @@ export function ConversationPage() {
     }
     setMessages([]);
     setStatus("请先从左侧选择或新建一个研究。");
-  }, [conversationIdFromQuery]);
+  }, [conversationIdFromQuery, taskIdFromQuery, location.key]);
 
   async function loadMessages(targetId = conversationIdFromQuery) {
     const trimmedId = targetId.trim();
