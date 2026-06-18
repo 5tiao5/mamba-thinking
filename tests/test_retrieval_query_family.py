@@ -487,10 +487,15 @@ class RetrievalQueryFamilyTests(unittest.TestCase):
         self.assertGreaterEqual(search_s2.call_count, 1)
         self.assertIn("s2-causal", result["evidence_pool"])
 
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
     @patch("product_agent.research_agent.nodes.searcher.search_papers")
     def test_broad_queries_continue_to_expand_the_evidence_pool(
         self,
         search_arxiv,
+        _search_s2,
     ) -> None:
         def results_for(query: str, max_results: int = 10):
             if "primary" in query:
@@ -554,10 +559,15 @@ class RetrievalQueryFamilyTests(unittest.TestCase):
         self.assertEqual(len(result["evidence_pool"]), 4)
         self.assertEqual(len(result["paper_nodes"]), 4)
 
+    @patch(
+        "product_agent.research_agent.nodes.searcher.search_semantic_scholar",
+        return_value=[],
+    )
     @patch("product_agent.research_agent.nodes.searcher.search_papers")
     def test_evidence_pool_keeps_all_qualified_papers_beyond_analysis_limit(
         self,
         search_arxiv,
+        _search_s2,
     ) -> None:
         titles = [
             "MCP Agent Tool Use Reliability Benchmark",
