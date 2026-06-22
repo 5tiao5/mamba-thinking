@@ -28,8 +28,8 @@ const workspaceSections = [
 
 export function HomePage() {
   const navigate = useNavigate();
-  const [topic, setTopic] = useState("AI Agent 工具使用评测");
-  const [title, setTitle] = useState("Agent 调研");
+  const [topic, setTopic] = useState("");
+  const [title, setTitle] = useState("");
   const [mode, setMode] = useState("balanced");
   const [useSharedKnowledge, setUseSharedKnowledge] = useState(false);
   const [conversation, setConversation] = useState<ConversationResponsePayload | null>(null);
@@ -124,11 +124,21 @@ export function HomePage() {
           <div className="content-pad launch-command">
             <label>
               <span className="field-label">会话标题</span>
-              <input className="input" onChange={(event) => setTitle(event.target.value)} value={title} />
+              <input
+                className="input"
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="用于左侧研究记录展示，可不填"
+                value={title}
+              />
             </label>
             <label>
               <span className="field-label">研究主题</span>
-              <input className="input" onChange={(event) => setTopic(event.target.value)} value={topic} />
+              <input
+                className="input"
+                onChange={(event) => setTopic(event.target.value)}
+                placeholder="例如：多智能体科研助手的评测方法"
+                value={topic}
+              />
             </label>
             <div className="form-row">
               <div>

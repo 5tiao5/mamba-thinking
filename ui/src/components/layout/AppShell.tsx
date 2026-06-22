@@ -273,8 +273,8 @@ export function AppShell({ children }: PropsWithChildren) {
   const [conversations, setConversations] = useState<ConversationSummaryItem[]>([]);
   const [tasks, setTasks] = useState<ResearchTaskSummaryItem[]>([]);
   const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [newTopic, setNewTopic] = useState("AI Agent 工具使用评测");
-  const [newTitle, setNewTitle] = useState("新的研究");
+  const [newTopic, setNewTopic] = useState("");
+  const [newTitle, setNewTitle] = useState("");
   const [runMode, setRunMode] = useState("balanced");
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("shared");
   const [researchMode, setResearchMode] = useState<ResearchMode>("hybrid");
@@ -565,6 +565,8 @@ export function AppShell({ children }: PropsWithChildren) {
         }
       }
       setCreateDialogOpen(false);
+      setNewTopic("");
+      setNewTitle("");
       setPendingResearchFiles([]);
       setPendingFileStatus("可选：先加入 PDF，创建研究后会自动导入，但不会立即生成结果。");
       setAskStatus(creationMessage);
@@ -579,6 +581,8 @@ export function AppShell({ children }: PropsWithChildren) {
 
   function closeCreateDialog() {
     setCreateDialogOpen(false);
+    setNewTopic("");
+    setNewTitle("");
     setPendingResearchFiles([]);
     setPendingFileStatus("可选：先加入 PDF，创建研究后会自动导入，但不会立即生成结果。");
   }
